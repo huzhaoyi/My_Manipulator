@@ -1,9 +1,0 @@
-/home/huzy/My_Manipulator/build/m5_configure/CMakeFiles/uninstall.dir
-/home/huzy/My_Manipulator/build/m5_configure/CMakeFiles/m5_configure_uninstall.dir
-/home/huzy/My_Manipulator/build/m5_configure/CMakeFiles/test.dir
-/home/huzy/My_Manipulator/build/m5_configure/CMakeFiles/edit_cache.dir
-/home/huzy/My_Manipulator/build/m5_configure/CMakeFiles/rebuild_cache.dir
-/home/huzy/My_Manipulator/build/m5_configure/CMakeFiles/list_install_components.dir
-/home/huzy/My_Manipulator/build/m5_configure/CMakeFiles/install.dir
-/home/huzy/My_Manipulator/build/m5_configure/CMakeFiles/install/local.dir
-/home/huzy/My_Manipulator/build/m5_configure/CMakeFiles/install/strip.dir

@@ -1,6 +1,0 @@
-Invoking command in '/home/huzy/My_Manipulator/build/m5_configure': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/humble /usr/bin/cmake /home/huzy/My_Manipulator/src/m5_configure -DCMAKE_INSTALL_PREFIX=/home/huzy/My_Manipulator/install/m5_configure
-Invoked command in '/home/huzy/My_Manipulator/build/m5_configure' returned '0': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/humble /usr/bin/cmake /home/huzy/My_Manipulator/src/m5_configure -DCMAKE_INSTALL_PREFIX=/home/huzy/My_Manipulator/install/m5_configure
-Invoking command in '/home/huzy/My_Manipulator/build/m5_configure': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/humble /usr/bin/cmake --build /home/huzy/My_Manipulator/build/m5_configure -- -j8 -l8
-Invoked command in '/home/huzy/My_Manipulator/build/m5_configure' returned '0': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/humble /usr/bin/cmake --build /home/huzy/My_Manipulator/build/m5_configure -- -j8 -l8
-Invoking command in '/home/huzy/My_Manipulator/build/m5_configure': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/humble /usr/bin/cmake --install /home/huzy/My_Manipulator/build/m5_configure
-Invoked command in '/home/huzy/My_Manipulator/build/m5_configure' returned '0': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/humble /usr/bin/cmake --install /home/huzy/My_Manipulator/build/m5_configure
