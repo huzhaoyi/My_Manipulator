@@ -1,0 +1,32 @@
+[0.027s] Invoking command in '/home/huzy/My_Manipulator/build/m5': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/humble /usr/bin/cmake --build /home/huzy/My_Manipulator/build/m5 -- -j8 -l8
+[0.116s] Invoked command in '/home/huzy/My_Manipulator/build/m5' returned '0': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/humble /usr/bin/cmake --build /home/huzy/My_Manipulator/build/m5 -- -j8 -l8
+[0.136s] Invoking command in '/home/huzy/My_Manipulator/build/m5': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/humble /usr/bin/cmake --install /home/huzy/My_Manipulator/build/m5
+[0.146s] -- Install configuration: ""
+[0.146s] -- Up-to-date: /home/huzy/My_Manipulator/install/m5/share/m5/urdf
+[0.146s] -- Up-to-date: /home/huzy/My_Manipulator/install/m5/share/m5/urdf/m5_updated_from_csv.urdf
+[0.146s] -- Up-to-date: /home/huzy/My_Manipulator/install/m5/share/m5/meshes
+[0.146s] -- Up-to-date: /home/huzy/My_Manipulator/install/m5/share/m5/meshes/Link4.STL
+[0.146s] -- Up-to-date: /home/huzy/My_Manipulator/install/m5/share/m5/meshes/Link1.STL
+[0.146s] -- Up-to-date: /home/huzy/My_Manipulator/install/m5/share/m5/meshes/LinkGR.STL
+[0.146s] -- Up-to-date: /home/huzy/My_Manipulator/install/m5/share/m5/meshes/base_link.STL
+[0.146s] -- Up-to-date: /home/huzy/My_Manipulator/install/m5/share/m5/meshes/Link3.STL
+[0.146s] -- Up-to-date: /home/huzy/My_Manipulator/install/m5/share/m5/meshes/Link2.STL
+[0.147s] -- Up-to-date: /home/huzy/My_Manipulator/install/m5/share/m5/meshes/BottomLink.STL
+[0.147s] -- Up-to-date: /home/huzy/My_Manipulator/install/m5/share/m5/meshes/LinkGL.STL
+[0.147s] -- Up-to-date: /home/huzy/My_Manipulator/install/m5/share/m5/meshes/LinkGG.STL
+[0.147s] -- Up-to-date: /home/huzy/My_Manipulator/install/m5/share/ament_index/resource_index/package_run_dependencies/m5
+[0.147s] -- Up-to-date: /home/huzy/My_Manipulator/install/m5/share/ament_index/resource_index/parent_prefix_path/m5
+[0.147s] -- Up-to-date: /home/huzy/My_Manipulator/install/m5/share/m5/environment/ament_prefix_path.sh
+[0.147s] -- Up-to-date: /home/huzy/My_Manipulator/install/m5/share/m5/environment/ament_prefix_path.dsv
+[0.147s] -- Up-to-date: /home/huzy/My_Manipulator/install/m5/share/m5/environment/path.sh
+[0.147s] -- Up-to-date: /home/huzy/My_Manipulator/install/m5/share/m5/environment/path.dsv
+[0.147s] -- Up-to-date: /home/huzy/My_Manipulator/install/m5/share/m5/local_setup.bash
+[0.147s] -- Up-to-date: /home/huzy/My_Manipulator/install/m5/share/m5/local_setup.sh
+[0.147s] -- Up-to-date: /home/huzy/My_Manipulator/install/m5/share/m5/local_setup.zsh
+[0.147s] -- Up-to-date: /home/huzy/My_Manipulator/install/m5/share/m5/local_setup.dsv
+[0.147s] -- Installing: /home/huzy/My_Manipulator/install/m5/share/m5/package.dsv
+[0.147s] -- Up-to-date: /home/huzy/My_Manipulator/install/m5/share/ament_index/resource_index/packages/m5
+[0.147s] -- Up-to-date: /home/huzy/My_Manipulator/install/m5/share/m5/cmake/m5Config.cmake
+[0.147s] -- Up-to-date: /home/huzy/My_Manipulator/install/m5/share/m5/cmake/m5Config-version.cmake
+[0.147s] -- Up-to-date: /home/huzy/My_Manipulator/install/m5/share/m5/package.xml
+[0.149s] Invoked command in '/home/huzy/My_Manipulator/build/m5' returned '0': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/humble /usr/bin/cmake --install /home/huzy/My_Manipulator/build/m5

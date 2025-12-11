@@ -1,0 +1,41 @@
+[0.026s] Invoking command in '/home/huzy/My_Manipulator/build/m5_configure': CMAKE_PREFIX_PATH=/home/huzy/My_Manipulator/install/m5:/home/huzy/My_Manipulator/install/m5_configure:/opt/ros/humble /usr/bin/cmake --build /home/huzy/My_Manipulator/build/m5_configure -- -j8 -l8
+[0.122s] Invoked command in '/home/huzy/My_Manipulator/build/m5_configure' returned '0': CMAKE_PREFIX_PATH=/home/huzy/My_Manipulator/install/m5:/home/huzy/My_Manipulator/install/m5_configure:/opt/ros/humble /usr/bin/cmake --build /home/huzy/My_Manipulator/build/m5_configure -- -j8 -l8
+[0.122s] Invoking command in '/home/huzy/My_Manipulator/build/m5_configure': CMAKE_PREFIX_PATH=/home/huzy/My_Manipulator/install/m5:/home/huzy/My_Manipulator/install/m5_configure:/opt/ros/humble /usr/bin/cmake --install /home/huzy/My_Manipulator/build/m5_configure
+[0.135s] -- Install configuration: ""
+[0.135s] -- Up-to-date: /home/huzy/My_Manipulator/install/m5_configure/share/ament_index/resource_index/package_run_dependencies/m5_configure
+[0.135s] -- Up-to-date: /home/huzy/My_Manipulator/install/m5_configure/share/ament_index/resource_index/parent_prefix_path/m5_configure
+[0.135s] -- Up-to-date: /home/huzy/My_Manipulator/install/m5_configure/share/m5_configure/environment/ament_prefix_path.sh
+[0.135s] -- Up-to-date: /home/huzy/My_Manipulator/install/m5_configure/share/m5_configure/environment/ament_prefix_path.dsv
+[0.135s] -- Up-to-date: /home/huzy/My_Manipulator/install/m5_configure/share/m5_configure/environment/path.sh
+[0.135s] -- Up-to-date: /home/huzy/My_Manipulator/install/m5_configure/share/m5_configure/environment/path.dsv
+[0.135s] -- Up-to-date: /home/huzy/My_Manipulator/install/m5_configure/share/m5_configure/local_setup.bash
+[0.136s] -- Up-to-date: /home/huzy/My_Manipulator/install/m5_configure/share/m5_configure/local_setup.sh
+[0.136s] -- Up-to-date: /home/huzy/My_Manipulator/install/m5_configure/share/m5_configure/local_setup.zsh
+[0.136s] -- Up-to-date: /home/huzy/My_Manipulator/install/m5_configure/share/m5_configure/local_setup.dsv
+[0.136s] -- Installing: /home/huzy/My_Manipulator/install/m5_configure/share/m5_configure/package.dsv
+[0.136s] -- Up-to-date: /home/huzy/My_Manipulator/install/m5_configure/share/ament_index/resource_index/packages/m5_configure
+[0.136s] -- Up-to-date: /home/huzy/My_Manipulator/install/m5_configure/share/m5_configure/cmake/m5_configureConfig.cmake
+[0.136s] -- Up-to-date: /home/huzy/My_Manipulator/install/m5_configure/share/m5_configure/cmake/m5_configureConfig-version.cmake
+[0.136s] -- Up-to-date: /home/huzy/My_Manipulator/install/m5_configure/share/m5_configure/package.xml
+[0.136s] -- Up-to-date: /home/huzy/My_Manipulator/install/m5_configure/share/m5_configure/launch
+[0.136s] -- Up-to-date: /home/huzy/My_Manipulator/install/m5_configure/share/m5_configure/launch/rsp.launch.py
+[0.137s] -- Up-to-date: /home/huzy/My_Manipulator/install/m5_configure/share/m5_configure/launch/static_virtual_joint_tfs.launch.py
+[0.137s] -- Up-to-date: /home/huzy/My_Manipulator/install/m5_configure/share/m5_configure/launch/setup_assistant.launch.py
+[0.137s] -- Up-to-date: /home/huzy/My_Manipulator/install/m5_configure/share/m5_configure/launch/warehouse_db.launch.py
+[0.137s] -- Up-to-date: /home/huzy/My_Manipulator/install/m5_configure/share/m5_configure/launch/moveit_rviz.launch.py
+[0.137s] -- Up-to-date: /home/huzy/My_Manipulator/install/m5_configure/share/m5_configure/launch/spawn_controllers.launch.py
+[0.137s] -- Up-to-date: /home/huzy/My_Manipulator/install/m5_configure/share/m5_configure/launch/demo.launch.py
+[0.137s] -- Up-to-date: /home/huzy/My_Manipulator/install/m5_configure/share/m5_configure/launch/move_group.launch.py
+[0.137s] -- Up-to-date: /home/huzy/My_Manipulator/install/m5_configure/share/m5_configure/config
+[0.137s] -- Up-to-date: /home/huzy/My_Manipulator/install/m5_configure/share/m5_configure/config/m5.ros2_control.xacro
+[0.137s] -- Up-to-date: /home/huzy/My_Manipulator/install/m5_configure/share/m5_configure/config/ros2_controllers.yaml
+[0.137s] -- Up-to-date: /home/huzy/My_Manipulator/install/m5_configure/share/m5_configure/config/m5.srdf
+[0.137s] -- Installing: /home/huzy/My_Manipulator/install/m5_configure/share/m5_configure/config/joint_limits.yaml
+[0.137s] -- Up-to-date: /home/huzy/My_Manipulator/install/m5_configure/share/m5_configure/config/pilz_cartesian_limits.yaml
+[0.137s] -- Up-to-date: /home/huzy/My_Manipulator/install/m5_configure/share/m5_configure/config/kinematics.yaml
+[0.137s] -- Up-to-date: /home/huzy/My_Manipulator/install/m5_configure/share/m5_configure/config/initial_positions.yaml
+[0.137s] -- Up-to-date: /home/huzy/My_Manipulator/install/m5_configure/share/m5_configure/config/m5.urdf.xacro
+[0.137s] -- Up-to-date: /home/huzy/My_Manipulator/install/m5_configure/share/m5_configure/config/moveit_controllers.yaml
+[0.137s] -- Up-to-date: /home/huzy/My_Manipulator/install/m5_configure/share/m5_configure/config/moveit.rviz
+[0.137s] -- Up-to-date: /home/huzy/My_Manipulator/install/m5_configure/share/m5_configure/.setup_assistant
+[0.139s] Invoked command in '/home/huzy/My_Manipulator/build/m5_configure' returned '0': CMAKE_PREFIX_PATH=/home/huzy/My_Manipulator/install/m5:/home/huzy/My_Manipulator/install/m5_configure:/opt/ros/humble /usr/bin/cmake --install /home/huzy/My_Manipulator/build/m5_configure

@@ -1,0 +1,2 @@
+source;share/m5_configure/environment/ament_prefix_path.sh
+source;share/m5_configure/environment/path.sh

@@ -1,0 +1,2 @@
+Invoking command in '/home/huzy/My_Manipulator/build/m5_configure': CMAKE_PREFIX_PATH=/home/huzy/My_Manipulator/install/m5:/home/huzy/My_Manipulator/install/m5_configure:/opt/ros/humble /usr/bin/cmake --build /home/huzy/My_Manipulator/build/m5_configure -- -j8 -l8
+Invoked command in '/home/huzy/My_Manipulator/build/m5_configure' returned '2': CMAKE_PREFIX_PATH=/home/huzy/My_Manipulator/install/m5:/home/huzy/My_Manipulator/install/m5_configure:/opt/ros/humble /usr/bin/cmake --build /home/huzy/My_Manipulator/build/m5_configure -- -j8 -l8
