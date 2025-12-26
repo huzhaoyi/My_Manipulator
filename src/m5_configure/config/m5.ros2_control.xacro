@@ -1,12 +1,21 @@
 <?xml version="1.0"?>
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro">
     <xacro:macro name="m5_ros2_control" params="name initial_positions_file">
-        <xacro:property name="initial_positions" value="${load_yaml(initial_positions_file)['initial_positions']}"/>
+        <xacro:property name="initial_positions" value="${xacro.load_yaml(initial_positions_file)['initial_positions']}"/>
 
         <ros2_control name="${name}" type="system">
             <hardware>
-                <!-- By default, set up controllers for simulation. This won't work on real hardware -->
-                <plugin>mock_components/GenericSystem</plugin>
+                <!-- 使用真实硬件接口连接到S3机械臂，通过UDP协议通信 -->
+                <!-- 发送角度（度），接收角度（度）并转换为弧度 -->
+                <plugin>m5_hardware/M5HardwareInterface</plugin>
+                <!-- 机械臂目标IP和端口（接收方） -->
+                <param name="robot_ip">192.168.32.150</param>
+                <param name="robot_port">7003</param>
+                <!-- 本地绑定IP和端口（发送方：电脑） -->
+                <param name="local_ip">192.168.32.135</param>
+                <param name="local_port">7001</param>
+                <param name="max_velocity">2.0</param>
+                <param name="position_tolerance">0.01</param>
             </hardware>
             <joint name="Joint1">
                 <command_interface name="position"/>
