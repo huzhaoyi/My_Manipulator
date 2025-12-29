@@ -20,10 +20,18 @@ ament_target_dependencies(joint_state_publisher_node
   sensor_msgs
 )
 
+# 添加 demo_moveit
+add_executable(demo_moveit src/demo_moveit.cpp)
+ament_target_dependencies(demo_moveit
+  rclcpp
+  moveit_ros_planning_interface
+)
+
 # 安装可执行文件
 install(TARGETS
   m5_planning_node
   joint_state_publisher_node
+  demo_moveit
   DESTINATION lib/${PROJECT_NAME}
 )
 
@@ -31,6 +39,12 @@ install(TARGETS
 install(DIRECTORY config launch
   DESTINATION share/${PROJECT_NAME}
   PATTERN "setup_assistant.launch" EXCLUDE
+)
+
+# 安装 scripts 目录（Python脚本）
+install(DIRECTORY scripts
+  DESTINATION share/${PROJECT_NAME}
+  USE_SOURCE_PERMISSIONS
 )
 
 # 安装其他文件
