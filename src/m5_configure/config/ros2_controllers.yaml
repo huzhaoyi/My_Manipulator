@@ -11,6 +11,8 @@ controller_manager:
 
     joint_state_broadcaster:
       type: joint_state_broadcaster/JointStateBroadcaster
+      ros__parameters:
+        use_local_topics: false  # 使用全局话题，但我们会通过 remap 改变话题名称
 
     qos_overrides:
       /parameter_events:

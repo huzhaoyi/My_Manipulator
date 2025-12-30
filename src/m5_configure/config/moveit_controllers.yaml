@@ -1,25 +1,26 @@
 # MoveIt uses this configuration for controller management
+move_group:
+  ros__parameters:
+    moveit_controller_manager: moveit_simple_controller_manager/MoveItSimpleControllerManager
 
-moveit_controller_manager: moveit_simple_controller_manager/MoveItSimpleControllerManager
+    moveit_simple_controller_manager:
+      controller_names:
+        - arm_group_controller
+        - gripper_group_controller
 
-moveit_simple_controller_manager:
-  controller_names:
-    - arm_group_controller
-    - gripper_group_controller
-
-  arm_group_controller:
-    type: FollowJointTrajectory
-    action_ns: follow_joint_trajectory
-    default: true
-    joints:
-      - Joint1
-      - Joint2
-      - Joint3
-      - Joint4
-  gripper_group_controller:
-    type: FollowJointTrajectory
-    action_ns: follow_joint_trajectory
-    default: false
-    joints:
-      - JointGL
-      - JointGR
+      arm_group_controller:
+        type: FollowJointTrajectory
+        action_ns: follow_joint_trajectory
+        default: true
+        joints:
+          - Joint1
+          - Joint2
+          - Joint3
+          - Joint4
+      gripper_group_controller:
+        type: FollowJointTrajectory
+        action_ns: follow_joint_trajectory
+        default: false
+        joints:
+          - JointGL
+          - JointGR

@@ -34,9 +34,10 @@
         <joint name="Joint4" value="0"/>
     </group_state>
     <!--END EFFECTOR: Purpose: Represent information about an end effector.-->
-    <end_effector name="gripper" parent_link="Link4" group="gripper_group" parent_group="arm_group"/>
+    <end_effector group="gripper_group" name="gripper"
+             parent_group="arm_group" parent_link="Link4"/>
     <!--VIRTUAL JOINT: Purpose: this element defines a virtual joint between a robot link and an external frame of reference (considered fixed with respect to the robot)-->
-    <virtual_joint name="Virtual Joints" type="fixed" parent_frame="world" child_link="dummy"/>
+    <virtual_joint name="world_joint" type="fixed" parent_frame="world" child_link="world_link"/>
     <!--DISABLE COLLISIONS: By default it is assumed that any link of the robot could potentially come into collision with any other link in the robot. This tag disables collision checking between a specified pair of links. -->
     <disable_collisions link1="BottomLink" link2="Link1" reason="Never"/>
     <disable_collisions link1="BottomLink" link2="Link2" reason="Never"/>

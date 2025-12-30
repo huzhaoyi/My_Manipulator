@@ -3,6 +3,8 @@
 #include <string>
 #include <mutex>
 #include <chrono>
+#include <map>
+#include <algorithm>
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/joint_state.hpp>
 #include <rclcpp/executors/single_threaded_executor.hpp>
@@ -19,18 +21,22 @@ public:
 
     if (republish)
     {
+      // 定义正确的关节顺序
+      correct_joint_order_ = {"Joint1", "Joint2", "Joint3", "Joint4", "JointGL", "JointGR"};
+      
+      // 声明参数：原始话题名称（默认从 /joint_states_raw 订阅，如果不存在则从 /joint_states 订阅）
+      this->declare_parameter<std::string>("source_topic", "/joint_states_raw");
+      std::string source_topic = this->get_parameter("source_topic").as_string();
+      
       // 创建订阅者，订阅 joint_state_broadcaster 发布的原始消息
-      // 注意：为了避免循环，我们需要让 joint_state_broadcaster 发布到另一个 topic
-      // 或者，我们可以直接替换 joint_state_broadcaster 的功能
-      // 这里我们假设 joint_state_broadcaster 发布到 /joint_states_raw
-      // 如果不存在，我们可以通过 remap 来改变 joint_state_broadcaster 的发布 topic
+      // 订阅原始话题，然后重新排序后发布
       joint_state_sub_ = this->create_subscription<sensor_msgs::msg::JointState>(
-        "/joint_states_raw",  // 需要配置 joint_state_broadcaster 发布到这里
+        source_topic,  // 原始话题（可通过参数配置）
         rclcpp::QoS(10),
         std::bind(&JointStatePublisherNode::jointStateCallback, this, std::placeholders::_1)
       );
 
-      // 创建发布者，发布带有正确时间戳的 joint_states
+      // 创建发布者，发布带有正确时间戳和顺序的 joint_states
       joint_state_pub_ = this->create_publisher<sensor_msgs::msg::JointState>(
         "/joint_states", 
         rclcpp::QoS(10)
@@ -48,8 +54,10 @@ public:
       );
 
       RCLCPP_INFO(this->get_logger(), "JointStatePublisherNode 已启动（重新发布模式）");
+      RCLCPP_INFO(this->get_logger(), "订阅话题: %s", source_topic.c_str());
+      RCLCPP_INFO(this->get_logger(), "发布话题: /joint_states");
       RCLCPP_INFO(this->get_logger(), "将确保每条 /joint_states 消息都使用 node->now() 设置时间戳");
-      RCLCPP_WARN(this->get_logger(), "注意：需要配置 joint_state_broadcaster 发布到 /joint_states_raw");
+      RCLCPP_INFO(this->get_logger(), "关节顺序将调整为: Joint1, Joint2, Joint3, Joint4, JointGL, JointGR");
     }
     else
     {
@@ -98,19 +106,46 @@ private:
       return;
     }
 
-    // 创建新消息，复制所有数据
+    // 创建新消息
     auto new_msg = sensor_msgs::msg::JointState();
     new_msg.header.frame_id = last_msg_->header.frame_id;
     
     // 关键：使用 node->now() 设置时间戳
     new_msg.header.stamp = this->now();
     
-    new_msg.name = last_msg_->name;
-    new_msg.position = last_msg_->position;
-    new_msg.velocity = last_msg_->velocity;
-    new_msg.effort = last_msg_->effort;
+    // 创建映射表，将关节名称映射到其索引
+    std::map<std::string, size_t> joint_index_map;
+    for (size_t i = 0; i < last_msg_->name.size(); ++i)
+    {
+      joint_index_map[last_msg_->name[i]] = i;
+    }
     
-    // 发布带有正确时间戳的消息
+    // 按照正确的顺序重新排列关节数据
+    for (const auto& joint_name : correct_joint_order_)
+    {
+      auto it = joint_index_map.find(joint_name);
+      if (it != joint_index_map.end())
+      {
+        size_t idx = it->second;
+        new_msg.name.push_back(joint_name);
+        if (idx < last_msg_->position.size())
+          new_msg.position.push_back(last_msg_->position[idx]);
+        else
+          new_msg.position.push_back(0.0);
+        
+        if (idx < last_msg_->velocity.size())
+          new_msg.velocity.push_back(last_msg_->velocity[idx]);
+        else
+          new_msg.velocity.push_back(0.0);
+        
+        if (idx < last_msg_->effort.size())
+          new_msg.effort.push_back(last_msg_->effort[idx]);
+        else
+          new_msg.effort.push_back(0.0);
+      }
+    }
+    
+    // 发布带有正确时间戳和顺序的消息
     joint_state_pub_->publish(new_msg);
   }
 
@@ -121,6 +156,7 @@ private:
   sensor_msgs::msg::JointState::SharedPtr last_msg_;
   bool last_msg_received_;
   std::chrono::steady_clock::time_point last_publish_time_;
+  std::vector<std::string> correct_joint_order_;  // 正确的关节顺序
 };
 
 int main(int argc, char * argv[])
