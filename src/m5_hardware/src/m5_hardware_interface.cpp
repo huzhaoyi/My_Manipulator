@@ -569,15 +569,15 @@ bool M5HardwareInterface::receive_feedback()
     return false;
   }
   
-  // 收到数据，打印调试信息（每次收到都打印）
-  static int recv_debug_count = 0;
-  recv_debug_count++;
+  // 收到数据，打印调试信息（已禁用）
+  // static int recv_debug_count = 0;
+  // recv_debug_count++;
   buffer[received] = '\0';
-  if (recv_debug_count <= 10 || recv_debug_count % 10 == 0)
-  {
-    RCLCPP_INFO_COLOR(rclcpp::get_logger("M5HardwareInterface"), COLOR_GREEN,
-      "[UDP接收 #" << recv_debug_count << "] 收到 " << received << " 字节: " << std::string(buffer, received));
-  }
+  // if (recv_debug_count <= 10 || recv_debug_count % 10 == 0)
+  // {
+  //   RCLCPP_INFO_COLOR(rclcpp::get_logger("M5HardwareInterface"), COLOR_GREEN,
+  //     "[UDP接收 #" << recv_debug_count << "] 收到 " << received << " 字节: " << std::string(buffer, received));
+  // }
 
   buffer[received] = '\0';
   std::string full_data = buffer_remainder + std::string(buffer);
@@ -695,15 +695,15 @@ bool M5HardwareInterface::parse_feedback_json(const std::string & json_str)
 
     last_successful_comm_ = std::chrono::steady_clock::now();
     
-    // 添加调试：打印接收到的反馈（每次解析成功都打印）
-    static int recv_count = 0;
-    recv_count++;
-    RCLCPP_INFO_COLOR(rclcpp::get_logger("M5HardwareInterface"), COLOR_GREEN,
-      "[反馈解析 #" << recv_count << "] A1=" << std::fixed << std::setprecision(2) 
-      << (feedback_positions_.size() > 0 ? feedback_positions_[0] * 180.0 / M_PI : 0)
-      << "° A2=" << (feedback_positions_.size() > 1 ? feedback_positions_[1] * 180.0 / M_PI : 0)
-      << "° A3=" << (feedback_positions_.size() > 2 ? feedback_positions_[2] * 180.0 / M_PI : 0)
-      << "° A4=" << (feedback_positions_.size() > 3 ? feedback_positions_[3] * 180.0 / M_PI : 0) << "°");
+    // 添加调试：打印接收到的反馈（已禁用）
+    // static int recv_count = 0;
+    // recv_count++;
+    // RCLCPP_INFO_COLOR(rclcpp::get_logger("M5HardwareInterface"), COLOR_GREEN,
+    //   "[反馈解析 #" << recv_count << "] A1=" << std::fixed << std::setprecision(2) 
+    //   << (feedback_positions_.size() > 0 ? feedback_positions_[0] * 180.0 / M_PI : 0)
+    //   << "° A2=" << (feedback_positions_.size() > 1 ? feedback_positions_[1] * 180.0 / M_PI : 0)
+    //   << "° A3=" << (feedback_positions_.size() > 2 ? feedback_positions_[2] * 180.0 / M_PI : 0)
+    //   << "° A4=" << (feedback_positions_.size() > 3 ? feedback_positions_[3] * 180.0 / M_PI : 0) << "°");
     
     return true;
   }

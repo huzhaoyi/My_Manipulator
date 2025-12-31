@@ -1,12 +1,19 @@
 from moveit_configs_utils import MoveItConfigsBuilder
 from moveit_configs_utils.launches import generate_move_group_launch
+from ament_index_python.packages import get_package_share_directory
+import os
 
 
 def generate_launch_description():
-    # 构建 MoveIt 配置，显式指定 kinematics.yaml
+    # 获取包路径
+    m5_configure_dir = get_package_share_directory("m5_configure")
+    
+    # 构建 MoveIt 配置，显式指定 kinematics.yaml 和 planning_pipelines
     moveit_config = (
         MoveItConfigsBuilder("m5", package_name="m5_configure")
         .robot_description_kinematics(file_path="config/kinematics.yaml")
+        .planning_pipelines(pipelines=["ompl"])  # 明确指定使用OMPL规划管道
+        .trajectory_execution(file_path="config/moveit_controllers.yaml")  # 添加控制器配置
         .to_moveit_configs()
     )
     

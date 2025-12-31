@@ -13,10 +13,12 @@ def generate_launch_description():
     
     # 构建 MoveIt 配置，确保 kinematics.yaml 被正确加载
     # 加载传感器配置以禁用 Octomap
+    # 添加 trajectory_execution 配置（与 demo.launch.py 一致）
     moveit_config = (
         MoveItConfigsBuilder("m5", package_name="m5_configure")
         .robot_description_kinematics(file_path="config/kinematics.yaml")
         .sensors_3d(file_path="config/sensors_3d.yaml")
+        .trajectory_execution(file_path="config/moveit_controllers.yaml")  # 使用 MoveItConfigsBuilder 方式加载
         .to_moveit_configs()
     )
     
@@ -79,8 +81,8 @@ def generate_launch_description():
         moveit_config.planning_pipelines,             # 建议也加上
         moveit_config.joint_limits,                   # 建议也加上
         moveit_config.sensors_3d,                     # 你需要禁用octomap的话也要加上
+        moveit_config.trajectory_execution,          # ✅使用 MoveItConfigsBuilder 加载的 trajectory_execution（与 demo.launch.py 一致）
         move_group_configuration,
-        os.path.join(m5_configure_dir, "config", "moveit_controllers.yaml"),
         {"use_sim_time": False},
         ]
 

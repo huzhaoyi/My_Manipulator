@@ -1,9 +1,10 @@
 arm_group:
-  kinematics_solver: kdl_kinematics_plugin/KDLKinematicsPlugin
+  kinematics_solver: trac_ik_kinematics_plugin/TRAC_IKKinematicsPlugin
   kinematics_solver_search_resolution: 0.005
-  kinematics_solver_timeout: 0.5  # 增加超时时间到0.5秒，给IK求解更多时间
-  kinematics_solver_attempts: 20  # 增加尝试次数到20次，提高成功率
+  kinematics_solver_timeout: 2.0  # 增加到2000ms，给TRAC-IK更多时间找到解
   position_only_ik: true  # 4DOF机械臂只需要位置IK，不需要姿态
+  epsilon: 0.01  # IK求解精度，进一步放宽以提高成功率（从0.001增加到0.01）
+  solve_type: Speed  # TRAC-IK求解类型：Speed（快速，返回第一个解）或Distance（距离优化）
 
 # gripper_group does not need a kinematics solver as it's not a kinematic chain
 # It only contains two independent joints (JointGL and JointGR)

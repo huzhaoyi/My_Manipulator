@@ -169,9 +169,9 @@ int main(int argc, char * argv[])
   geometry_msgs::msg::Pose target_pose = current_pose_msg;
   
   // 目标位置：障碍物盒子在(0.18, 0.0, 0.20)，目标在盒子前方
-  target_pose.position.x = 0.30;
-  target_pose.position.y = 0.0;
-  target_pose.position.z = 0.30;
+  target_pose.position.x = 0.25;
+  target_pose.position.y = -0.10;
+  target_pose.position.z = 0.35;
   
   RCLCPP_INFO(logger, "当前位置: x=%.3f, y=%.3f, z=%.3f", 
               current_pose_msg.position.x,
@@ -211,7 +211,7 @@ int main(int argc, char * argv[])
   } else {
     RCLCPP_WARN(logger, "位姿规划失败，尝试关节空间规划...");
   }
-#if 0
+#if 1
   // 如果位姿规划成功，跳过关节空间规划，直接到程序末尾统一退出
   if (pose_planning_success) {
     RCLCPP_INFO(logger, "位姿规划成功，跳过关节空间规划");
