@@ -37,7 +37,9 @@
     <end_effector group="gripper_group" name="gripper"
              parent_group="arm_group" parent_link="LinkGG"/>
     <!--VIRTUAL JOINT: Purpose: this element defines a virtual joint between a robot link and an external frame of reference (considered fixed with respect to the robot)-->
-    <virtual_joint name="world_joint" type="fixed" parent_frame="world" child_link="world_link"/>
+    <!-- 注意：parent_frame应该是planning frame，child_link是机器人的根link -->
+    <!-- 根据URDF，world_link是根link，所以parent_frame和child_link都应该是world_link -->
+    <virtual_joint name="world_joint" type="fixed" parent_frame="world_link" child_link="world_link"/>
     <!--DISABLE COLLISIONS: By default it is assumed that any link of the robot could potentially come into collision with any other link in the robot. This tag disables collision checking between a specified pair of links. -->
     <disable_collisions link1="BottomLink" link2="Link1" reason="Never"/>
     <disable_collisions link1="BottomLink" link2="Link2" reason="Never"/>

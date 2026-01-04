@@ -41,7 +41,8 @@ planner_configs:
     goal_bias: 0.05  # When close to goal select goal, with this probability? default: 0.05
   RRTConnect:
     type: geometric::RRTConnect
-    range: 0.0  # Max motion added to tree. ==> maxDistance_ default: 0.0, if 0.0, set on setup()
+    range: 0.1  # Max motion added to tree. 设置为0.1以提高规划效率（从0.0增加到0.1）
+    goal_bias: 0.1  # 增加向目标采样的概率（默认0.05可能太低），提高目标状态采样成功率
   RRTstar:
     type: geometric::RRTstar
     range: 0.0  # Max motion added to tree. ==> maxDistance_ default: 0.0, if 0.0, set on setup()
