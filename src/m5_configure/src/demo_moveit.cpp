@@ -13,6 +13,7 @@
 #include <rclcpp/executors/multi_threaded_executor.hpp>
 #include <moveit/move_group_interface/move_group_interface.h>
 #include <geometry_msgs/msg/pose_stamped.hpp>
+#include <std_msgs/msg/string.hpp>
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_listener.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
@@ -40,8 +41,12 @@ public:
         "/target_pose", 10, 
         std::bind(&MoveItDemo::target_pose_callback, this, std::placeholders::_1));
 
+    // 发布状态到网页（用于显示规划中、执行中等状态）
+    state_publisher_ = this->create_publisher<std_msgs::msg::String>("/robot_state", 10);
+
     RCLCPP_INFO(this->get_logger(), "demo_moveit节点已启动，等待目标位姿消息...");
     RCLCPP_INFO(this->get_logger(), "订阅话题: /target_pose");
+    RCLCPP_INFO(this->get_logger(), "发布话题: /robot_state");
   }
 
   ~MoveItDemo()
@@ -192,8 +197,12 @@ private:
   {
     if (!move_group_interface_) {
       RCLCPP_WARN(this->get_logger(), "MoveGroupInterface not ready yet, dropping target_pose");
+      this->publish_state("error"); // 发布错误状态：MoveIt未准备好
       return;
     }
+    
+    // 发布状态：收到目标点
+    this->publish_state("received");
 
     // 参考成熟实现：简化处理，验证frame_id
     // MoveIt会自动处理坐标系转换
@@ -239,6 +248,7 @@ private:
   }
 
   rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr target_pose_sub_;
+  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr state_publisher_;
   std::shared_ptr<moveit::planning_interface::MoveGroupInterface> move_group_interface_;
   std::shared_ptr<rclcpp::executors::MultiThreadedExecutor> executor_;
   std::thread executor_thread_;
@@ -1038,6 +1048,8 @@ private:
       RCLCPP_WARN(this->get_logger(), "目标位置 (%.6f, %.6f, %.6f) 超出工作空间边界，跳过规划",
                   x, y, z);
       RCLCPP_INFO(this->get_logger(), "=== 工作空间验证结束（拒绝）===");
+      // 发布状态：拒绝目标点
+      this->publish_state("rejected");
       return;
     }
     
@@ -1057,6 +1069,8 @@ private:
     if (!state)
     {
       RCLCPP_ERROR(this->get_logger(), "getCurrentState() 失败：MoveIt 没拿到有效 joint_states");
+      // 发布状态：无效状态
+      this->publish_state("invalid");
       return;
     }
 
@@ -1064,6 +1078,8 @@ private:
     if (!jmg)
     {
       RCLCPP_ERROR(this->get_logger(), "找不到 JointModelGroup: arm_group（SRDF group 名可能不一致）");
+      // 发布状态：无效状态
+      this->publish_state("invalid");
       return;
     }
 
@@ -1100,6 +1116,8 @@ private:
     if (!joints_valid)
     {
       RCLCPP_ERROR(this->get_logger(), "检测到无效的关节值，无法继续规划");
+      // 发布状态：无效状态
+      this->publish_state("invalid");
       return;
     }
     
@@ -1260,6 +1278,9 @@ private:
         else
         {
           RCLCPP_WARN(this->get_logger(), "直接IK测试失败，说明IK求解器可能有问题或目标位置不可达");
+          // 发布状态：拒绝目标点（IK不可达）
+          this->publish_state("rejected");
+          return;
         }
       }
     }
@@ -1270,13 +1291,9 @@ private:
     
     // 1. 测试目标位姿的IK求解（简化版，只测试一次，不进行详细诊断）
     // 注释掉详细测试以加快规划速度，直接IK测试已经验证了IK求解器工作正常
-    // bool ik_success = test_ik_solver(final_target_pose, state);
-    bool ik_success = true;  // 假设IK求解成功，因为直接IK测试已经验证
-    // if (!ik_success)
-    {
-      RCLCPP_ERROR(this->get_logger(), "规划前诊断：IK求解失败，目标位姿可能不可达");
-      RCLCPP_ERROR(this->get_logger(), "建议：检查目标位置是否在工作空间内，或调整目标位姿");
-    }
+    // 注意：直接IK测试在之前已经完成，如果失败会在那里处理并返回
+    // 这里假设IK成功（因为如果失败已经返回了）
+    bool ik_success = true;  // 直接IK测试已通过，假设IK成功
     
     // 2. 测试当前状态的碰撞
     bool start_collision = test_collision(state, "起始状态");
@@ -1411,6 +1428,9 @@ private:
       }
     }
     
+    // 发布状态：规划中
+    this->publish_state("planning");
+    
     // 参考成熟实现：直接进行规划，MoveIt会自动处理IK和坐标系转换
     RCLCPP_INFO(this->get_logger(), "=== 开始位姿规划（参考成熟实现）===");
     
@@ -1510,12 +1530,17 @@ private:
       
       RCLCPP_INFO(this->get_logger(), "=== 开始执行规划 ===");
       
+      // 发布状态：执行中
+      this->publish_state("executing");
+      
       // 执行规划
       moveit::core::MoveItErrorCode result = move_group_interface_->execute(plan);
       
       if (result == moveit::core::MoveItErrorCode::SUCCESS)
       {
         RCLCPP_INFO(this->get_logger(), "=== 执行成功 ===");
+        // 发布状态：空闲
+        this->publish_state("idle");
       }
       else
       {
@@ -1523,10 +1548,15 @@ private:
         RCLCPP_WARN(this->get_logger(), "错误代码: %d", result.val);
         // MoveItErrorCode没有getMessage()方法，直接输出错误代码
         RCLCPP_WARN(this->get_logger(), "错误代码含义: SUCCESS=1, FAILURE=-1, PLANNING_FAILED=-2, INVALID_MOTION_PLAN=-3, MOTION_PLAN_INVALIDATED_BY_ENVIRONMENT_CHANGE=-4, CONTROL_FAILED=-5, UNABLE_TO_AQUIRE_SENSOR_DATA=-6, TIMED_OUT=-7, PREEMPTED=-8");
+        // 发布状态：错误
+        this->publish_state("error");
       }
     }
     else
     {
+      // 发布状态：错误
+      this->publish_state("error");
+      
       // 规划失败时的详细诊断
       RCLCPP_ERROR(this->get_logger(), "=== 位姿规划失败 - 详细诊断 ===");
       RCLCPP_ERROR(this->get_logger(), "错误代码: %d", code.val);
@@ -1651,6 +1681,18 @@ private:
     move_group_interface_->clearPathConstraints();
   }
 
+  // 发布状态到网页
+  void publish_state(const std::string& state)
+  {
+    if (state_publisher_)
+    {
+      std_msgs::msg::String msg;
+      msg.data = state;
+      state_publisher_->publish(msg);
+      RCLCPP_DEBUG(this->get_logger(), "发布状态: %s", state.c_str());
+    }
+  }
+
   // 工作线程函数
   void worker_thread()
   {
@@ -1688,6 +1730,7 @@ private:
           process_planning_task(task);
         } catch (const std::exception& e) {
           RCLCPP_ERROR(this->get_logger(), "处理规划任务时发生异常: %s", e.what());
+          this->publish_state("error");
         }
       }
     }

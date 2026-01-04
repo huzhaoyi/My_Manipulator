@@ -5,6 +5,80 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>S3机械臂模拟器</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script>
+        // STLLoader (内联版本，兼容Three.js r128)
+        class STLLoader {
+            constructor(manager) {
+                this.manager = (manager !== undefined) ? manager : THREE.DefaultLoadingManager;
+            }
+            
+            load(url, onLoad, onProgress, onError) {
+                const scope = this;
+                const loader = new THREE.FileLoader(scope.manager);
+                loader.setResponseType('arraybuffer');
+                loader.setPath(scope.path);
+                loader.load(url, function(buffer) {
+                    try {
+                        onLoad(scope.parse(buffer));
+                    } catch (e) {
+                        if (onError) {
+                            onError(e);
+                        } else {
+                            console.error(e);
+                        }
+                        scope.manager.itemError(url);
+                    }
+                }, onProgress, onError);
+            }
+            
+            parse(data) {
+                const reader = new DataView(data);
+                const faces = reader.getUint32(80, true);
+                let r, g, b, hasColors = false, colors;
+                let defaultR, defaultG, defaultB;
+                
+                // 检查是否有颜色信息
+                const offset = 80 + 4 + 32 * faces;
+                if (offset === reader.byteLength) {
+                    hasColors = true;
+                    colors = new Float32Array(faces * 3 * 3);
+                    defaultR = reader.getUint8(80 + 4 + 32 * faces + 0) / 255;
+                    defaultG = reader.getUint8(80 + 4 + 32 * faces + 1) / 255;
+                    defaultB = reader.getUint8(80 + 4 + 32 * faces + 2) / 255;
+                }
+                
+                const dataOffset = 84;
+                const faceLength = 12 * 4 + 2;
+                const geometry = new THREE.BufferGeometry();
+                const vertices = [];
+                const normals = [];
+                
+                for (let face = 0; face < faces; face++) {
+                    const start = dataOffset + face * faceLength;
+                    const normalX = reader.getFloat32(start, true);
+                    const normalY = reader.getFloat32(start + 4, true);
+                    const normalZ = reader.getFloat32(start + 8, true);
+                    
+                    for (let i = 1; i <= 3; i++) {
+                        const vertexstart = start + i * 12;
+                        vertices.push(reader.getFloat32(vertexstart, true));
+                        vertices.push(reader.getFloat32(vertexstart + 4, true));
+                        vertices.push(reader.getFloat32(vertexstart + 8, true));
+                        normals.push(normalX, normalY, normalZ);
+                    }
+                }
+                
+                geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+                geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+                
+                if (hasColors) {
+                    geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+                }
+                
+                return geometry;
+            }
+        }
+    </script>
     <style>
         * {
             margin: 0;
@@ -13,9 +87,11 @@
         }
         
         body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: #333;
+            font-family: 'Segoe UI', 'Microsoft YaHei', Tahoma, Geneva, Verdana, sans-serif;
+            background: #0f1419;
+            background-image: 
+                linear-gradient(135deg, #0f1419 0%, #1a1f2a 100%);
+            color: #e0e0e0;
             overflow: hidden;
         }
         
@@ -24,10 +100,24 @@
             height: 100vh;
         }
         
+        /* 左侧：关节值显示 */
+        .left-panel {
+            width: 280px;
+            background: rgba(15, 20, 40, 0.85);
+            backdrop-filter: blur(10px);
+            border-right: 1px solid rgba(0, 255, 255, 0.2);
+            padding: 20px;
+            overflow-y: auto;
+            box-shadow: 0 0 30px rgba(0, 255, 255, 0.1);
+        }
+        
+        /* 中间：3D机械臂显示 */
         .viewer {
             flex: 1;
             position: relative;
-            background: #1a1a1a;
+            background: #0f1419;
+            border-left: 1px solid rgba(100, 120, 140, 0.15);
+            border-right: 1px solid rgba(100, 120, 140, 0.15);
         }
         
         #canvas {
@@ -35,33 +125,54 @@
             height: 100%;
         }
         
-        .control-panel {
+        /* 右侧：控制界面 */
+        .right-panel {
             width: 350px;
-            background: rgba(255, 255, 255, 0.95);
+            background: rgba(20, 25, 35, 0.9);
+            backdrop-filter: blur(10px);
+            border-left: 1px solid rgba(100, 120, 140, 0.15);
             padding: 20px;
             overflow-y: auto;
-            box-shadow: -2px 0 10px rgba(0,0,0,0.1);
+            box-shadow: 0 0 20px rgba(0, 0, 0, 0.3);
         }
         
         h1 {
-            color: #667eea;
+            color: #a0b8c8;
             margin-bottom: 20px;
             font-size: 24px;
             text-align: center;
+            text-shadow: none;
+            font-weight: 600;
+            letter-spacing: 1px;
         }
         
         .status-box {
-            background: #f5f5f5;
+            background: rgba(15, 20, 28, 0.7);
+            border: 1px solid rgba(100, 120, 140, 0.2);
             padding: 15px;
-            border-radius: 8px;
+            border-radius: 12px;
             margin-bottom: 20px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+        }
+        
+        .status-box h3 {
+            color: #a0b8c8;
+            margin-bottom: 12px;
+            font-size: 16px;
+            text-shadow: none;
         }
         
         .status-item {
             display: flex;
             justify-content: space-between;
-            padding: 8px 0;
-            border-bottom: 1px solid #ddd;
+            padding: 10px 0;
+            border-bottom: 1px solid rgba(100, 120, 140, 0.1);
+            transition: all 0.3s;
+        }
+        
+        .status-item:hover {
+            background: rgba(100, 120, 140, 0.05);
+            padding-left: 5px;
         }
         
         .status-item:last-child {
@@ -69,85 +180,404 @@
         }
         
         .status-label {
-            font-weight: bold;
-            color: #666;
+            font-weight: 500;
+            color: #b0b0b0;
         }
         
         .status-value {
-            color: #333;
+            color: #a0b8c8;
             font-family: 'Courier New', monospace;
+            font-weight: 600;
+            text-shadow: none;
         }
         
         .connection-status {
-            padding: 10px;
-            border-radius: 5px;
+            padding: 12px;
+            border-radius: 8px;
             margin-bottom: 20px;
             text-align: center;
             font-weight: bold;
+            border: 1px solid;
+            transition: all 0.3s;
         }
         
         .connected {
-            background: #4caf50;
-            color: white;
+            background: rgba(76, 175, 80, 0.15);
+            border-color: rgba(76, 175, 80, 0.4);
+            color: #81c784;
+            box-shadow: 0 2px 8px rgba(76, 175, 80, 0.2);
         }
         
         .disconnected {
-            background: #f44336;
-            color: white;
+            background: rgba(244, 67, 54, 0.15);
+            border-color: rgba(244, 67, 54, 0.4);
+            color: #e57373;
+            box-shadow: 0 2px 8px rgba(244, 67, 54, 0.2);
         }
         
         .info-box {
-            background: #e3f2fd;
+            background: rgba(15, 20, 28, 0.7);
+            border: 1px solid rgba(100, 120, 140, 0.2);
             padding: 15px;
-            border-radius: 8px;
+            border-radius: 12px;
             margin-top: 20px;
             font-size: 12px;
-            color: #1976d2;
+            color: #b0b0b0;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+        }
+        
+        .info-box strong {
+            color: #a0b8c8;
+            text-shadow: none;
+        }
+        
+        /* 滚动条样式 */
+        .left-panel::-webkit-scrollbar,
+        .right-panel::-webkit-scrollbar {
+            width: 8px;
+        }
+        
+        .left-panel::-webkit-scrollbar-track,
+        .right-panel::-webkit-scrollbar-track {
+            background: rgba(0, 0, 0, 0.3);
+        }
+        
+        .left-panel::-webkit-scrollbar-thumb,
+        .right-panel::-webkit-scrollbar-thumb {
+            background: rgba(100, 120, 140, 0.3);
+            border-radius: 4px;
+        }
+        
+        .left-panel::-webkit-scrollbar-thumb:hover,
+        .right-panel::-webkit-scrollbar-thumb:hover {
+            background: rgba(100, 120, 140, 0.5);
+        }
+        
+        /* LOGO样式 */
+        .logo-container {
+            text-align: center;
+            margin-bottom: 25px;
+            padding: 20px 15px;
+            border-bottom: 1px solid rgba(100, 120, 140, 0.15);
+            background: rgba(255, 255, 255, 0.02);
+            border-radius: 12px;
+            border: 1px solid rgba(100, 120, 140, 0.2);
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+        }
+        
+        .logo-container img {
+            max-width: 100%;
+            height: auto;
+            max-height: 80px;
+            display: block;
+            margin: 0 auto;
+            /* 柔和的背景 */
+            background: rgba(255, 255, 255, 0.05);
+            padding: 10px;
+            border-radius: 8px;
+            /* 移除强烈的滤镜效果，保持LOGO原始颜色 */
+            filter: none;
+            transition: all 0.3s;
+            opacity: 0.95;
+        }
+        
+        .logo-container img:hover {
+            opacity: 1;
+            transform: scale(1.02);
+            background: rgba(255, 255, 255, 0.08);
+        }
+        
+        /* 顶部LOGO（可选） */
+        .top-logo {
+            position: absolute;
+            top: 15px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 100;
+            max-height: 50px;
+            /* 柔和的背景，根据LOGO颜色调整 */
+            background: rgba(255, 255, 255, 0.05);
+            padding: 8px 15px;
+            border-radius: 8px;
+            /* 移除边框和强烈发光 */
+            border: none;
+            box-shadow: none;
+            /* 移除强烈的滤镜效果，保持LOGO原始颜色 */
+            filter: none;
+            opacity: 0.95;
+            transition: opacity 0.3s;
+        }
+        
+        .top-logo:hover {
+            opacity: 1;
+        }
+        
+        .control-box {
+            background: rgba(15, 20, 28, 0.7);
+            border: 1px solid rgba(100, 120, 140, 0.2);
+            padding: 20px;
+            border-radius: 12px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+        }
+        
+        .control-box h3 {
+            margin-bottom: 15px;
+            color: #a0b8c8;
+            text-shadow: none;
+            font-size: 18px;
+        }
+        
+        .input-group {
+            margin-bottom: 12px;
+        }
+        
+        .input-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 500;
+            color: #b0b0b0;
+            font-size: 13px;
+        }
+        
+        .input-group input {
+            width: 100%;
+            padding: 10px;
+            background: rgba(10, 15, 22, 0.8);
+            border: 1px solid rgba(100, 120, 140, 0.3);
+            border-radius: 6px;
+            font-size: 14px;
+            font-family: 'Courier New', monospace;
+            color: #a0b8c8;
+            transition: all 0.3s;
+        }
+        
+        .input-group input:focus {
+            outline: none;
+            border-color: #a0b8c8;
+            box-shadow: 0 0 8px rgba(160, 184, 200, 0.2);
+            background: rgba(15, 20, 28, 0.9);
+        }
+        
+        .input-row {
+            display: flex;
+            gap: 10px;
+        }
+        
+        .input-row .input-group {
+            flex: 1;
+            margin-bottom: 0;
+        }
+        
+        .button-group {
+            display: flex;
+            gap: 10px;
+            margin-top: 15px;
+        }
+        
+        button {
+            flex: 1;
+            padding: 12px;
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, #6b8ca8 0%, #4a6b85 100%);
+            color: #ffffff;
+            border: 1px solid rgba(100, 120, 140, 0.4);
+            font-weight: 600;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+        }
+        
+        .btn-primary:hover {
+            background: linear-gradient(135deg, #7a9cb8 0%, #5a7b95 100%);
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+        }
+        
+        .btn-secondary {
+            background: rgba(100, 100, 100, 0.3);
+            color: #b0b0b0;
+            border: 1px solid rgba(150, 150, 150, 0.3);
+        }
+        
+        .btn-secondary:hover {
+            background: rgba(120, 120, 120, 0.4);
+            border-color: rgba(200, 200, 200, 0.5);
+        }
+        
+        .message-box {
+            margin-top: 15px;
+            padding: 10px;
+            border-radius: 4px;
+            font-size: 12px;
+            display: none;
+        }
+        
+        .message-success {
+            background: rgba(76, 175, 80, 0.15);
+            color: #81c784;
+            border: 1px solid rgba(76, 175, 80, 0.3);
+            box-shadow: 0 2px 6px rgba(76, 175, 80, 0.15);
+        }
+        
+        .message-error {
+            background: rgba(244, 67, 54, 0.15);
+            color: #e57373;
+            border: 1px solid rgba(244, 67, 54, 0.3);
+            box-shadow: 0 2px 6px rgba(244, 67, 54, 0.15);
+        }
+        
+        .toggle-advanced {
+            margin-top: 10px;
+            font-size: 12px;
+            color: #a0b8c8;
+            cursor: pointer;
+            text-decoration: underline;
+            text-shadow: none;
+            transition: all 0.3s;
+        }
+        
+        .toggle-advanced:hover {
+            color: #c0d0e0;
+        }
+        
+        .advanced-controls {
+            display: none;
+            margin-top: 15px;
+            padding-top: 15px;
+            border-top: 1px solid rgba(100, 120, 140, 0.2);
         }
     </style>
 </head>
 <body>
     <div class="container">
-        <div class="viewer">
-            <canvas id="canvas"></canvas>
-        </div>
-        <div class="control-panel">
-            <h1>🤖 S3机械臂模拟器</h1>
+        <!-- 左侧：关节值显示 -->
+        <div class="left-panel">
+            
+            <h1>📊 关节状态</h1>
             
             <div class="connection-status" id="connectionStatus">
                 <span id="statusText">连接中...</span>
             </div>
             
             <div class="status-box">
-                <h3>当前状态</h3>
-                <div class="status-item">
-                    <span class="status-label">Axis 1:</span>
-                    <span class="status-value" id="axis1-value">0.0°</span>
+                <h3>关节角度</h3>
+                <div id="joint-values-container">
+                    <!-- 如果收到数据，显示关节值 -->
+                    <div id="joint-values" style="display: none;">
+                        <div class="status-item">
+                            <span class="status-label">Joint 1:</span>
+                            <span class="status-value" id="axis1-value">0.0°</span>
+                        </div>
+                        <div class="status-item">
+                            <span class="status-label">Joint 2:</span>
+                            <span class="status-value" id="axis2-value">0.0°</span>
+                        </div>
+                        <div class="status-item">
+                            <span class="status-label">Joint 3:</span>
+                            <span class="status-value" id="axis3-value">0.0°</span>
+                        </div>
+                        <div class="status-item">
+                            <span class="status-label">Joint 4:</span>
+                            <span class="status-value" id="axis4-value">0.0°</span>
+                        </div>
+                    </div>
+                    <!-- 如果未收到数据，显示提示 -->
+                    <div id="no-data-message" class="status-item" style="color: #e57373; font-style: italic; text-shadow: none;">
+                        <span>⏳ 未收到机械臂数据</span>
+                    </div>
                 </div>
+            </div>
+            
+            <div class="status-box">
+                <h3>系统状态</h3>
                 <div class="status-item">
-                    <span class="status-label">Axis 2:</span>
-                    <span class="status-value" id="axis2-value">0.0°</span>
-                </div>
-                <div class="status-item">
-                    <span class="status-label">Axis 3:</span>
-                    <span class="status-value" id="axis3-value">0.0°</span>
-                </div>
-                <div class="status-item">
-                    <span class="status-label">Axis 4:</span>
-                    <span class="status-value" id="axis4-value">0.0°</span>
-                </div>
-                <div class="status-item">
-                    <span class="status-label">状态:</span>
+                    <span class="status-label">硬件状态:</span>
                     <span class="status-value" id="robot-status">正常</span>
                 </div>
+                <div class="status-item">
+                    <span class="status-label">运行状态:</span>
+                    <span class="status-value" id="robot-state">空闲</span>
+                </div>
+            </div>
+        </div>
+        
+        <!-- 中间：3D机械臂显示 -->
+        <div class="viewer">
+            <img src="SEALIEN-LOGO.png" alt="SEALIEN" class="top-logo" 
+                 onerror="console.error('顶部LOGO加载失败，路径:', this.src); this.style.display='none';"
+                 onload="console.log('顶部LOGO加载成功')">
+            <canvas id="canvas"></canvas>
+        </div>
+        
+        <!-- 右侧：控制界面 -->
+        <div class="right-panel">
+            <h1>🎮 控制面板</h1>
+            
+            <div class="control-box">
+                <h3>坐标下发</h3>
+                <div class="input-group">
+                    <label>位置 X (m):</label>
+                    <input type="number" id="pose-x" step="0.001" value="0.25" placeholder="0.25">
+                </div>
+                <div class="input-row">
+                    <div class="input-group">
+                        <label>位置 Y (m):</label>
+                        <input type="number" id="pose-y" step="0.001" value="0.0" placeholder="0.0">
+                    </div>
+                    <div class="input-group">
+                        <label>位置 Z (m):</label>
+                        <input type="number" id="pose-z" step="0.001" value="0.35" placeholder="0.35">
+                    </div>
+                </div>
+                
+                <div class="toggle-advanced" onclick="toggleAdvanced()">
+                    <span id="toggle-text">显示高级选项 (Orientation)</span>
+                </div>
+                
+                <div class="advanced-controls" id="advanced-controls">
+                    <div class="input-row">
+                        <div class="input-group">
+                            <label>Orientation QX:</label>
+                            <input type="number" id="pose-qx" step="0.001" value="0.0" placeholder="0.0">
+                        </div>
+                        <div class="input-group">
+                            <label>Orientation QY:</label>
+                            <input type="number" id="pose-qy" step="0.001" value="0.0" placeholder="0.0">
+                        </div>
+                    </div>
+                    <div class="input-row">
+                        <div class="input-group">
+                            <label>Orientation QZ:</label>
+                            <input type="number" id="pose-qz" step="0.001" value="0.0" placeholder="0.0">
+                        </div>
+                        <div class="input-group">
+                            <label>Orientation QW:</label>
+                            <input type="number" id="pose-qw" step="0.001" value="1.0" placeholder="1.0">
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="button-group">
+                    <button class="btn-primary" onclick="publishPose()">发布位姿</button>
+                    <button class="btn-secondary" onclick="resetPose()">重置</button>
+                </div>
+                
+                <div class="message-box" id="pose-message"></div>
             </div>
             
             <div class="info-box">
                 <strong>使用说明:</strong><br>
-                • 此模拟器接收UDP命令 (端口7001)<br>
-                • 支持JSON格式控制<br>
-                • 实时显示机械臂状态<br>
-                • 仅接收数据，无手动控制
+                • 接收机械臂JSON反馈 (UDP端口7001)<br>
+                • 发送坐标到 /target_pose 话题<br>
+                • 实时显示规划/执行状态<br>
+                • 自动加载STL模型
             </div>
         </div>
     </div>
@@ -156,20 +586,53 @@
         // Three.js场景设置
         let scene, camera, renderer, robot;
         let axes = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0};
+        let stlLoader = null;
+        let useSTLModel = false;
+        let stlModelLoaded = false;
+        let urdfData = null;
+        let linkMeshes = {}; // 存储每个link的mesh对象
+        let linkGroups = {}; // 存储每个link的group对象（用于变换）
+        let jointMap = {}; // 存储joint信息，key为child link name
+        
+        // 坐标系转换：ROS/URDF坐标系 → Three.js坐标系
+        // 根据workspace_reachable_positions.md：
+        //   ROS/URDF坐标系（右手系）：
+        //     X轴：前（forward）
+        //     Y轴：左（left）
+        //     Z轴：上（up）
+        // Three.js坐标系（右手系）：
+        //   X轴：右（right）
+        //   Y轴：上（up）
+        //   Z轴：前（forward，朝向屏幕外）
+        // 转换关系：ROS的(X,Y,Z) → Three.js的(-Y, Z, X)
+        // 实现方法：使用欧拉角旋转
+        // 方案1：绕X轴旋转-90度，然后绕Z轴旋转-90度
+        // 方案2：绕Y轴旋转90度，然后绕X轴旋转90度
+        // 根据demo_moveit.cpp，Link2沿Z方向延伸，在ROS中Z是向上
+        // 在Three.js中，Y是向上，所以需要将ROS的Z轴映射到Three.js的Y轴
+        // 同时ROS的X轴（前）需要映射到Three.js的Z轴（前）
+        // ROS的Y轴（左）需要映射到Three.js的-X轴（右的相反方向）
+        const rosToThreeJsRotation = {
+            // 将ROS坐标系转换为Three.js坐标系
+            // 使用欧拉角：先绕X轴旋转-90度（使Z→Y），再绕Z轴旋转-90度（使X→Z，Y→-X）
+            x: -Math.PI/2,  // 绕X轴旋转-90度：ROS的Z（上）→ Three.js的Y（上）
+            y: 0,
+            z: -Math.PI/2   // 绕Z轴旋转-90度：ROS的X（前）→ Three.js的Z（前），ROS的Y（左）→ Three.js的-X（右的相反）
+        };
         
         function initScene() {
             const canvas = document.getElementById('canvas');
             const width = canvas.parentElement.clientWidth;
             const height = canvas.parentElement.clientHeight;
             
-            // 场景
+            // 场景（高科技风格背景）
             scene = new THREE.Scene();
-            scene.background = new THREE.Color(0x1a1a1a);
+            scene.background = new THREE.Color(0x0a0a0a);
             
-            // 相机
-            camera = new THREE.PerspectiveCamera(75, width / height, 0.1, 1000);
-            camera.position.set(2, 2, 2);
-            camera.lookAt(0, 0, 0);
+            // 相机（调整位置和视野，让机械臂完整显示）
+            camera = new THREE.PerspectiveCamera(60, width / height, 0.01, 1000); // fov设为60，平衡显示大小
+            camera.position.set(1.2, 1.0, 1.2); // 适中的距离，确保模型完整显示
+            camera.lookAt(0, 0.2, 0); // 稍微向上看，让机械臂在视野中心
             
             // 渲染器
             renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true });
@@ -185,16 +648,126 @@
             directionalLight.castShadow = true;
             scene.add(directionalLight);
             
+            // 初始化STL加载器
+            stlLoader = new STLLoader();
+            
             // 创建机械臂模型
             createRobot();
             
-            // 添加网格
-            const gridHelper = new THREE.GridHelper(5, 20, 0x444444, 0x222222);
+            // 添加网格（根据新配色调整）
+            const gridHelper = new THREE.GridHelper(3, 20, 0x64748b, 0x1e293b); // 柔和的灰色网格
+            gridHelper.position.set(0, 0, 0); // 确保在原点
             scene.add(gridHelper);
             
-            // 添加坐标轴
-            const axesHelper = new THREE.AxesHelper(1);
-            scene.add(axesHelper);
+            // 添加坐标轴（在场景中心，更明显）
+            // 注意：坐标轴需要与机械臂模型使用相同的坐标系转换
+            // ROS/URDF坐标系：X前，Y左，Z上
+            // Three.js坐标系：X右，Y上，Z前
+            // 转换后：ROS的X（前）→ Three.js的Z（前），ROS的Y（左）→ Three.js的-X（右的相反），ROS的Z（上）→ Three.js的Y（上）
+            const axesSize = 0.8;
+            const axesGroup = new THREE.Group();
+            
+            // ROS X轴（红色）- 前（在Three.js中对应Z轴正方向）
+            const xAxisGeometry = new THREE.BufferGeometry().setFromPoints([
+                new THREE.Vector3(0, 0, 0),
+                new THREE.Vector3(0, 0, axesSize)
+            ]);
+            const xAxisMaterial = new THREE.LineBasicMaterial({ color: 0xff4444, linewidth: 3 });
+            const xAxis = new THREE.Line(xAxisGeometry, xAxisMaterial);
+            axesGroup.add(xAxis);
+            
+            // ROS Y轴（绿色）- 左（在Three.js中对应-X轴方向，即X轴负方向）
+            const yAxisGeometry = new THREE.BufferGeometry().setFromPoints([
+                new THREE.Vector3(0, 0, 0),
+                new THREE.Vector3(-axesSize, 0, 0)
+            ]);
+            const yAxisMaterial = new THREE.LineBasicMaterial({ color: 0x44ff44, linewidth: 3 });
+            const yAxis = new THREE.Line(yAxisGeometry, yAxisMaterial);
+            axesGroup.add(yAxis);
+            
+            // ROS Z轴（蓝色）- 上（在Three.js中对应Y轴正方向）
+            const zAxisGeometry = new THREE.BufferGeometry().setFromPoints([
+                new THREE.Vector3(0, 0, 0),
+                new THREE.Vector3(0, axesSize, 0)
+            ]);
+            const zAxisMaterial = new THREE.LineBasicMaterial({ color: 0x4444ff, linewidth: 3 });
+            const zAxis = new THREE.Line(zAxisGeometry, zAxisMaterial);
+            axesGroup.add(zAxis);
+            
+            // 添加坐标轴箭头（使用小圆锥）
+            const arrowLength = 0.1;
+            const arrowRadius = 0.02;
+            
+            // ROS X轴箭头（前方向，Three.js的Z轴正方向）
+            const xArrowGeometry = new THREE.ConeGeometry(arrowRadius, arrowLength, 8);
+            const xArrowMaterial = new THREE.MeshBasicMaterial({ color: 0xff4444 });
+            const xArrow = new THREE.Mesh(xArrowGeometry, xArrowMaterial);
+            xArrow.position.set(0, 0, axesSize);
+            xArrow.rotation.x = -Math.PI / 2;
+            axesGroup.add(xArrow);
+            
+            // ROS Y轴箭头（左方向，Three.js的-X轴方向）
+            const yArrowGeometry = new THREE.ConeGeometry(arrowRadius, arrowLength, 8);
+            const yArrowMaterial = new THREE.MeshBasicMaterial({ color: 0x44ff44 });
+            const yArrow = new THREE.Mesh(yArrowGeometry, yArrowMaterial);
+            yArrow.position.set(-axesSize, 0, 0);
+            yArrow.rotation.z = Math.PI / 2;
+            axesGroup.add(yArrow);
+            
+            // ROS Z轴箭头（上方向，Three.js的Y轴正方向）
+            const zArrowGeometry = new THREE.ConeGeometry(arrowRadius, arrowLength, 8);
+            const zArrowMaterial = new THREE.MeshBasicMaterial({ color: 0x4444ff });
+            const zArrow = new THREE.Mesh(zArrowGeometry, zArrowMaterial);
+            zArrow.position.set(0, axesSize, 0);
+            axesGroup.add(zArrow);
+            
+            // 添加坐标轴标签（X、Y、Z文字，对应ROS/URDF坐标系）
+            function createAxisLabel(text, color) {
+                const canvas = document.createElement('canvas');
+                const context = canvas.getContext('2d');
+                canvas.width = 64;
+                canvas.height = 64;
+                
+                context.fillStyle = 'rgba(0, 0, 0, 0)';
+                context.fillRect(0, 0, canvas.width, canvas.height);
+                
+                context.font = 'Bold 48px Arial';
+                context.fillStyle = color;
+                context.textAlign = 'center';
+                context.textBaseline = 'middle';
+                context.fillText(text, canvas.width / 2, canvas.height / 2);
+                
+                const texture = new THREE.CanvasTexture(canvas);
+                texture.needsUpdate = true;
+                
+                const spriteMaterial = new THREE.SpriteMaterial({ 
+                    map: texture,
+                    transparent: true,
+                    alphaTest: 0.1
+                });
+                const sprite = new THREE.Sprite(spriteMaterial);
+                sprite.scale.set(0.15, 0.15, 1); // 调整标签大小
+                
+                return sprite;
+            }
+            
+            // ROS X轴标签（前方向）
+            const xLabel = createAxisLabel('X', '#ff4444');
+            xLabel.position.set(0, 0, axesSize + 0.15);
+            axesGroup.add(xLabel);
+            
+            // ROS Y轴标签（左方向）
+            const yLabel = createAxisLabel('Y', '#44ff44');
+            yLabel.position.set(-axesSize - 0.15, 0, 0);
+            axesGroup.add(yLabel);
+            
+            // ROS Z轴标签（上方向）
+            const zLabel = createAxisLabel('Z', '#4444ff');
+            zLabel.position.set(0, axesSize + 0.15, 0);
+            axesGroup.add(zLabel);
+            
+            axesGroup.position.set(0, 0, 0); // 确保在原点中心
+            scene.add(axesGroup);
             
             // 窗口调整
             window.addEventListener('resize', () => {
@@ -211,7 +784,323 @@
         
         function createRobot() {
             robot = new THREE.Group();
+            linkMeshes = {};
+            linkGroups = {};
+            jointMap = {};
             
+            // 加载URDF并解析，然后加载多link STL模型
+            loadURDFAndSTLModels();
+        }
+        
+        function loadURDFAndSTLModels() {
+            console.log('开始加载URDF文件...');
+            fetch('/api/urdf')
+                .then(response => response.text())
+                .then(urdfText => {
+                    console.log('URDF文件加载成功');
+                    urdfData = parseURDF(urdfText);
+                    console.log('URDF解析完成，links:', Object.keys(urdfData.links).length, 'joints:', Object.keys(urdfData.joints).length);
+                    loadAllSTLModels();
+                })
+                .catch(error => {
+                    console.warn('URDF加载失败，使用默认几何体:', error);
+                    createDefaultRobot();
+                });
+        }
+        
+        function parseURDF(urdfText) {
+            const parser = new DOMParser();
+            const xmlDoc = parser.parseFromString(urdfText, 'text/xml');
+            
+            const links = {};
+            const joints = {};
+            
+            // 解析所有link
+            const linkElements = xmlDoc.getElementsByTagName('link');
+            for (let i = 0; i < linkElements.length; i++) {
+                const link = linkElements[i];
+                const linkName = link.getAttribute('name');
+                if (!linkName || linkName === 'world_link') continue;
+                
+                // 获取visual中的mesh文件
+                const visual = link.getElementsByTagName('visual')[0];
+                if (visual) {
+                    const geometry = visual.getElementsByTagName('geometry')[0];
+                    if (geometry) {
+                        const mesh = geometry.getElementsByTagName('mesh')[0];
+                        if (mesh) {
+                            const filename = mesh.getAttribute('filename');
+                            if (filename) {
+                                // 提取STL文件名 (package://m5/meshes/base_link.STL -> base_link.STL)
+                                const stlName = filename.split('/').pop();
+                                links[linkName] = {
+                                    name: linkName,
+                                    stlFile: stlName,
+                                    visualOrigin: parseOrigin(visual.getElementsByTagName('origin')[0])
+                                };
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // 解析所有joint
+            const jointElements = xmlDoc.getElementsByTagName('joint');
+            for (let i = 0; i < jointElements.length; i++) {
+                const joint = jointElements[i];
+                const jointName = joint.getAttribute('name');
+                const jointType = joint.getAttribute('type');
+                const parent = joint.getElementsByTagName('parent')[0];
+                const child = joint.getElementsByTagName('child')[0];
+                const axis = joint.getElementsByTagName('axis')[0];
+                
+                if (parent && child) {
+                    const parentLink = parent.getAttribute('link');
+                    const childLink = child.getAttribute('link');
+                    const origin = parseOrigin(joint.getElementsByTagName('origin')[0]);
+                    const axisXYZ = axis ? parseXYZ(axis.getAttribute('xyz')) : [0, 0, 1];
+                    
+                    joints[childLink] = {
+                        name: jointName,
+                        type: jointType,
+                        parent: parentLink,
+                        child: childLink,
+                        origin: origin,
+                        axis: axisXYZ
+                    };
+                }
+            }
+            
+            return { links, joints };
+        }
+        
+        function parseOrigin(originElement) {
+            if (!originElement) return { xyz: [0, 0, 0], rpy: [0, 0, 0] };
+            return {
+                xyz: parseXYZ(originElement.getAttribute('xyz') || '0 0 0'),
+                rpy: parseXYZ(originElement.getAttribute('rpy') || '0 0 0')
+            };
+        }
+        
+        function parseXYZ(xyzString) {
+            if (!xyzString) return [0, 0, 0];
+            return xyzString.split(' ').map(parseFloat);
+        }
+        
+        function loadAllSTLModels() {
+            const links = urdfData.links;
+            const linkNames = Object.keys(links);
+            let loadedCount = 0;
+            const totalLinks = linkNames.length;
+            
+            if (totalLinks === 0) {
+                console.warn('没有找到link，使用默认模型');
+                createDefaultRobot();
+                return;
+            }
+            
+            console.log(`开始加载 ${totalLinks} 个STL文件...`);
+            
+            linkNames.forEach(linkName => {
+                const link = links[linkName];
+                const stlFile = link.stlFile;
+                
+                stlLoader.load(
+                    `/meshes/${stlFile}`,
+                    function(geometry) {
+                        // STL加载成功
+                        const material = new THREE.MeshPhongMaterial({ 
+                            color: 0x888888,
+                            specular: 0x111111,
+                            shininess: 200,
+                            flatShading: false
+                        });
+                        
+                        const mesh = new THREE.Mesh(geometry, material);
+                        mesh.castShadow = true;
+                        mesh.receiveShadow = true;
+                        
+                        // 检测单位并缩放（STL通常是毫米）
+                        geometry.computeBoundingBox();
+                        const size = new THREE.Vector3();
+                        geometry.boundingBox.getSize(size);
+                        const maxDimension = Math.max(size.x, size.y, size.z);
+                        if (maxDimension > 100) {
+                            mesh.scale.set(0.001, 0.001, 0.001); // 毫米转米
+                            geometry.computeBoundingBox(); // 重新计算边界框
+                        }
+                        
+                        // 注意：不要自动居中STL模型，因为URDF中已经定义了正确的位置
+                        // STL模型应该保持其原始坐标系，与URDF定义一致
+                        
+                        // 应用visual origin（如果有）
+                        if (link.visualOrigin) {
+                            const origin = link.visualOrigin.xyz;
+                            if (origin && (origin[0] !== 0 || origin[1] !== 0 || origin[2] !== 0)) {
+                                mesh.position.set(origin[0], origin[1], origin[2]);
+                            }
+                            if (link.visualOrigin.rpy) {
+                                const rpy = link.visualOrigin.rpy;
+                                if (rpy && (rpy[0] !== 0 || rpy[1] !== 0 || rpy[2] !== 0)) {
+                                    mesh.rotation.set(rpy[0], rpy[1], rpy[2]);
+                                }
+                            }
+                        }
+                        
+                        // 注意：不再对单个link应用方向校正
+                        // 坐标系转换已经在robot group级别统一处理
+                        
+                        // 创建link group用于变换
+                        const linkGroup = new THREE.Group();
+                        linkGroup.name = linkName;
+                        linkGroup.add(mesh);
+                        
+                        linkMeshes[linkName] = mesh;
+                        linkGroups[linkName] = linkGroup;
+                        
+                        loadedCount++;
+                        console.log(`已加载 ${linkName}: ${stlFile} (${loadedCount}/${totalLinks})`);
+                        
+                        if (loadedCount === totalLinks) {
+                            // 所有STL加载完成，组装模型
+                            assembleRobotModel();
+                        }
+                    },
+                    function(xhr) {
+                        if (xhr.lengthComputable) {
+                            const percent = (xhr.loaded / xhr.total) * 100;
+                            console.log(`${linkName} 加载进度: ${percent.toFixed(0)}%`);
+                        }
+                    },
+                    function(error) {
+                        console.warn(`加载 ${linkName} (${stlFile}) 失败:`, error);
+                        loadedCount++;
+                        if (loadedCount === totalLinks) {
+                            if (Object.keys(linkGroups).length > 0) {
+                                assembleRobotModel();
+                            } else {
+                                createDefaultRobot();
+                            }
+                        }
+                    }
+                );
+            });
+        }
+        
+        function assembleRobotModel() {
+            console.log('开始组装机械臂模型...');
+            const joints = urdfData.joints;
+            const links = urdfData.links;
+            
+            // 创建link的层次结构
+            const linkHierarchy = {};
+            const rootLinks = [];
+            
+            // 找出所有root links（没有parent的link）
+            Object.keys(links).forEach(linkName => {
+                if (!joints[linkName] || joints[linkName].parent === 'world_link' || joints[linkName].parent === 'base_link') {
+                    rootLinks.push(linkName);
+                }
+            });
+            
+            // 如果没有找到root，使用base_link
+            if (rootLinks.length === 0 && linkGroups['base_link']) {
+                rootLinks.push('base_link');
+            }
+            
+            // 从root开始递归添加子link
+            function addLinkToParent(childLinkName, parentGroup) {
+                const linkGroup = linkGroups[childLinkName];
+                if (!linkGroup) return;
+                
+                const joint = joints[childLinkName];
+                if (joint) {
+                    // 应用joint的origin变换（位置和初始旋转）
+                    const origin = joint.origin;
+                    if (origin) {
+                        linkGroup.position.set(origin.xyz[0], origin.xyz[1], origin.xyz[2]);
+                        // 初始旋转会在updateURDFRobot中与关节角度结合
+                        if (origin.rpy) {
+                            // 存储初始旋转，但不直接设置（因为需要与关节角度结合）
+                            joint.initialRpy = origin.rpy;
+                        }
+                    }
+                    
+                    // 存储joint信息用于后续更新
+                    jointMap[childLinkName] = joint;
+                }
+                
+                parentGroup.add(linkGroup);
+                
+                // 递归添加子link
+                Object.keys(joints).forEach(linkName => {
+                    if (joints[linkName].parent === childLinkName) {
+                        addLinkToParent(linkName, linkGroup);
+                    }
+                });
+            }
+            
+            // 从root links开始组装
+            rootLinks.forEach(rootLinkName => {
+                const rootGroup = linkGroups[rootLinkName];
+                if (rootGroup) {
+                    robot.add(rootGroup);
+                    // 添加子link
+                    Object.keys(joints).forEach(linkName => {
+                        if (joints[linkName].parent === rootLinkName) {
+                            addLinkToParent(linkName, rootGroup);
+                        }
+                    });
+                }
+            });
+            
+            // 如果base_link存在，确保它是root
+            if (linkGroups['base_link'] && !rootLinks.includes('base_link')) {
+                // 查找base_link的parent
+                const baseJoint = Object.values(joints).find(j => j.child === 'base_link');
+                if (!baseJoint || baseJoint.parent === 'world_link') {
+                    // base_link应该是root
+                    if (!robot.children.includes(linkGroups['base_link'])) {
+                        robot.add(linkGroups['base_link']);
+                        Object.keys(joints).forEach(linkName => {
+                            if (joints[linkName].parent === 'base_link') {
+                                addLinkToParent(linkName, linkGroups['base_link']);
+                            }
+                        });
+                    }
+                }
+            }
+            
+            // 应用ROS到Three.js的坐标系转换
+            // ROS坐标系：X前，Y左，Z上
+            // Three.js坐标系：X右，Y上，Z前
+            // 转换关系：ROS的(X,Y,Z) → Three.js的(-Y, Z, X)
+            // 在Three.js中，欧拉角的旋转顺序是XYZ
+            // 需要先绕Z轴旋转，再绕X轴旋转
+            // 但Three.js的rotation是累积的，所以顺序很重要
+            // 先设置Z轴旋转，再设置X轴旋转
+            robot.rotation.z = rosToThreeJsRotation.z;  // 先绕Z轴旋转-90度
+            robot.rotation.x = rosToThreeJsRotation.x;  // 再绕X轴旋转-90度
+            robot.rotation.y = rosToThreeJsRotation.y;
+            
+            // 稍微放大机械臂模型（适中的大小）
+            robot.scale.set(1.0, 1.0, 1.0); // 整体放大1.2倍（从1.5改为1.2）
+            
+            console.log('应用ROS到Three.js坐标系转换:', rosToThreeJsRotation);
+            console.log('最终旋转角度:', {
+                x: THREE.MathUtils.radToDeg(robot.rotation.x),
+                y: THREE.MathUtils.radToDeg(robot.rotation.y),
+                z: THREE.MathUtils.radToDeg(robot.rotation.z)
+            });
+            console.log('模型缩放:', robot.scale);
+            
+            scene.add(robot);
+            stlModelLoaded = true;
+            useSTLModel = true;
+            console.log('机械臂模型组装完成');
+        }
+        
+        function createDefaultRobot() {
             // 基座
             const baseGeometry = new THREE.CylinderGeometry(0.15, 0.15, 0.1, 32);
             const baseMaterial = new THREE.MeshPhongMaterial({ color: 0x4a4a4a });
@@ -265,6 +1154,101 @@
         function updateRobot() {
             if (!robot) return;
             
+            if (useSTLModel && stlModelLoaded && urdfData) {
+                // 使用URDF多link模型，根据关节角度更新
+                updateURDFRobot();
+            } else {
+                // 使用默认几何体模型
+                updateDefaultRobot();
+            }
+        }
+        
+        function updateURDFRobot() {
+            // 根据URDF的joint信息更新每个link的旋转
+            // 参考demo_moveit.cpp中的处理方式
+            // Joint2和Joint3的范围是-1.57到0（-90°到0°），0度时应该是垂直向上
+            // 注意：URDF中的axis定义的是旋转轴方向，正角度表示绕该轴正方向旋转
+            
+            function setRotationByAxis(group, axis, angleRad, initialRpy, linkName) {
+                if (!group) return;
+                
+                // 获取初始旋转（来自joint origin的rpy）
+                const baseRpy = initialRpy || [0, 0, 0];
+                
+                // 先设置初始旋转（来自joint origin）
+                group.rotation.set(baseRpy[0], baseRpy[1], baseRpy[2]);
+                
+                // 然后根据axis添加关节角度（使用弧度）
+                // 注意：Three.js中rotation的顺序是XYZ（欧拉角）
+                // URDF中axis (1,0,0)表示绕X轴正方向旋转
+                // 在Three.js中，绕X轴正方向旋转会使物体向下倾斜（符合右手定则）
+                // 但根据URDF，Joint2和Joint3的0度应该是垂直向上，所以可能需要调整方向
+                
+                if (Math.abs(axis[2] - 1) < 0.1) {
+                    // 绕Z轴旋转（正方向）
+                    group.rotation.z += angleRad;
+                } else if (Math.abs(axis[2] + 1) < 0.1) {
+                    // 绕-Z轴旋转（负方向）
+                    group.rotation.z -= angleRad;
+                } else if (Math.abs(axis[0] - 1) < 0.1) {
+                    // 绕X轴旋转（正方向）
+                    // 对于Joint2和Joint3，需要确保0度时是垂直的
+                    // 如果STL模型初始是垂直的，直接加上角度
+                    // 如果STL模型初始是水平的，需要先旋转-90度，再加上角度
+                    group.rotation.x += angleRad;
+                } else if (Math.abs(axis[0] + 1) < 0.1) {
+                    // 绕-X轴旋转（负方向）
+                    group.rotation.x -= angleRad;
+                } else if (Math.abs(axis[1] - 1) < 0.1) {
+                    // 绕Y轴旋转（正方向）
+                    group.rotation.y += angleRad;
+                } else if (Math.abs(axis[1] + 1) < 0.1) {
+                    // 绕-Y轴旋转（负方向）
+                    group.rotation.y -= angleRad;
+                }
+            }
+            
+            // 将角度从度转换为弧度
+            // Joint1: base_link -> Link1, axis (0, 0, 1), 绕Z轴旋转
+            const joint1 = jointMap['Link1'];
+            if (joint1 && linkGroups['Link1']) {
+                const initialRpy = joint1.initialRpy || (joint1.origin ? joint1.origin.rpy : [0, 0, 0]);
+                const angleRad = THREE.MathUtils.degToRad(axes[1]);
+                setRotationByAxis(linkGroups['Link1'], joint1.axis, angleRad, initialRpy);
+            }
+            
+            // Joint2: Link1 -> Link2, axis (1, 0, 0), 绕X轴旋转
+            // 范围：-90°到0°，0°时垂直向上
+            // 注意：如果STL模型初始方向不对，可能需要调整
+            const joint2 = jointMap['Link2'];
+            if (joint2 && linkGroups['Link2']) {
+                const initialRpy = joint2.initialRpy || (joint2.origin ? joint2.origin.rpy : [0, 0, 0]);
+                const angleRad = THREE.MathUtils.degToRad(axes[2]);
+                // 如果STL模型初始是水平的，需要先旋转到垂直
+                // 根据URDF，axis (1,0,0)表示绕X轴，0度应该是垂直向上
+                // 如果STL模型初始沿Y轴（水平），需要先绕X轴旋转-90度（或90度，取决于模型方向）
+                setRotationByAxis(linkGroups['Link2'], joint2.axis, angleRad, initialRpy, 'Link2');
+            }
+            
+            // Joint3: Link2 -> Link3, axis (1, 0, 0), 绕X轴旋转
+            // 范围：-90°到0°，0°时垂直向上
+            const joint3 = jointMap['Link3'];
+            if (joint3 && linkGroups['Link3']) {
+                const initialRpy = joint3.initialRpy || (joint3.origin ? joint3.origin.rpy : [0, 0, 0]);
+                const angleRad = THREE.MathUtils.degToRad(axes[3]);
+                setRotationByAxis(linkGroups['Link3'], joint3.axis, angleRad, initialRpy, 'Link3');
+            }
+            
+            // Joint4: Link3 -> Link4, axis (0, 0, 1), 绕Z轴旋转
+            const joint4 = jointMap['Link4'];
+            if (joint4 && linkGroups['Link4']) {
+                const initialRpy = joint4.initialRpy || (joint4.origin ? joint4.origin.rpy : [0, 0, 0]);
+                const angleRad = THREE.MathUtils.degToRad(axes[4]);
+                setRotationByAxis(linkGroups['Link4'], joint4.axis, angleRad, initialRpy);
+            }
+        }
+        
+        function updateDefaultRobot() {
             // 更新Link1旋转 (Axis 1)
             const link1 = robot.getObjectByName('link1');
             if (link1) {
@@ -298,15 +1282,99 @@
         
         // 状态更新
         function updateStatus(data) {
-            axes = data.axes || axes;
+            // 检查是否收到过机械臂数据
+            const hasReceivedData = data.has_received_robot_data || false;
+            const jointValuesContainer = document.getElementById('joint-values');
+            const noDataMessage = document.getElementById('no-data-message');
             
-            // 更新显示
-            for (let i = 1; i <= 4; i++) {
-                const value = axes[i] || 0;
-                document.getElementById(`axis${i}-value`).textContent = value.toFixed(1) + '°';
+            if (hasReceivedData) {
+                // 已收到数据，显示关节值
+                if (jointValuesContainer) jointValuesContainer.style.display = 'block';
+                if (noDataMessage) noDataMessage.style.display = 'none';
+                
+                axes = data.axes || axes;
+                
+                // 更新显示
+                for (let i = 1; i <= 4; i++) {
+                    const value = axes[i] || 0;
+                    const element = document.getElementById(`axis${i}-value`);
+                    if (element) {
+                        element.textContent = value.toFixed(1) + '°';
+                    }
+                }
+            } else {
+                // 未收到数据，显示提示
+                if (jointValuesContainer) jointValuesContainer.style.display = 'none';
+                if (noDataMessage) noDataMessage.style.display = 'block';
             }
             
-            document.getElementById('robot-status').textContent = data.status === 0 ? '正常' : '异常';
+            // 更新系统状态
+            const statusElement = document.getElementById('robot-status');
+            if (statusElement) {
+                // status: -1=未知, -2=超时, 0=正常, 其他=异常
+                let statusText = '正常';
+                let statusColor = '#a0b8c8'; // 默认主题色
+                
+                if (data.status === -1) {
+                    statusText = '未知';
+                    statusColor = '#b0b0b0'; // 灰色
+                } else if (data.status === -2) {
+                    statusText = '超时';
+                    statusColor = '#ffb74d'; // 橙色（警告）
+                } else if (data.status === 0) {
+                    statusText = '正常';
+                    statusColor = '#81c784'; // 绿色
+                } else {
+                    statusText = '异常';
+                    statusColor = '#e57373'; // 红色
+                }
+                
+                statusElement.textContent = statusText;
+                statusElement.style.color = statusColor;
+            }
+            
+            // 更新运行状态
+            const stateMap = {
+                'idle': '空闲',
+                'received': '已接收',
+                'planning': '规划中',
+                'executing': '执行中',
+                'rejected': '已拒绝',
+                'invalid': '无效',
+                'error': '错误',
+                '__unknown__': '未知',
+                '__timeout__': '超时'
+            };
+            const robotState = data.robot_state || '__unknown__';
+            const stateElement = document.getElementById('robot-state');
+            if (stateElement) {
+                let stateText = stateMap[robotState] || robotState;
+                let stateColor = '#a0b8c8'; // 默认主题色
+                
+                // 根据状态改变颜色（使用柔和的配色）
+                if (robotState === '__unknown__') {
+                    stateText = '未知';
+                    stateColor = '#b0b0b0'; // 灰色
+                } else if (robotState === '__timeout__') {
+                    stateText = '超时';
+                    stateColor = '#ffb74d'; // 橙色（警告）
+                } else if (robotState === 'received') {
+                    stateColor = '#64b5f6'; // 柔和的蓝色
+                } else if (robotState === 'planning') {
+                    stateColor = '#ffb74d'; // 柔和的橙色
+                } else if (robotState === 'executing') {
+                    stateColor = '#81c784'; // 柔和的绿色
+                } else if (robotState === 'rejected') {
+                    stateColor = '#ffa726'; // 柔和的橙黄色（警告）
+                } else if (robotState === 'invalid') {
+                    stateColor = '#ef5350'; // 柔和的红色（警告）
+                } else if (robotState === 'error') {
+                    stateColor = '#e57373'; // 柔和的红色
+                }
+                
+                stateElement.textContent = stateText;
+                stateElement.style.color = stateColor;
+            }
         }
         
         // 轮询状态
@@ -322,6 +1390,93 @@
                     document.getElementById('connectionStatus').className = 'connection-status disconnected';
                     document.getElementById('statusText').textContent = '未连接';
                 });
+        }
+        
+        // 坐标下发功能
+        function toggleAdvanced() {
+            const controls = document.getElementById('advanced-controls');
+            const text = document.getElementById('toggle-text');
+            if (controls.style.display === 'none' || controls.style.display === '') {
+                controls.style.display = 'block';
+                text.textContent = '隐藏高级选项 (Orientation)';
+            } else {
+                controls.style.display = 'none';
+                text.textContent = '显示高级选项 (Orientation)';
+            }
+        }
+        
+        function publishPose() {
+            const x = parseFloat(document.getElementById('pose-x').value);
+            const y = parseFloat(document.getElementById('pose-y').value);
+            const z = parseFloat(document.getElementById('pose-z').value);
+            const qx = parseFloat(document.getElementById('pose-qx').value) || 0.0;
+            const qy = parseFloat(document.getElementById('pose-qy').value) || 0.0;
+            const qz = parseFloat(document.getElementById('pose-qz').value) || 0.0;
+            const qw = parseFloat(document.getElementById('pose-qw').value) || 1.0;
+            
+            if (isNaN(x) || isNaN(y) || isNaN(z)) {
+                showMessage('请输入有效的坐标值', 'error');
+                return;
+            }
+            
+            const data = {
+                x: x,
+                y: y,
+                z: z,
+                qx: qx,
+                qy: qy,
+                qz: qz,
+                qw: qw
+            };
+            
+            fetch('/api/publish_pose', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(data)
+            })
+            .then(response => response.json())
+            .then(result => {
+                if (result.success) {
+                    showMessage(result.message, 'success');
+                } else {
+                    showMessage(result.message || '发布失败', 'error');
+                }
+            })
+            .catch(error => {
+                showMessage('网络错误: ' + error.message, 'error');
+            });
+        }
+        
+        function resetPose() {
+            document.getElementById('pose-x').value = '0.25';
+            document.getElementById('pose-y').value = '0.0';
+            document.getElementById('pose-z').value = '0.35';
+            document.getElementById('pose-qx').value = '0.0';
+            document.getElementById('pose-qy').value = '0.0';
+            document.getElementById('pose-qz').value = '0.0';
+            document.getElementById('pose-qw').value = '1.0';
+            showMessage('', 'success');
+        }
+        
+        function showMessage(message, type) {
+            const messageBox = document.getElementById('pose-message');
+            if (!message) {
+                messageBox.style.display = 'none';
+                return;
+            }
+            
+            messageBox.textContent = message;
+            messageBox.className = 'message-box message-' + type;
+            messageBox.style.display = 'block';
+            
+            // 3秒后自动隐藏成功消息
+            if (type === 'success') {
+                setTimeout(() => {
+                    messageBox.style.display = 'none';
+                }, 3000);
+            }
         }
         
         // 初始化
