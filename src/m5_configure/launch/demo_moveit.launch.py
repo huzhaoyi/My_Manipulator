@@ -14,8 +14,10 @@ def generate_launch_description():
     # 构建 MoveIt 配置，确保 kinematics.yaml 被正确加载
     # 加载传感器配置以禁用 Octomap
     # 添加 trajectory_execution 配置（与 demo.launch.py 一致）
+    # 显式指定SRDF文件，确保arm_group的chain base_link被正确解析
     moveit_config = (
         MoveItConfigsBuilder("m5", package_name="m5_configure")
+        .robot_description_semantic(file_path="config/m5.srdf")  # 显式指定SRDF文件，确保base_link被正确识别
         .robot_description_kinematics(file_path="config/kinematics.yaml")
         .sensors_3d(file_path="config/sensors_3d.yaml")
         .trajectory_execution(file_path="config/moveit_controllers.yaml")  # 使用 MoveItConfigsBuilder 方式加载

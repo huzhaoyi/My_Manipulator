@@ -16,7 +16,7 @@ planner_configs:
   EST:
     type: geometric::EST
     range: 0.0  # Max motion added to tree. ==> maxDistance_ default: 0.0, if 0.0 setup()
-    goal_bias: 0.05  # When close to goal select goal, with this probability. default: 0.05
+    goal_bias: 0.1  # 增加向目标采样的概率（从0.05增加到0.1），提高目标状态采样成功率
   LBKPIECE:
     type: geometric::LBKPIECE
     range: 0.0  # Max motion added to tree. ==> maxDistance_ default: 0.0, if 0.0, set on setup()
@@ -41,12 +41,12 @@ planner_configs:
     goal_bias: 0.05  # When close to goal select goal, with this probability? default: 0.05
   RRTConnect:
     type: geometric::RRTConnect
-    range: 0.1  # Max motion added to tree. 设置为0.1以提高规划效率（从0.0增加到0.1）
-    goal_bias: 0.1  # 增加向目标采样的概率（默认0.05可能太低），提高目标状态采样成功率
+    range: 0.15  # Max motion added to tree. 增加到0.15以提高规划效率和目标状态采样成功率
+    goal_bias: 0.15  # 增加向目标采样的概率（从0.1增加到0.15），提高目标状态采样成功率
   RRTstar:
     type: geometric::RRTstar
     range: 0.0  # Max motion added to tree. ==> maxDistance_ default: 0.0, if 0.0, set on setup()
-    goal_bias: 0.05  # When close to goal select goal, with this probability? default: 0.05
+    goal_bias: 0.1  # 增加向目标采样的概率（从0.05增加到0.1），提高目标状态采样成功率
     delay_collision_checking: 1  # Stop collision checking as soon as C-free parent found. default 1
   TRRT:
     type: geometric::TRRT

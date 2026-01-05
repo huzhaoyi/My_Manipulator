@@ -23,6 +23,8 @@ try:
     from geometry_msgs.msg import PoseStamped
     from sensor_msgs.msg import JointState
     from std_msgs.msg import String
+    from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
+    from builtin_interfaces.msg import Duration
     ROS2_AVAILABLE = True
 except ImportError:
     ROS2_AVAILABLE = False
@@ -40,7 +42,7 @@ class RobotSimulator:
             2: 0.0,   # Joint2
             3: 0.0,   # Joint3
             4: 0.0,   # Joint4
-            5: 0.0    # 备用轴
+            5: 0.0    # 夹爪（axis5，范围：-1100° 到 0°）
         }
         
         self.status = 0  # 0=正常
@@ -48,14 +50,16 @@ class RobotSimulator:
         
         # 状态管理（用于发送到机械臂）
         self.robot_state = "idle"  # idle, planning, executing, error, received, rejected, invalid
+        self.planner_name = ""  # 当前规划器名称（如果有）
         self.last_state_update = time.time()
         self.last_state_received_time = None  # 最后一次收到状态的时间
         self.has_received_state = False  # 是否收到过状态消息
         
-        # UDP socket（用于接收机械臂反馈和发送状态）
+        # UDP socket（仅用于发送状态到机械臂，不用于接收关节角度数据）
+        # 关节角度数据应该从ROS2的/joint_states话题获取（由m5_hardware_interface发布）
         self.udp_socket = None
         self.udp_thread = None
-        self.robot_addr = None  # 机械臂的地址（从接收到的反馈中获取）
+        self.robot_addr = None  # 机械臂的地址（从接收到的UDP反馈中识别，用于发送状态）
         
         # 数据接收状态
         self.has_received_robot_data = False  # 是否收到过机械臂的JSON数据
@@ -69,6 +73,8 @@ class RobotSimulator:
         self.ros2_node = None
         self.pose_publisher = None
         self.joint_state_subscriber = None
+        self.arm_trajectory_publisher = None
+        self.gripper_trajectory_publisher = None
         if ROS2_AVAILABLE:
             try:
                 if not rclpy.ok():
@@ -92,36 +98,56 @@ class RobotSimulator:
                     10
                 )
                 
+                # 发布关节轨迹命令到控制器
+                self.arm_trajectory_publisher = self.ros2_node.create_publisher(
+                    JointTrajectory,
+                    '/arm_group_controller/joint_trajectory',
+                    10
+                )
+                self.gripper_trajectory_publisher = self.ros2_node.create_publisher(
+                    JointTrajectory,
+                    '/gripper_group_controller/joint_trajectory',
+                    10
+                )
+                
                 print("✓ ROS2节点已初始化")
                 print("  - 发布话题: /target_pose")
+                print("  - 发布话题: /arm_group_controller/joint_trajectory")
+                print("  - 发布话题: /gripper_group_controller/joint_trajectory")
                 print("  - 订阅话题: /joint_states, /robot_state")
             except Exception as e:
                 print(f"警告: ROS2初始化失败: {e}")
                 self.ros2_node = None
                 self.pose_publisher = None
                 self.joint_state_subscriber = None
+                self.arm_trajectory_publisher = None
+                self.gripper_trajectory_publisher = None
         
     def start_udp_server(self):
-        """启动UDP服务器（接收机械臂反馈，发送状态）"""
+        """
+        启动UDP服务器（仅用于识别机械臂地址和发送状态）
+        注意：关节角度数据应该从ROS2的/joint_states话题获取（由m5_hardware_interface发布）
+        """
         self.udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.udp_socket.bind((self.host, self.udp_port))
         self.udp_socket.settimeout(1.0)
         
         print(f"✓ UDP服务器启动在 {self.host}:{self.udp_port}")
-        print(f"  功能: 接收机械臂反馈，发送状态信息")
+        print(f"  功能: 识别机械臂地址（用于发送状态），发送状态信息")
+        print(f"  注意: 关节角度数据从ROS2的/joint_states话题获取（由m5_hardware_interface发布）")
         
-        print(f"UDP服务器监听中，等待机械臂反馈...")
+        print(f"UDP服务器监听中，等待机械臂反馈（仅用于识别地址）...")
         recv_count = 0
         while self.running:
             try:
                 data, addr = self.udp_socket.recvfrom(4096)
                 recv_count += 1
                 if recv_count <= 5 or recv_count % 50 == 0:
-                    print(f"[UDP接收 #{recv_count}] 收到 {len(data)} 字节 from {addr}")
+                    print(f"[UDP接收 #{recv_count}] 收到 {len(data)} 字节 from {addr}（仅用于识别地址）")
                 # 保存机械臂地址，用于后续发送状态
                 if self.robot_addr is None:
                     self.robot_addr = addr
-                    print(f"✓ 已识别机械臂地址: {addr}")
+                    print(f"✓ 已识别机械臂地址: {addr}（用于发送状态）")
                 self.handle_robot_feedback(data, addr)
             except socket.timeout:
                 # 定期发送状态到机械臂
@@ -131,7 +157,10 @@ class RobotSimulator:
                 print(f"UDP错误: {e}")
     
     def handle_robot_feedback(self, data, addr):
-        """处理接收到的机械臂反馈（关节角度、状态）"""
+        """
+        处理接收到的机械臂UDP反馈（仅用于识别机械臂地址）
+        注意：关节角度数据应该从ROS2的/joint_states话题获取，而不是直接从这里获取
+        """
         try:
             feedback_str = data.decode('utf-8').strip()
             feedback_data = json.loads(feedback_str)
@@ -139,33 +168,19 @@ class RobotSimulator:
             if not isinstance(feedback_data, list):
                 feedback_data = [feedback_data]
             
-            # 标记已收到机械臂数据
-            if not self.has_received_robot_data:
-                self.has_received_robot_data = True
-                print("✓ 首次收到机械臂JSON数据")
-            self.last_data_received_time = time.time()
-            
-            # 更新轴位置和状态（从机械臂反馈中获取）
-            updated = False
+            # 仅用于识别机械臂地址，不更新关节角度数据
+            # 关节角度数据应该从ROS2的/joint_states话题获取（由m5_hardware_interface发布）
             for item in feedback_data:
-                if 'num' in item and 'value' in item:
-                    axis_num = item['num']
-                    value = item['value']
-                    if value is not None and axis_num in self.axes:
-                        old_value = self.axes[axis_num]
-                        self.axes[axis_num] = value
-                        updated = True
-                        # 只在有变化时打印（减少日志）
-                        if abs(old_value - value) > 0.1:
-                            print(f"[机械臂反馈] axis{axis_num}: {old_value:.2f}° -> {value:.2f}°")
-                elif 'status' in item:
-                    # 更新机械臂状态
+                if 'status' in item:
+                    # 可以更新机械臂状态（如果需要）
                     self.status = item['status']
             
         except json.JSONDecodeError as e:
-            print(f"JSON解析错误: {e}, 数据: {data[:100]}")
+            # JSON解析错误不影响，因为数据主要来自ROS2
+            pass
         except Exception as e:
-            print(f"处理反馈错误: {e}")
+            # 错误不影响，因为数据主要来自ROS2
+            pass
     
     def send_state_to_robot(self):
         """发送状态（规划中、执行中等）到机械臂"""
@@ -189,6 +204,98 @@ class RobotSimulator:
         except Exception as e:
             print(f"发送状态到机械臂失败: {e}")
     
+    def send_joint_command(self, axis1, axis2, axis3, axis4, axis5):
+        """
+        发送关节角度命令到机械臂（通过ROS2控制器）
+        
+        Args:
+            axis1-4: 关节角度（度），范围根据关节限制
+            axis5: 夹爪开合度（度），范围：-1100° 到 0°
+        
+        Returns:
+            dict: 包含成功状态和消息的字典
+        """
+        if not ROS2_AVAILABLE or self.ros2_node is None:
+            return {
+                "success": False,
+                "message": "ROS2未初始化，无法发送关节角度命令"
+            }
+        
+        if self.arm_trajectory_publisher is None or self.gripper_trajectory_publisher is None:
+            return {
+                "success": False,
+                "message": "ROS2控制器发布器未初始化"
+            }
+        
+        try:
+            # 将度转换为弧度
+            joint1_rad = math.radians(float(axis1))
+            joint2_rad = math.radians(float(axis2))
+            joint3_rad = math.radians(float(axis3))
+            joint4_rad = math.radians(float(axis4))
+            
+            # 夹爪：axis5 [-1100°, 0°] -> JointGL/JointGR [-1.01, 1.01] 弧度
+            axis5_min = -1100.0  # 度
+            axis5_max = 0.0      # 度
+            joint_min = -1.01    # 弧度
+            joint_max = 1.01     # 弧度
+            axis5_value = float(axis5)
+            # 限制在有效范围内
+            axis5_value = max(axis5_min, min(axis5_max, axis5_value))
+            # 线性映射
+            joint_gl_rad = (axis5_value - axis5_min) / (axis5_max - axis5_min) * (joint_max - joint_min) + joint_min
+            joint_gr_rad = -joint_gl_rad  # 镜像对称
+            
+            # 创建机械臂轨迹消息
+            arm_trajectory = JointTrajectory()
+            arm_trajectory.header.stamp = self.ros2_node.get_clock().now().to_msg()
+            arm_trajectory.header.frame_id = ""
+            arm_trajectory.joint_names = ['Joint1', 'Joint2', 'Joint3', 'Joint4']
+            
+            point = JointTrajectoryPoint()
+            point.positions = [joint1_rad, joint2_rad, joint3_rad, joint4_rad]
+            point.velocities = [0.0, 0.0, 0.0, 0.0]
+            point.accelerations = []
+            point.effort = []
+            point.time_from_start = Duration(sec=1, nanosec=0)  # 1秒到达目标位置
+            
+            arm_trajectory.points = [point]
+            
+            # 创建夹爪轨迹消息
+            gripper_trajectory = JointTrajectory()
+            gripper_trajectory.header.stamp = self.ros2_node.get_clock().now().to_msg()
+            gripper_trajectory.header.frame_id = ""
+            gripper_trajectory.joint_names = ['JointGL', 'JointGR']
+            
+            gripper_point = JointTrajectoryPoint()
+            gripper_point.positions = [joint_gl_rad, joint_gr_rad]
+            gripper_point.velocities = [0.0, 0.0]
+            gripper_point.accelerations = []
+            gripper_point.effort = []
+            gripper_point.time_from_start = Duration(sec=1, nanosec=0)  # 1秒到达目标位置
+            
+            gripper_trajectory.points = [gripper_point]
+            
+            # 发布轨迹命令
+            self.arm_trajectory_publisher.publish(arm_trajectory)
+            self.gripper_trajectory_publisher.publish(gripper_trajectory)
+            
+            print(f"[关节控制] 通过ROS2发送命令: J1={axis1:.2f}° J2={axis2:.2f}° J3={axis3:.2f}° J4={axis4:.2f}° 夹爪={axis5:.2f}°")
+            
+            return {
+                "success": True,
+                "message": f"已通过ROS2发送关节角度命令: J1={axis1:.2f}° J2={axis2:.2f}° J3={axis3:.2f}° J4={axis4:.2f}° 夹爪={axis5:.2f}°"
+            }
+        except Exception as e:
+            error_msg = f"发送关节角度命令失败: {str(e)}"
+            print(f"[关节控制] {error_msg}")
+            import traceback
+            traceback.print_exc()
+            return {
+                "success": False,
+                "message": error_msg
+            }
+    
     def set_robot_state(self, state):
         """设置机器人状态（idle, planning, executing, error）"""
         if state != self.robot_state:
@@ -198,9 +305,11 @@ class RobotSimulator:
             self.send_state_to_robot()
     
     def joint_state_callback(self, msg):
-        """ROS2关节状态回调（从/joint_states话题获取）"""
-        # 如果UDP没有收到反馈，可以使用ROS2的关节状态作为备用
-        # 关节名称映射：Joint1 -> axis 1, Joint2 -> axis 2, etc.
+        """
+        ROS2关节状态回调（从/joint_states话题获取）
+        这是主要的数据源：m5_hardware_interface从真实机械臂UDP接收数据后，通过ROS2发布
+        关节名称映射：Joint1 -> axis 1, Joint2 -> axis 2, etc.
+        """
         joint_to_axis = {
             'Joint1': 1,
             'Joint2': 2,
@@ -215,6 +324,9 @@ class RobotSimulator:
         self.last_data_received_time = time.time()
         
         updated = False
+        joint_gl_pos = None
+        joint_gr_pos = None
+        
         for i, joint_name in enumerate(msg.name):
             if joint_name in joint_to_axis:
                 axis_num = joint_to_axis[joint_name]
@@ -227,10 +339,42 @@ class RobotSimulator:
                     # 只在有变化时打印（减少日志）
                     if abs(old_value - angle_deg) > 0.1:
                         print(f"[ROS2关节状态] axis{axis_num}: {old_value:.2f}° -> {angle_deg:.2f}°")
+            elif joint_name == 'JointGL':
+                if i < len(msg.position):
+                    joint_gl_pos = msg.position[i]  # 弧度
+            elif joint_name == 'JointGR':
+                if i < len(msg.position):
+                    joint_gr_pos = msg.position[i]  # 弧度
+        
+        # 处理夹爪（axis5）：将JointGL和JointGR映射到axis5
+        # 反向映射：JointGL [-1.01, 1.01] 弧度 -> axis5 [-1100, 0] 度
+        if joint_gl_pos is not None:
+            joint_min = -1.01  # 弧度
+            joint_max = 1.01   # 弧度
+            axis5_min = -1100.0  # 度
+            axis5_max = 0.0      # 度
+            
+            # 限制在有效范围内
+            joint_gl_pos = max(joint_min, min(joint_max, joint_gl_pos))
+            
+            # 线性映射
+            axis5_value = (joint_gl_pos - joint_min) / (joint_max - joint_min) * (axis5_max - axis5_min) + axis5_min
+            old_value = self.axes.get(5, 0.0)
+            self.axes[5] = axis5_value
+            updated = True
+            # 只在有变化时打印（减少日志）
+            if abs(old_value - axis5_value) > 0.1:
+                print(f"[ROS2关节状态] axis5 (夹爪): {old_value:.2f}° -> {axis5_value:.2f}°")
     
     def robot_state_callback(self, msg):
         """ROS2机器人状态回调（从demo_moveit获取）"""
-        state = msg.data
+        state_data = msg.data
+        # 支持格式：state 或 state:planner_name
+        # 例如：planning:RRTConnect, error:RRTstar
+        parts = state_data.split(':', 1)
+        state = parts[0]
+        planner_name = parts[1] if len(parts) > 1 else ""
+        
         # 支持所有状态：idle, planning, executing, error, received, rejected, invalid
         valid_states = ['idle', 'planning', 'executing', 'error', 'received', 'rejected', 'invalid']
         if state in valid_states:
@@ -238,10 +382,14 @@ class RobotSimulator:
                 self.has_received_state = True
                 print("✓ 首次收到ROS2状态消息")
             self.last_state_received_time = time.time()
+            self.planner_name = planner_name  # 保存规划器名称
             self.set_robot_state(state)
-            print(f"[ROS2状态] 收到状态: {state}")
+            if planner_name:
+                print(f"[ROS2状态] 收到状态: {state} (规划器: {planner_name})")
+            else:
+                print(f"[ROS2状态] 收到状态: {state}")
         else:
-            print(f"[ROS2状态] 收到未知状态: {state}")
+            print(f"[ROS2状态] 收到未知状态: {state_data}")
     
     def publish_target_pose(self, x, y, z, qx=0.0, qy=0.0, qz=0.0, qw=1.0):
         """
@@ -337,34 +485,29 @@ class RobotSimulator:
                     
                     # 判断硬件状态：
                     # 1. 如果从未收到过数据，显示"未知"
-                    # 2. 如果收到过数据但超过5秒没更新，显示"超时"
-                    # 3. 如果JSON中有status字段且不为0，显示"异常"
-                    # 4. 否则显示"正常"
+                    # 2. 如果JSON中有status字段且不为0，显示"异常"
+                    # 3. 否则显示"正常"
+                    # 注意：不再判断超时，由ROS端持续上报状态
                     hardware_status = 0  # 默认正常
                     if not self.simulator.has_received_robot_data:
                         hardware_status = -1  # 未知（未收到过数据）
-                    elif self.simulator.last_data_received_time is not None:
-                        time_since_last = time.time() - self.simulator.last_data_received_time
-                        if time_since_last > 5.0:  # 超过5秒没收到数据
-                            hardware_status = -2  # 超时
-                        elif self.simulator.status != 0:
-                            hardware_status = self.simulator.status  # 使用JSON中的status
+                    elif self.simulator.status != 0:
+                        hardware_status = self.simulator.status  # 使用JSON中的status
                     
                     # 判断运行状态：
+                    # 直接使用ROS上报的状态，不做超时判断
                     # 如果从未收到过状态，返回特殊值表示未知
-                    # 如果收到过但超过5秒没更新，返回特殊值表示超时
+                    # 如果ROS还在执行，应该持续上报状态（如executing），而不是由网页端判断超时
                     robot_state = self.simulator.robot_state
+                    planner_name = self.simulator.planner_name  # 获取规划器名称
                     if not self.simulator.has_received_state:
                         robot_state = "__unknown__"  # 从未收到过状态
-                    elif self.simulator.last_state_received_time is not None:
-                        time_since_last = time.time() - self.simulator.last_state_received_time
-                        if time_since_last > 5.0:  # 超过5秒没收到状态更新
-                            robot_state = "__timeout__"  # 状态超时
                     
                     status = {
                         "axes": self.simulator.axes.copy(),
                         "status": hardware_status,  # 使用计算后的硬件状态
                         "robot_state": robot_state,  # 使用计算后的运行状态
+                        "planner_name": planner_name,  # 规划器名称（如果有）
                         "has_received_robot_data": self.simulator.has_received_robot_data,  # 是否收到过机械臂数据
                         "last_data_received_time": self.simulator.last_data_received_time,  # 最后一次收到数据的时间
                         "has_received_state": self.simulator.has_received_state,  # 是否收到过状态消息
@@ -457,6 +600,32 @@ class RobotSimulator:
                             data.get('x'), data.get('y'), data.get('z'),
                             data.get('qx', 0.0), data.get('qy', 0.0), 
                             data.get('qz', 0.0), data.get('qw', 1.0)
+                        )
+                        
+                        self.send_response(200)
+                        self.send_header('Content-type', 'application/json')
+                        self.send_header('Access-Control-Allow-Origin', '*')
+                        self.end_headers()
+                        self.wfile.write(json.dumps(result).encode())
+                    except Exception as e:
+                        self.send_response(400)
+                        self.send_header('Content-type', 'application/json')
+                        self.send_header('Access-Control-Allow-Origin', '*')
+                        self.end_headers()
+                        error_msg = {"error": str(e)}
+                        self.wfile.write(json.dumps(error_msg).encode())
+                elif self.path == '/api/send_joint_command':
+                    content_length = int(self.headers['Content-Length'])
+                    post_data = self.rfile.read(content_length)
+                    
+                    try:
+                        data = json.loads(post_data.decode('utf-8'))
+                        result = self.simulator.send_joint_command(
+                            data.get('axis1', 0.0),
+                            data.get('axis2', 0.0),
+                            data.get('axis3', 0.0),
+                            data.get('axis4', 0.0),
+                            data.get('axis5', 0.0)
                         )
                         
                         self.send_response(200)

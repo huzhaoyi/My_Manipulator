@@ -465,7 +465,7 @@ bool M5HardwareInterface::send_command(const std::vector<double> & joint_positio
       if (!std::isnan(pos) && !std::isinf(pos))
       {
         // 转换为度并存储到对应轴位置（axis_num从1开始，数组索引从0开始）
-        if (axis_num >= 1 && axis_num <= 5)
+        if (axis_num >= 1 && axis_num <= 4)
         {
           axis_values[axis_num - 1] = pos * 180.0 / M_PI;
         }
@@ -477,8 +477,40 @@ bool M5HardwareInterface::send_command(const std::vector<double> & joint_positio
       }
     }
   }
+  
+  // 处理axis5（夹爪）：将JointGL和JointGR映射到axis5
+  // 由于JointGL和JointGR是镜像对称的，使用JointGL的值
+  size_t joint_gl_idx = info_.joints.size();  // 初始化为无效索引
+  for (size_t i = 0; i < info_.joints.size(); ++i)
+  {
+    if (info_.joints[i].name == "JointGL")
+    {
+      joint_gl_idx = i;
+      break;
+    }
+  }
+  
+  if (joint_gl_idx < info_.joints.size() && joint_gl_idx < joint_positions.size())
+  {
+    double joint_gl_pos = joint_positions[joint_gl_idx];
+    if (!std::isnan(joint_gl_pos) && !std::isinf(joint_gl_pos))
+    {
+      // 反向映射：JointGL [-1.01, 1.01] 弧度 -> axis5 [-1100, 0] 度
+      const double joint_min = -1.01;    // 弧度
+      const double joint_max = 1.01;      // 弧度
+      const double axis5_min = -1100.0;   // 度
+      const double axis5_max = 0.0;       // 度
+      
+      // 限制在有效范围内
+      joint_gl_pos = std::max(joint_min, std::min(joint_max, joint_gl_pos));
+      
+      // 线性映射
+      double axis5_value = (joint_gl_pos - joint_min) / (joint_max - joint_min) * (axis5_max - axis5_min) + axis5_min;
+      axis_values[4] = axis5_value;  // axis5是第5个元素（索引4）
+    }
+  }
 
-  // 将轴值添加到数组（axis5和key保持为0）
+  // 将轴值添加到数组（axis5已填充，key保持为0）
   for (size_t i = 0; i < 6; ++i)
   {
     pos_array.push_back(axis_values[i]);
@@ -665,25 +697,59 @@ bool M5HardwareInterface::parse_feedback_json(const std::string & json_str)
         int axis_num = item["num"].get<int>();
         double value = item["value"].get<double>();
         
-        // 将度转换为弧度
-        double value_rad = value * M_PI / 180.0;
-        
-        // 找到对应的关节
-        for (const auto & pair : joint_to_axis_map_)
+        // 处理axis5（夹爪开合度）
+        if (axis_num == 5)
         {
-          if (pair.second == axis_num)
+          // axis5范围：-1100° 到 0°（度），映射到JointGL和JointGR（-1.01 到 1.01 弧度）
+          // 线性映射：axis5 [-1100, 0] 度 -> 弧度 [-1.01, 1.01]
+          // 公式：value_rad = (value - axis5_min) / (axis5_max - axis5_min) * (joint_max - joint_min) + joint_min
+          const double axis5_min = -1100.0;  // 度
+          const double axis5_max = 0.0;      // 度
+          const double joint_min = -1.01;    // 弧度
+          const double joint_max = 1.01;      // 弧度
+          
+          // 线性映射
+          double value_rad = (value - axis5_min) / (axis5_max - axis5_min) * (joint_max - joint_min) + joint_min;
+          // 确保在有效范围内
+          value_rad = std::max(joint_min, std::min(joint_max, value_rad));
+          
+          // 夹爪通常是对称的：JointGL和JointGR镜像对称
+          // JointGL = value_rad, JointGR = -value_rad
+          for (size_t i = 0; i < info_.joints.size(); ++i)
           {
-            const std::string & joint_name = pair.first;
-            // 找到关节索引
-            for (size_t i = 0; i < info_.joints.size(); ++i)
+            if (info_.joints[i].name == "JointGL")
             {
-              if (info_.joints[i].name == joint_name)
-              {
-                feedback_positions_[i] = value_rad;
-                break;
-              }
+              feedback_positions_[i] = value_rad;
             }
-            break;
+            else if (info_.joints[i].name == "JointGR")
+            {
+              feedback_positions_[i] = -value_rad;  // 镜像对称
+            }
+          }
+        }
+        else
+        {
+          // 处理axis1-4（主要关节）
+          // 将度转换为弧度
+          double value_rad = value * M_PI / 180.0;
+          
+          // 找到对应的关节
+          for (const auto & pair : joint_to_axis_map_)
+          {
+            if (pair.second == axis_num)
+            {
+              const std::string & joint_name = pair.first;
+              // 找到关节索引
+              for (size_t i = 0; i < info_.joints.size(); ++i)
+              {
+                if (info_.joints[i].name == joint_name)
+                {
+                  feedback_positions_[i] = value_rad;
+                  break;
+                }
+              }
+              break;
+            }
           }
         }
       }

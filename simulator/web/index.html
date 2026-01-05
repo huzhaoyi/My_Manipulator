@@ -287,12 +287,11 @@
             background: rgba(255, 255, 255, 0.08);
         }
         
-        /* 顶部LOGO（可选） */
+        /* 顶部LOGO（左侧） */
         .top-logo {
             position: absolute;
             top: 15px;
-            left: 50%;
-            transform: translateX(-50%);
+            left: 20px;
             z-index: 100;
             max-height: 50px;
             /* 柔和的背景，根据LOGO颜色调整 */
@@ -306,6 +305,26 @@
             filter: none;
             opacity: 0.95;
             transition: opacity 0.3s;
+        }
+        
+        /* 作者名字（右侧） */
+        .author-name {
+            position: absolute;
+            top: 15px;
+            right: 20px;
+            z-index: 100;
+            color: #e0e0e0;
+            font-size: 18px;
+            font-weight: 500;
+            background: rgba(255, 255, 255, 0.05);
+            padding: 8px 15px;
+            border-radius: 8px;
+            opacity: 0.95;
+            transition: opacity 0.3s;
+        }
+        
+        .author-name:hover {
+            opacity: 1;
         }
         
         .top-logo:hover {
@@ -487,6 +506,10 @@
                             <span class="status-label">Joint 4:</span>
                             <span class="status-value" id="axis4-value">0.0°</span>
                         </div>
+                        <div class="status-item">
+                            <span class="status-label">夹爪 (Axis 5):</span>
+                            <span class="status-value" id="axis5-value">0.0°</span>
+                        </div>
                     </div>
                     <!-- 如果未收到数据，显示提示 -->
                     <div id="no-data-message" class="status-item" style="color: #e57373; font-style: italic; text-shadow: none;">
@@ -572,10 +595,42 @@
                 <div class="message-box" id="pose-message"></div>
             </div>
             
+            <div class="control-box">
+                <h3>关节角度控制</h3>
+                <div class="input-group">
+                    <label>Joint 1 (度):</label>
+                    <input type="number" id="joint1-input" step="0.1" value="0.0" placeholder="0.0" min="-180" max="180">
+                </div>
+                <div class="input-group">
+                    <label>Joint 2 (度):</label>
+                    <input type="number" id="joint2-input" step="0.1" value="0.0" placeholder="0.0" min="-90" max="0">
+                </div>
+                <div class="input-group">
+                    <label>Joint 3 (度):</label>
+                    <input type="number" id="joint3-input" step="0.1" value="0.0" placeholder="0.0" min="-90" max="0">
+                </div>
+                <div class="input-group">
+                    <label>Joint 4 (度):</label>
+                    <input type="number" id="joint4-input" step="0.1" value="0.0" placeholder="0.0" min="-180" max="180">
+                </div>
+                <div class="input-group">
+                    <label>夹爪 Axis 5 (度):</label>
+                    <input type="number" id="joint5-input" step="1.0" value="0.0" placeholder="0.0" min="-1100" max="0">
+                </div>
+                
+                <div class="button-group">
+                    <button class="btn-primary" onclick="sendJointCommand()">发送关节角度</button>
+                    <button class="btn-secondary" onclick="resetJoints()">重置</button>
+                </div>
+                
+                <div class="message-box" id="joint-message"></div>
+            </div>
+            
             <div class="info-box">
                 <strong>使用说明:</strong><br>
                 • 接收机械臂JSON反馈 (UDP端口7001)<br>
                 • 发送坐标到 /target_pose 话题<br>
+                • 直接控制5个自由度（关节角度）<br>
                 • 实时显示规划/执行状态<br>
                 • 自动加载STL模型
             </div>
@@ -584,7 +639,7 @@
 
     <script>
         // Three.js场景设置
-        let scene, camera, renderer, robot;
+        let scene, camera, renderer, robot, controls;
         let axes = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0};
         let stlLoader = null;
         let useSTLModel = false;
@@ -593,6 +648,17 @@
         let linkMeshes = {}; // 存储每个link的mesh对象
         let linkGroups = {}; // 存储每个link的group对象（用于变换）
         let jointMap = {}; // 存储joint信息，key为child link name
+        
+        // 鼠标控制变量
+        let isMouseDown = false;
+        let mouseX = 0;
+        let mouseY = 0;
+        // 初始相机位置: (1.2, 1.0, 1.2)，看向 (0, 0.2, 0)
+        // 计算初始旋转角度以匹配初始相机位置
+        let cameraDistance = Math.sqrt(1.2*1.2 + (1.0-0.2)*(1.0-0.2) + 1.2*1.2); // 约1.8
+        let cameraRotationY = Math.atan2(1.2, 1.2); // 水平角度，约45度 (π/4)
+        let cameraRotationX = Math.asin((1.0 - 0.2) / cameraDistance); // 垂直角度
+        let targetPosition = new THREE.Vector3(0, 0.2, 0); // 相机看向的目标点
         
         // 坐标系转换：ROS/URDF坐标系 → Three.js坐标系
         // 根据workspace_reachable_positions.md：
@@ -631,8 +697,7 @@
             
             // 相机（调整位置和视野，让机械臂完整显示）
             camera = new THREE.PerspectiveCamera(60, width / height, 0.01, 1000); // fov设为60，平衡显示大小
-            camera.position.set(1.2, 1.0, 1.2); // 适中的距离，确保模型完整显示
-            camera.lookAt(0, 0.2, 0); // 稍微向上看，让机械臂在视野中心
+            // 初始相机位置将通过updateCameraPosition()设置
             
             // 渲染器
             renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true });
@@ -668,57 +733,85 @@
             const axesGroup = new THREE.Group();
             
             // ROS X轴（红色）- 前（在Three.js中对应Z轴正方向）
-            const xAxisGeometry = new THREE.BufferGeometry().setFromPoints([
+            // 正方向：Z轴正方向
+            const xAxisPosGeometry = new THREE.BufferGeometry().setFromPoints([
                 new THREE.Vector3(0, 0, 0),
                 new THREE.Vector3(0, 0, axesSize)
             ]);
-            const xAxisMaterial = new THREE.LineBasicMaterial({ color: 0xff4444, linewidth: 3 });
-            const xAxis = new THREE.Line(xAxisGeometry, xAxisMaterial);
-            axesGroup.add(xAxis);
+            const xAxisPosMaterial = new THREE.LineBasicMaterial({ color: 0xff4444, linewidth: 3 });
+            const xAxisPos = new THREE.Line(xAxisPosGeometry, xAxisPosMaterial);
+            axesGroup.add(xAxisPos);
+            
+            // X轴负方向：Z轴负方向
+            const xAxisNegGeometry = new THREE.BufferGeometry().setFromPoints([
+                new THREE.Vector3(0, 0, 0),
+                new THREE.Vector3(0, 0, -axesSize)
+            ]);
+            const xAxisNegMaterial = new THREE.LineBasicMaterial({ color: 0x884444, linewidth: 2, opacity: 0.6, transparent: true });
+            const xAxisNeg = new THREE.Line(xAxisNegGeometry, xAxisNegMaterial);
+            axesGroup.add(xAxisNeg);
             
             // ROS Y轴（绿色）- 左（在Three.js中对应-X轴方向，即X轴负方向）
-            const yAxisGeometry = new THREE.BufferGeometry().setFromPoints([
+            // 正方向：-X轴方向
+            const yAxisPosGeometry = new THREE.BufferGeometry().setFromPoints([
                 new THREE.Vector3(0, 0, 0),
                 new THREE.Vector3(-axesSize, 0, 0)
             ]);
-            const yAxisMaterial = new THREE.LineBasicMaterial({ color: 0x44ff44, linewidth: 3 });
-            const yAxis = new THREE.Line(yAxisGeometry, yAxisMaterial);
-            axesGroup.add(yAxis);
+            const yAxisPosMaterial = new THREE.LineBasicMaterial({ color: 0x44ff44, linewidth: 3 });
+            const yAxisPos = new THREE.Line(yAxisPosGeometry, yAxisPosMaterial);
+            axesGroup.add(yAxisPos);
+            
+            // Y轴负方向：X轴正方向
+            const yAxisNegGeometry = new THREE.BufferGeometry().setFromPoints([
+                new THREE.Vector3(0, 0, 0),
+                new THREE.Vector3(axesSize, 0, 0)
+            ]);
+            const yAxisNegMaterial = new THREE.LineBasicMaterial({ color: 0x448844, linewidth: 2, opacity: 0.6, transparent: true });
+            const yAxisNeg = new THREE.Line(yAxisNegGeometry, yAxisNegMaterial);
+            axesGroup.add(yAxisNeg);
             
             // ROS Z轴（蓝色）- 上（在Three.js中对应Y轴正方向）
-            const zAxisGeometry = new THREE.BufferGeometry().setFromPoints([
+            // 正方向：Y轴正方向
+            const zAxisPosGeometry = new THREE.BufferGeometry().setFromPoints([
                 new THREE.Vector3(0, 0, 0),
                 new THREE.Vector3(0, axesSize, 0)
             ]);
-            const zAxisMaterial = new THREE.LineBasicMaterial({ color: 0x4444ff, linewidth: 3 });
-            const zAxis = new THREE.Line(zAxisGeometry, zAxisMaterial);
-            axesGroup.add(zAxis);
+            const zAxisPosMaterial = new THREE.LineBasicMaterial({ color: 0x4444ff, linewidth: 3 });
+            const zAxisPos = new THREE.Line(zAxisPosGeometry, zAxisPosMaterial);
+            axesGroup.add(zAxisPos);
             
-            // 添加坐标轴箭头（使用小圆锥）
-            const arrowLength = 0.1;
-            const arrowRadius = 0.02;
+            // Z轴负方向：Y轴负方向
+            const zAxisNegGeometry = new THREE.BufferGeometry().setFromPoints([
+                new THREE.Vector3(0, 0, 0),
+                new THREE.Vector3(0, -axesSize, 0)
+            ]);
+            const zAxisNegMaterial = new THREE.LineBasicMaterial({ color: 0x444488, linewidth: 2, opacity: 0.6, transparent: true });
+            const zAxisNeg = new THREE.Line(zAxisNegGeometry, zAxisNegMaterial);
+            axesGroup.add(zAxisNeg);
+            
+            // 添加坐标轴箭头（使用ArrowHelper，更可靠）
+            const arrowLength = 0.15;  // 箭头长度
+            const arrowRadius = 0.03;  // 箭头半径
             
             // ROS X轴箭头（前方向，Three.js的Z轴正方向）
-            const xArrowGeometry = new THREE.ConeGeometry(arrowRadius, arrowLength, 8);
-            const xArrowMaterial = new THREE.MeshBasicMaterial({ color: 0xff4444 });
-            const xArrow = new THREE.Mesh(xArrowGeometry, xArrowMaterial);
-            xArrow.position.set(0, 0, axesSize);
-            xArrow.rotation.x = -Math.PI / 2;
+            // 箭头是坐标线的延长线：起点在坐标线末端(0,0,axesSize)，指向Z轴正方向
+            const xArrowDir = new THREE.Vector3(0, 0, 1).normalize(); // Z轴正方向
+            const xArrowOrigin = new THREE.Vector3(0, 0, axesSize); // 起点在坐标线末端
+            const xArrow = new THREE.ArrowHelper(xArrowDir, xArrowOrigin, arrowLength, 0xff4444, arrowLength * 0.6, arrowRadius);
             axesGroup.add(xArrow);
             
             // ROS Y轴箭头（左方向，Three.js的-X轴方向）
-            const yArrowGeometry = new THREE.ConeGeometry(arrowRadius, arrowLength, 8);
-            const yArrowMaterial = new THREE.MeshBasicMaterial({ color: 0x44ff44 });
-            const yArrow = new THREE.Mesh(yArrowGeometry, yArrowMaterial);
-            yArrow.position.set(-axesSize, 0, 0);
-            yArrow.rotation.z = Math.PI / 2;
+            // 箭头是坐标线的延长线：起点在坐标线末端(-axesSize,0,0)，指向-X轴方向
+            const yArrowDir = new THREE.Vector3(-1, 0, 0).normalize(); // -X轴方向
+            const yArrowOrigin = new THREE.Vector3(-axesSize, 0, 0); // 起点在坐标线末端
+            const yArrow = new THREE.ArrowHelper(yArrowDir, yArrowOrigin, arrowLength, 0x44ff44, arrowLength * 0.6, arrowRadius);
             axesGroup.add(yArrow);
             
             // ROS Z轴箭头（上方向，Three.js的Y轴正方向）
-            const zArrowGeometry = new THREE.ConeGeometry(arrowRadius, arrowLength, 8);
-            const zArrowMaterial = new THREE.MeshBasicMaterial({ color: 0x4444ff });
-            const zArrow = new THREE.Mesh(zArrowGeometry, zArrowMaterial);
-            zArrow.position.set(0, axesSize, 0);
+            // 箭头是坐标线的延长线：起点在坐标线末端(0,axesSize,0)，指向Y轴正方向
+            const zArrowDir = new THREE.Vector3(0, 1, 0).normalize(); // Y轴正方向
+            const zArrowOrigin = new THREE.Vector3(0, axesSize, 0); // 起点在坐标线末端
+            const zArrow = new THREE.ArrowHelper(zArrowDir, zArrowOrigin, arrowLength, 0x4444ff, arrowLength * 0.6, arrowRadius);
             axesGroup.add(zArrow);
             
             // 添加坐标轴标签（X、Y、Z文字，对应ROS/URDF坐标系）
@@ -751,20 +844,35 @@
                 return sprite;
             }
             
-            // ROS X轴标签（前方向）
-            const xLabel = createAxisLabel('X', '#ff4444');
-            xLabel.position.set(0, 0, axesSize + 0.15);
-            axesGroup.add(xLabel);
+            // X轴正方向标签（+X，在箭头末端）
+            const xPosLabel = createAxisLabel('+X', '#ff4444');
+            xPosLabel.position.set(0, 0, axesSize + arrowLength + 0.1);
+            axesGroup.add(xPosLabel);
             
-            // ROS Y轴标签（左方向）
-            const yLabel = createAxisLabel('Y', '#44ff44');
-            yLabel.position.set(-axesSize - 0.15, 0, 0);
-            axesGroup.add(yLabel);
+            // X轴负方向标签（-X，在负方向坐标线末端）
+            const xNegLabel = createAxisLabel('-X', '#884444');
+            xNegLabel.position.set(0, 0, -axesSize - 0.1);
+            axesGroup.add(xNegLabel);
             
-            // ROS Z轴标签（上方向）
-            const zLabel = createAxisLabel('Z', '#4444ff');
-            zLabel.position.set(0, axesSize + 0.15, 0);
-            axesGroup.add(zLabel);
+            // Y轴正方向标签（+Y，在箭头末端）
+            const yPosLabel = createAxisLabel('+Y', '#44ff44');
+            yPosLabel.position.set(-axesSize - arrowLength - 0.1, 0, 0);
+            axesGroup.add(yPosLabel);
+            
+            // Y轴负方向标签（-Y，在负方向坐标线末端）
+            const yNegLabel = createAxisLabel('-Y', '#448844');
+            yNegLabel.position.set(axesSize + 0.1, 0, 0);
+            axesGroup.add(yNegLabel);
+            
+            // Z轴正方向标签（+Z，在箭头末端）
+            const zPosLabel = createAxisLabel('+Z', '#4444ff');
+            zPosLabel.position.set(0, axesSize + arrowLength + 0.1, 0);
+            axesGroup.add(zPosLabel);
+            
+            // Z轴负方向标签（-Z，在负方向坐标线末端）
+            const zNegLabel = createAxisLabel('-Z', '#444488');
+            zNegLabel.position.set(0, -axesSize - 0.1, 0);
+            axesGroup.add(zNegLabel);
             
             axesGroup.position.set(0, 0, 0); // 确保在原点中心
             scene.add(axesGroup);
@@ -778,8 +886,73 @@
                 renderer.setSize(width, height);
             });
             
+            // 初始化相机位置和旋转
+            updateCameraPosition();
+            
+            // 鼠标控制事件
+            canvas.addEventListener('mousedown', (e) => {
+                isMouseDown = true;
+                mouseX = e.clientX;
+                mouseY = e.clientY;
+                canvas.style.cursor = 'grabbing';
+            });
+            
+            canvas.addEventListener('mousemove', (e) => {
+                if (isMouseDown) {
+                    const deltaX = e.clientX - mouseX;
+                    const deltaY = e.clientY - mouseY;
+                    
+                    // 旋转相机
+                    cameraRotationY += deltaX * 0.005; // 水平旋转
+                    cameraRotationX += deltaY * 0.005; // 垂直旋转
+                    
+                    // 限制垂直旋转角度（避免翻转）
+                    cameraRotationX = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, cameraRotationX));
+                    
+                    updateCameraPosition();
+                    
+                    mouseX = e.clientX;
+                    mouseY = e.clientY;
+                }
+            });
+            
+            canvas.addEventListener('mouseup', () => {
+                isMouseDown = false;
+                canvas.style.cursor = 'grab';
+            });
+            
+            canvas.addEventListener('mouseleave', () => {
+                isMouseDown = false;
+                canvas.style.cursor = 'grab';
+            });
+            
+            // 鼠标滚轮缩放
+            canvas.addEventListener('wheel', (e) => {
+                e.preventDefault();
+                const delta = e.deltaY * 0.001;
+                cameraDistance = Math.max(0.5, Math.min(5.0, cameraDistance + delta));
+                updateCameraPosition();
+            });
+            
+            // 设置鼠标样式
+            canvas.style.cursor = 'grab';
+            
             // 动画循环
             animate();
+        }
+        
+        function updateCameraPosition() {
+            // 根据球坐标系计算相机位置
+            const x = cameraDistance * Math.cos(cameraRotationX) * Math.sin(cameraRotationY);
+            const y = cameraDistance * Math.sin(cameraRotationX) + targetPosition.y;
+            const z = cameraDistance * Math.cos(cameraRotationX) * Math.cos(cameraRotationY);
+            
+            camera.position.set(
+                targetPosition.x + x,
+                y,
+                targetPosition.z + z
+            );
+            camera.lookAt(targetPosition);
         }
         
         function createRobot() {
@@ -1281,11 +1454,17 @@
         }
         
         // 状态更新
+        let lastRobotState = 'idle';  // 保存上一次的状态，用于超时显示
         function updateStatus(data) {
             // 检查是否收到过机械臂数据
             const hasReceivedData = data.has_received_robot_data || false;
             const jointValuesContainer = document.getElementById('joint-values');
             const noDataMessage = document.getElementById('no-data-message');
+            
+            // 更新上一次的状态（如果不是超时状态）
+            if (data.robot_state && data.robot_state !== '__timeout__') {
+                lastRobotState = data.robot_state;
+            }
             
             if (hasReceivedData) {
                 // 已收到数据，显示关节值
@@ -1294,11 +1473,12 @@
                 
                 axes = data.axes || axes;
                 
-                // 更新显示
-                for (let i = 1; i <= 4; i++) {
+                // 更新显示（axis1-4和axis5夹爪）
+                for (let i = 1; i <= 5; i++) {
                     const value = axes[i] || 0;
                     const element = document.getElementById(`axis${i}-value`);
                     if (element) {
+                        // axis5（夹爪）的范围是-1100°到0°，显示格式与其他轴相同
                         element.textContent = value.toFixed(1) + '°';
                     }
                 }
@@ -1346,6 +1526,7 @@
                 '__timeout__': '超时'
             };
             const robotState = data.robot_state || '__unknown__';
+            const plannerName = data.planner_name || '';  // 获取规划器名称
             const stateElement = document.getElementById('robot-state');
             if (stateElement) {
                 let stateText = stateMap[robotState] || robotState;
@@ -1356,8 +1537,21 @@
                     stateText = '未知';
                     stateColor = '#b0b0b0'; // 灰色
                 } else if (robotState === '__timeout__') {
-                    stateText = '超时';
+                    // 显示详细的超时信息，包括规划器名称和状态
+                    if (plannerName) {
+                        // 如果有规划器信息，显示"规划器名称 状态超时"
+                        const lastStateText = stateMap[lastRobotState] || lastRobotState;
+                        stateText = `${plannerName} ${lastStateText}超时`;
+                    } else {
+                        stateText = '超时';
+                    }
                     stateColor = '#ffb74d'; // 橙色（警告）
+                } else if (robotState === 'planning' && plannerName) {
+                    // 规划中时，如果有规划器信息，显示规划器名称
+                    stateText = `${plannerName} 规划中`;
+                } else if (robotState === 'error' && plannerName) {
+                    // 错误时，如果有规划器信息，显示规划器名称
+                    stateText = `${plannerName} 规划失败`;
                 } else if (robotState === 'received') {
                     stateColor = '#64b5f6'; // 柔和的蓝色
                 } else if (robotState === 'planning') {
@@ -1447,6 +1641,55 @@
             .catch(error => {
                 showMessage('网络错误: ' + error.message, 'error');
             });
+        }
+        
+        function sendJointCommand() {
+            const axis1 = parseFloat(document.getElementById('joint1-input').value) || 0.0;
+            const axis2 = parseFloat(document.getElementById('joint2-input').value) || 0.0;
+            const axis3 = parseFloat(document.getElementById('joint3-input').value) || 0.0;
+            const axis4 = parseFloat(document.getElementById('joint4-input').value) || 0.0;
+            const axis5 = parseFloat(document.getElementById('joint5-input').value) || 0.0;
+            
+            const messageBox = document.getElementById('joint-message');
+            messageBox.textContent = '发送中...';
+            messageBox.style.color = '#a0b8c8';
+            
+            fetch('/api/send_joint_command', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    axis1: axis1,
+                    axis2: axis2,
+                    axis3: axis3,
+                    axis4: axis4,
+                    axis5: axis5
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    messageBox.textContent = data.message || '命令发送成功';
+                    messageBox.style.color = '#4caf50';
+                } else {
+                    messageBox.textContent = data.message || '命令发送失败';
+                    messageBox.style.color = '#f44336';
+                }
+            })
+            .catch(error => {
+                messageBox.textContent = '发送失败: ' + error.message;
+                messageBox.style.color = '#f44336';
+            });
+        }
+        
+        function resetJoints() {
+            document.getElementById('joint1-input').value = '0.0';
+            document.getElementById('joint2-input').value = '0.0';
+            document.getElementById('joint3-input').value = '0.0';
+            document.getElementById('joint4-input').value = '0.0';
+            document.getElementById('joint5-input').value = '0.0';
+            document.getElementById('joint-message').textContent = '';
         }
         
         function resetPose() {

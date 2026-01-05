@@ -303,24 +303,55 @@ private:
     
     // 获取group的link信息
     const std::vector<std::string>& link_names = jmg->getLinkModelNames();
+    
+    // 尝试获取group的实际base link（通过检查第一个joint的parent link）
+    std::string group_base_link = base_frame; // 默认使用IK求解器的base_frame
+    if (!jmg->getJointModelNames().empty())
+    {
+      const moveit::core::JointModel* first_joint = jmg->getJointModelNames()[0].empty() ? 
+          nullptr : robot_model->getJointModel(jmg->getJointModelNames()[0]);
+      if (first_joint)
+      {
+        group_base_link = first_joint->getParentLinkModel()->getName();
+        RCLCPP_INFO(this->get_logger(), "  Group实际Base Link (第一个joint的parent): %s", group_base_link.c_str());
+      }
+    }
+    
     if (!link_names.empty())
     {
       RCLCPP_INFO(this->get_logger(), "  Group Link Chain (从SRDF):");
-      RCLCPP_INFO(this->get_logger(), "    Base Link: %s", link_names.front().c_str());
+      RCLCPP_INFO(this->get_logger(), "    Base Link (link_names.front()): %s", link_names.front().c_str());
       RCLCPP_INFO(this->get_logger(), "    Tip Link: %s", link_names.back().c_str());
       RCLCPP_INFO(this->get_logger(), "    完整链: %s -> ... -> %s", 
                   link_names.front().c_str(), link_names.back().c_str());
+      
+      // 输出所有links以便调试
+      RCLCPP_INFO(this->get_logger(), "    所有links (%zu个):", link_names.size());
+      for (size_t i = 0; i < link_names.size() && i < 10; ++i)  // 只显示前10个
+      {
+        RCLCPP_INFO(this->get_logger(), "      [%zu] %s", i, link_names[i].c_str());
+      }
+      if (link_names.size() > 10)
+      {
+        RCLCPP_INFO(this->get_logger(), "      ... (还有 %zu 个links)", link_names.size() - 10);
+      }
     }
     
     // 验证base_frame和tip_frame是否与SRDF一致
-    if (base_frame != link_names.front())
+    // 关键：IK求解器的base_frame应该与group的实际base link一致
+    // getLinkModelNames()可能不包含base_link（如果它没有可动关节），所以使用第一个joint的parent link
+    if (base_frame != group_base_link)
     {
-      RCLCPP_WARN(this->get_logger(), "警告：IK求解器base_frame (%s) 与SRDF group base_link (%s) 不一致！",
+      RCLCPP_ERROR(this->get_logger(), "❌ 致命错误：IK求解器base_frame (%s) 与SRDF group base_link (%s) 不一致！",
                   base_frame.c_str(), link_names.front().c_str());
+      RCLCPP_ERROR(this->get_logger(), "   这会导致OMPL规划器无法采样目标状态（RRTConnect: Unable to sample any valid states for goal tree）");
+      RCLCPP_ERROR(this->get_logger(), "   原因：OMPL使用SRDF group的base_link (%s)，但IK求解器使用base_frame (%s)",
+                  link_names.front().c_str(), base_frame.c_str());
+      RCLCPP_ERROR(this->get_logger(), "   解决方案：确保SRDF中arm_group的chain base_link是base_link，而不是Link1");
     }
     else
     {
-      RCLCPP_INFO(this->get_logger(), "  Base frame与SRDF group base_link一致");
+      RCLCPP_INFO(this->get_logger(), "  ✅ Base frame与SRDF group base_link一致: %s", base_frame.c_str());
     }
     
     if (!tip_frames.empty() && tip_frames[0] != link_names.back())
@@ -513,10 +544,12 @@ private:
   }
   
   // 直接IK测试：使用MoveIt的KinematicsBase直接测试IK求解，绕过MoveGroupInterface
+  // 如果成功，通过solution参数返回求解得到的关节角度
   bool test_direct_ik(const geometry_msgs::msg::Pose& target_pose, 
                      const std::vector<double>& seed_state,
                      const std::string& base_frame,
-                     const std::string& tip_frame)
+                     const std::string& tip_frame,
+                     std::vector<double>& solution)
   {
     RCLCPP_INFO(this->get_logger(), "=== 直接IK测试（绕过MoveGroupInterface） ===");
     RCLCPP_INFO(this->get_logger(), "Base frame: %s", base_frame.c_str());
@@ -541,7 +574,7 @@ private:
     }
     
     // 准备IK求解参数
-    std::vector<double> solution;
+    solution.clear();  // 清空输出参数
     moveit_msgs::msg::MoveItErrorCodes error_code;
     kinematics::KinematicsQueryOptions options;
     
@@ -572,6 +605,7 @@ private:
       RCLCPP_WARN(this->get_logger(), "错误代码: %d", error_code.val);
       RCLCPP_WARN(this->get_logger(), "错误代码含义: SUCCESS=1, NO_IK_SOLUTION=-31, TIMED_OUT=-32, INVALID_LINK_NAME=-33");
       RCLCPP_INFO(this->get_logger(), "=== 直接IK测试结束（失败）===");
+      solution.clear();  // 失败时清空solution
       return false;
     }
   }
@@ -1057,12 +1091,17 @@ private:
     RCLCPP_INFO(this->get_logger(), "=== 工作空间验证结束 ===");
     
     RCLCPP_INFO(this->get_logger(), "开始处理规划任务: x=%.3f, y=%.3f, z=%.3f", x, y, z);
+    
+    // 发布状态：开始处理（初始化阶段）
+    this->publish_state("planning", "初始化");
 
     // 清理之前可能残留的目标位姿和路径约束，确保从干净状态开始
     move_group_interface_->clearPoseTargets();
     move_group_interface_->clearPathConstraints();
     move_group_interface_->setStartStateToCurrentState(); // 设置起始状态为当前状态
 
+    // 发布状态：获取当前状态
+    this->publish_state("planning", "获取当前状态");
 
     // 获取并打印当前关节状态（用于调试）
     auto state = move_group_interface_->getCurrentState(2.0);
@@ -1227,7 +1266,13 @@ private:
     // 在规划前进行诊断测试
     RCLCPP_INFO(this->get_logger(), "=== 规划前诊断测试 ===");
     
+    // 发布状态：诊断测试阶段
+    this->publish_state("planning", "诊断测试");
+    
     // 0. 验证IK求解器配置并直接IK测试
+    // 保存直接IK求解得到的关节角度，用于后续规划
+    std::vector<double> direct_ik_solution;
+    
     const moveit::core::RobotModelConstPtr& robot_model_for_ik = move_group_interface_->getRobotModel();
     const moveit::core::JointModelGroup* jmg_for_ik_test = robot_model_for_ik->getJointModelGroup("arm_group");
     if (jmg_for_ik_test)
@@ -1248,6 +1293,9 @@ private:
       // 0.1. 直接IK测试（使用base_link坐标系）
       if (!ik_tip_frames.empty())
       {
+        // 发布状态：IK测试阶段
+        this->publish_state("planning", "IK测试");
+        
         // 转换目标位姿到base_link坐标系
         geometry_msgs::msg::PoseStamped pose_in_base = final_target_pose;
         if (pose_in_base.header.frame_id != ik_base_frame)
@@ -1270,10 +1318,11 @@ private:
         
         std::vector<double> seed_joints;
         state->copyJointGroupPositions(jmg_for_ik_test, seed_joints);
-        bool direct_ik_success = test_direct_ik(pose_in_base.pose, seed_joints, ik_base_frame, ik_tip_frames[0]);
+        bool direct_ik_success = test_direct_ik(pose_in_base.pose, seed_joints, ik_base_frame, ik_tip_frames[0], direct_ik_solution);
         if (direct_ik_success)
         {
           RCLCPP_INFO(this->get_logger(), "直接IK测试成功，说明IK求解器工作正常");
+          // direct_ik_solution已经在test_direct_ik中填充，将在后续规划中使用
         }
         else
         {
@@ -1294,6 +1343,9 @@ private:
     // 注意：直接IK测试在之前已经完成，如果失败会在那里处理并返回
     // 这里假设IK成功（因为如果失败已经返回了）
     bool ik_success = true;  // 直接IK测试已通过，假设IK成功
+    
+    // 发布状态：碰撞检测阶段
+    this->publish_state("planning", "碰撞检测");
     
     // 2. 测试当前状态的碰撞
     bool start_collision = test_collision(state, "起始状态");
@@ -1347,13 +1399,56 @@ private:
     
     RCLCPP_INFO(this->get_logger(), "=== 规划前诊断测试结束 ===");
     
-    // 目标状态验证和设置：如果IK求解成功，验证关节角度并尝试使用关节角度目标
+    // 发布状态：准备规划
+    this->publish_state("planning", "准备规划");
+    
+    // 目标状态验证和设置：优先使用直接IK求解的结果
     const moveit::core::RobotModelConstPtr& robot_model_for_planning = move_group_interface_->getRobotModel();
     const moveit::core::JointModelGroup* jmg_for_planning = robot_model_for_planning->getJointModelGroup("arm_group");
     bool use_joint_target = false;
     std::vector<double> target_joint_values;
     
-    if (jmg_for_planning)
+    // 优先使用直接IK求解得到的关节角度（如果可用）
+    if (jmg_for_planning && !direct_ik_solution.empty())
+    {
+      // 验证直接IK求解得到的关节角度是否有效
+      const std::vector<std::string>& joint_names = jmg_for_planning->getJointModelNames();
+      bool joints_valid = true;
+      
+      if (direct_ik_solution.size() >= joint_names.size())
+      {
+        for (size_t i = 0; i < joint_names.size() && i < direct_ik_solution.size(); ++i)
+        {
+          const moveit::core::JointModel* joint_model = jmg_for_planning->getJointModel(joint_names[i]);
+          if (joint_model && joint_model->getVariableBounds().size() > 0)
+          {
+            const moveit::core::VariableBounds& bounds = joint_model->getVariableBounds()[0];
+            if (direct_ik_solution[i] < bounds.min_position_ || direct_ik_solution[i] > bounds.max_position_)
+            {
+              RCLCPP_WARN(this->get_logger(), "直接IK求解得到的关节 %s 角度 %.6f 超出限制范围 [%.6f, %.6f]",
+                          joint_names[i].c_str(), direct_ik_solution[i], 
+                          bounds.min_position_, bounds.max_position_);
+              joints_valid = false;
+            }
+          }
+        }
+        
+        if (joints_valid)
+        {
+          target_joint_values = direct_ik_solution;  // 使用直接IK求解的结果
+          RCLCPP_INFO(this->get_logger(), "使用直接IK求解得到的关节角度作为目标状态:");
+          for (size_t i = 0; i < joint_names.size() && i < target_joint_values.size(); ++i)
+          {
+            RCLCPP_INFO(this->get_logger(), "  %s = %.6f rad (%.2f°)", 
+                        joint_names[i].c_str(), target_joint_values[i], 
+                        target_joint_values[i] * 180.0 / M_PI);
+          }
+        }
+      }
+    }
+    
+    // 如果直接IK求解的结果不可用，尝试使用MoveIt的setFromIK
+    if (target_joint_values.empty() && jmg_for_planning)
     {
       moveit::core::RobotState target_state_for_validation(*state);
       std::string eef_link = move_group_interface_->getEndEffectorLink();
@@ -1411,15 +1506,11 @@ private:
                         joint_names[i].c_str(), target_joint_values[i], 
                         target_joint_values[i] * 180.0 / M_PI);
           }
-          
-          // 尝试使用关节角度目标（可能比位姿目标更可靠）
-          // 但先尝试位姿目标，如果失败再使用关节角度目标
-          use_joint_target = false;  // 先尝试位姿目标
-          RCLCPP_INFO(this->get_logger(), "将先尝试使用位姿目标进行规划");
         }
         else
         {
           RCLCPP_WARN(this->get_logger(), "目标状态验证失败，关节角度超出限制");
+          target_joint_values.clear();
         }
       }
       else
@@ -1428,79 +1519,62 @@ private:
       }
     }
     
-    // 发布状态：规划中
-    this->publish_state("planning");
+    // 采用直接IK+关节角度目标规划策略
+    // 流程：视觉 → 目标点(x,y,z) → IK求解 → 关节角度目标 → 执行
+    RCLCPP_INFO(this->get_logger(), "=== 使用直接IK求解结果进行关节角度目标规划 ===");
     
-    // 参考成熟实现：直接进行规划，MoveIt会自动处理IK和坐标系转换
-    RCLCPP_INFO(this->get_logger(), "=== 开始位姿规划（参考成熟实现）===");
+    // 检查是否有有效的目标关节角度
+    if (target_joint_values.empty())
+    {
+      RCLCPP_ERROR(this->get_logger(), "无法获取有效的目标关节角度，规划失败");
+      RCLCPP_ERROR(this->get_logger(), "可能原因：IK求解失败或关节角度超出限制范围");
+      this->publish_state("error");
+      return;
+    }
+    
+    // 设置关节角度目标
+    move_group_interface_->clearPoseTargets();
+    move_group_interface_->setJointValueTarget(target_joint_values);
+    RCLCPP_INFO(this->get_logger(), "使用直接IK求解得到的关节角度进行规划");
     
     // 规划器自动切换：如果第一个规划器失败，自动尝试下一个
-    std::vector<std::string> planner_ids = {"RRTstar", "EST", "RRTConnect"};
+    std::vector<std::string> planner_ids = {"RRTConnect", "RRTstar", "EST"};
     moveit::planning_interface::MoveGroupInterface::Plan plan;
     bool success = false;
     moveit::core::MoveItErrorCode code = moveit::core::MoveItErrorCode::FAILURE;
     
+    // 使用关节角度目标进行规划
     for (size_t i = 0; i < planner_ids.size(); ++i)
     {
       move_group_interface_->setPlannerId(planner_ids[i]);
-      RCLCPP_INFO(this->get_logger(), "尝试规划器 [%zu/%zu]: %s", i + 1, planner_ids.size(), planner_ids[i].c_str());
+      RCLCPP_INFO(this->get_logger(), "尝试规划器 [%zu/%zu]: %s (关节角度目标)", i + 1, planner_ids.size(), planner_ids[i].c_str());
+      
+      // 发布状态：规划中（包含规划器名称）
+      this->publish_state("planning", planner_ids[i]);
       
       code = move_group_interface_->plan(plan);
       success = (code == moveit::core::MoveItErrorCode::SUCCESS);
       
       if (success)
       {
-        RCLCPP_INFO(this->get_logger(), "规划器 %s 成功！", planner_ids[i].c_str());
+        RCLCPP_INFO(this->get_logger(), "规划器 %s 成功（关节角度目标）！", planner_ids[i].c_str());
         break;
       }
       else
       {
-        RCLCPP_WARN(this->get_logger(), "规划器 %s 失败，错误代码: %d", planner_ids[i].c_str(), code.val);
+        RCLCPP_WARN(this->get_logger(), "规划器 %s 失败（关节角度目标），错误代码: %d", planner_ids[i].c_str(), code.val);
         
-        // 如果所有位姿目标规划都失败，且我们有有效的关节角度，尝试使用关节角度目标
-        if (i == planner_ids.size() - 1 && !target_joint_values.empty() && !use_joint_target)
+        // 如果规划超时（错误代码-7），发布带规划器信息的状态
+        if (code.val == -7)  // TIMED_OUT
         {
-          RCLCPP_INFO(this->get_logger(), "所有规划器使用位姿目标都失败，尝试使用关节角度目标...");
-          move_group_interface_->clearPoseTargets();
-          move_group_interface_->setJointValueTarget(target_joint_values);
-          
-          // 再次尝试所有规划器，这次使用关节角度目标
-          for (size_t j = 0; j < planner_ids.size(); ++j)
-          {
-            move_group_interface_->setPlannerId(planner_ids[j]);
-            RCLCPP_INFO(this->get_logger(), "使用关节角度目标，尝试规划器 [%zu/%zu]: %s", 
-                       j + 1, planner_ids.size(), planner_ids[j].c_str());
-            
-            code = move_group_interface_->plan(plan);
-            success = (code == moveit::core::MoveItErrorCode::SUCCESS);
-            
-            if (success)
-            {
-              RCLCPP_INFO(this->get_logger(), "使用关节角度目标，规划器 %s 成功！", planner_ids[j].c_str());
-              break;
-            }
-            else
-            {
-              RCLCPP_WARN(this->get_logger(), "使用关节角度目标，规划器 %s 失败，错误代码: %d", 
-                         planner_ids[j].c_str(), code.val);
-            }
-          }
-          
-          if (success)
-          {
-            break;
-          }
-        }
-        else if (i < planner_ids.size() - 1)
-        {
-          RCLCPP_INFO(this->get_logger(), "尝试下一个规划器...");
+          this->publish_state("planning", planner_ids[i]);
         }
       }
     }
 
     if (success)
     {
-      RCLCPP_INFO(this->get_logger(), "=== 位姿规划成功 ===");
+      RCLCPP_INFO(this->get_logger(), "=== 关节角度目标规划成功 ===");
       RCLCPP_INFO(this->get_logger(), "轨迹包含 %zu 个点", 
                   plan.trajectory_.joint_trajectory.points.size());
       
@@ -1554,11 +1628,12 @@ private:
     }
     else
     {
-      // 发布状态：错误
-      this->publish_state("error");
+      // 发布状态：错误（包含最后一个尝试的规划器信息）
+      std::string last_planner = planner_ids.empty() ? "" : planner_ids.back();
+      this->publish_state("error", last_planner);
       
       // 规划失败时的详细诊断
-      RCLCPP_ERROR(this->get_logger(), "=== 位姿规划失败 - 详细诊断 ===");
+      RCLCPP_ERROR(this->get_logger(), "=== 关节角度目标规划失败 - 详细诊断 ===");
       RCLCPP_ERROR(this->get_logger(), "错误代码: %d", code.val);
       
       // 详细的错误代码解释
@@ -1682,14 +1757,23 @@ private:
   }
 
   // 发布状态到网页
-  void publish_state(const std::string& state)
+  void publish_state(const std::string& state, const std::string& planner_name = "")
   {
     if (state_publisher_)
     {
       std_msgs::msg::String msg;
-      msg.data = state;
+      if (!planner_name.empty())
+      {
+        // 如果提供了规划器名称，格式化为 "state:planner_name"
+        msg.data = state + ":" + planner_name;
+      }
+      else
+      {
+        msg.data = state;
+      }
       state_publisher_->publish(msg);
-      RCLCPP_DEBUG(this->get_logger(), "发布状态: %s", state.c_str());
+      // 使用INFO级别，确保状态发布可见（用于调试和监控）
+      RCLCPP_INFO(this->get_logger(), "发布状态: %s", msg.data.c_str());
     }
   }
 

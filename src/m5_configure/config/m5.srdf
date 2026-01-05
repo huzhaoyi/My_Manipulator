@@ -10,6 +10,9 @@
     <!--CHAINS: When a chain is specified, all the links along the chain (including endpoints) are included in the group. Additionally, all the joints that are parents to included links are also included. This means that joints along the chain and the parent joint of the base link are included in the group-->
     <!--SUBGROUPS: Groups can also be formed by referencing to already defined group names-->
     <group name="arm_group">
+        <!-- 使用chain定义，base_link必须是链的起点 -->
+        <!-- MoveIt会自动包含从base_link到LinkGG的所有links和joints -->
+        <!-- 这确保IK求解器和OMPL规划器使用相同的运动链 -->
         <chain base_link="base_link" tip_link="LinkGG"/>
     </group>
     <group name="gripper_group">
