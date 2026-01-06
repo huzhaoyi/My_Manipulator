@@ -82,7 +82,7 @@ ros2 pkg list | grep trac_ik
 安装完成后，重新启动demo：
 
 ```bash
-ros2 launch m5_configure demo_moveit.launch.py
+ros2 launch m5_bringup m5_planning.launch.py
 ```
 
 然后使用目标位置 (0.184, 0.081, 0.398) 进行测试，应该能够成功求解IK。

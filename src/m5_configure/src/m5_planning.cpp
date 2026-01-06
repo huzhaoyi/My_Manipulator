@@ -27,10 +27,10 @@
 #include <moveit/collision_detection/collision_common.h>
 #include <moveit/collision_detection/collision_tools.h>
 
-class MoveItDemo : public rclcpp::Node
+class M5Planning : public rclcpp::Node
 {
 public:
-  MoveItDemo() : Node("demo_moveit")
+  M5Planning() : Node("m5_planning")
   {
     // 初始化 TF2 buffer 和 listener
     tf_buffer_ = std::make_shared<tf2_ros::Buffer>(this->get_clock());
@@ -39,17 +39,17 @@ public:
     // 订阅目标位姿话题
     target_pose_sub_ = this->create_subscription<geometry_msgs::msg::PoseStamped>(
         "/target_pose", 10, 
-        std::bind(&MoveItDemo::target_pose_callback, this, std::placeholders::_1));
+        std::bind(&M5Planning::target_pose_callback, this, std::placeholders::_1));
 
     // 发布状态到网页（用于显示规划中、执行中等状态）
     state_publisher_ = this->create_publisher<std_msgs::msg::String>("/robot_state", 10);
 
-    RCLCPP_INFO(this->get_logger(), "demo_moveit节点已启动，等待目标位姿消息...");
+    RCLCPP_INFO(this->get_logger(), "m5_planning节点已启动，等待目标位姿消息...");
     RCLCPP_INFO(this->get_logger(), "订阅话题: /target_pose");
     RCLCPP_INFO(this->get_logger(), "发布话题: /robot_state");
   }
 
-  ~MoveItDemo()
+  ~M5Planning()
   {
     // 1) 先停 worker，避免执行中调用 MoveIt action 导致 executor 卡住
     stop_workers_ = true;
@@ -57,18 +57,20 @@ public:
     for (auto& t : worker_threads_)
       if (t.joinable()) t.join();
 
-    // 2) 停 executor
+    // 2) 停 executor（更干净的停止顺序）
     if (executor_)
     {
-      executor_->cancel();
+      // 先 remove_node（如果线程还在 spin，它会更快退出）
       // 使用保存的 shared_ptr 而不是 shared_from_this()（析构函数中不安全）
       if (node_self_ptr_)
       {
         executor_->remove_node(node_self_ptr_);
       }
+      // 然后 cancel（确保 executor 停止处理新任务）
+      executor_->cancel();
     }
 
-    // 3) join executor thread
+    // 3) join executor thread（等待 executor 线程完全退出）
     if (executor_thread_.joinable())
       executor_thread_.join();
   }
@@ -86,13 +88,16 @@ public:
 
     // 参考成熟实现：设置规划参数（优化以提高成功率）
     move_group_interface_->setPlanningTime(15.0);  // 从10.0增加到15.0秒，给规划器更多时间
-    move_group_interface_->setNumPlanningAttempts(30);  // 从20增加到30次，提高成功率
+    num_planning_attempts_ = 30;  // 保存到成员变量
+    move_group_interface_->setNumPlanningAttempts(num_planning_attempts_);  // 从20增加到30次，提高成功率
     move_group_interface_->setMaxVelocityScalingFactor(0.9);
     move_group_interface_->setMaxAccelerationScalingFactor(0.9);
-    move_group_interface_->setGoalPositionTolerance(0.01);   // 1cm位置容差（从1mm增加到1cm，匹配epsilon=0.2）
+    goal_position_tolerance_ = 0.01;  // 保存到成员变量
+    move_group_interface_->setGoalPositionTolerance(goal_position_tolerance_);   // 1cm位置容差（从1mm增加到1cm，匹配epsilon=0.2）
     // 对于4DOF机械臂，由于position_only_ik=true，orientation容差需要大幅放宽
     // 参考成熟实现使用0.01，但对于4DOF需要更大容差以提高IK成功率
-    move_group_interface_->setGoalOrientationTolerance(0.5); // ~28.6度方向容差（大幅放宽以提高4DOF机械臂成功率）
+    goal_orientation_tolerance_ = 0.5;  // 保存到成员变量
+    move_group_interface_->setGoalOrientationTolerance(goal_orientation_tolerance_); // ~28.6度方向容差（大幅放宽以提高4DOF机械臂成功率）
     move_group_interface_->allowReplanning(true);
     
     move_group_interface_->setPlanningPipelineId("ompl");
@@ -150,11 +155,11 @@ public:
     RCLCPP_INFO(this->get_logger(), "Planning Pipeline: %s", move_group_interface_->getPlanningPipelineId().c_str());
     RCLCPP_INFO(this->get_logger(), "Planner ID: %s", move_group_interface_->getPlannerId().c_str());
     RCLCPP_INFO(this->get_logger(), "Planning Time: %.1f s", move_group_interface_->getPlanningTime());
-    RCLCPP_INFO(this->get_logger(), "Planning Attempts: 10 (已设置)");
+    RCLCPP_INFO(this->get_logger(), "Planning Attempts: %d (已设置)", num_planning_attempts_);
     RCLCPP_INFO(this->get_logger(), "Max Velocity Scaling: 0.9 (已设置)");
     RCLCPP_INFO(this->get_logger(), "Max Acceleration Scaling: 0.9 (已设置)");
-    RCLCPP_INFO(this->get_logger(), "Goal Position Tolerance: 0.001 m (已设置)");
-    RCLCPP_INFO(this->get_logger(), "Goal Orientation Tolerance: 0.5 rad (已设置，4DOF机械臂大幅放宽容差)");
+    RCLCPP_INFO(this->get_logger(), "Goal Position Tolerance: %.3f m (已设置)", goal_position_tolerance_);
+    RCLCPP_INFO(this->get_logger(), "Goal Orientation Tolerance: %.3f rad (已设置，4DOF机械臂大幅放宽容差)", goal_orientation_tolerance_);
     RCLCPP_INFO(this->get_logger(), "Allow Replanning: true (已设置)");
     RCLCPP_INFO(this->get_logger(), "=== 配置总结结束 ===");
 
@@ -162,7 +167,7 @@ public:
     stop_workers_ = false;
     for (size_t i = 0; i < num_worker_threads_; ++i)
     {
-      worker_threads_.emplace_back(&MoveItDemo::worker_thread, this);
+      worker_threads_.emplace_back(&M5Planning::worker_thread, this);
       RCLCPP_INFO(this->get_logger(), "工作线程 %zu 已启动", i + 1);
     }
     RCLCPP_INFO(this->get_logger(), "工作线程池已启动，共 %zu 个线程", num_worker_threads_);
@@ -204,14 +209,13 @@ private:
     // 发布状态：收到目标点
     this->publish_state("received");
 
-    // 参考成熟实现：简化处理，验证frame_id
-    // MoveIt会自动处理坐标系转换
+    // Frame处理策略：在callback中只做基本验证，实际转换在process_planning_task中统一处理
     // 根据SRDF配置，planning frame是"world"（virtual_joint的parent_frame）
     // RViz fixed frame是"world_link"，两者通过static_transform_publisher连接
     geometry_msgs::msg::PoseStamped target_pose = *msg;
     
     // 支持的frame_id：world（planning frame）、world_link（RViz fixed frame）、base_link
-    // 如果frame_id为空或不支持，根据planning frame设置为world
+    // 如果frame_id为空，根据planning frame设置为world
     std::string default_frame = planning_frame_.empty() ? "world" : planning_frame_;
     
     if (target_pose.header.frame_id.empty()) {
@@ -221,11 +225,10 @@ private:
     } else if (target_pose.header.frame_id != "world" && 
                target_pose.header.frame_id != "world_link" && 
                target_pose.header.frame_id != "base_link") {
-      // 如果是不支持的frame，记录警告并使用planning frame
-      // MoveIt的setPoseTarget会自动处理坐标系转换
-      RCLCPP_WARN(this->get_logger(), "目标位姿frame_id不是推荐的坐标系 (%s)，MoveIt将自动转换到planning frame: %s", 
+      // 如果是不支持的frame，记录警告（实际转换会在process_planning_task中统一处理）
+      RCLCPP_WARN(this->get_logger(), "目标位姿frame_id不是推荐的坐标系 (%s)，将在规划时转换到planning frame: %s", 
                   target_pose.header.frame_id.c_str(), default_frame.c_str());
-      // 保持原始frame_id，让MoveIt处理转换（MoveIt支持从任何frame转换到planning frame）
+      // 保持原始frame_id，在process_planning_task中统一转换
     }
     
     // 更新时间戳（如果为0，使用当前时间）
@@ -276,6 +279,11 @@ private:
   std::atomic<bool> stop_workers_{false};
   size_t num_worker_threads_{1};  // 默认1个线程（排队处理）
 
+  // 规划参数（保存实际设置值，用于日志输出）
+  int num_planning_attempts_{30};
+  double goal_position_tolerance_{0.01};
+  double goal_orientation_tolerance_{0.5};
+
   // IK求解器配置验证函数：获取并输出IK求解器实际使用的配置
   void verify_ik_solver_config()
   {
@@ -289,9 +297,17 @@ private:
       return;
     }
     
+    // 获取IK求解器实例（检查是否加载成功）
+    auto solver = jmg->getSolverInstance();
+    if (!solver)
+    {
+      RCLCPP_ERROR(this->get_logger(), "arm_group 未加载IK求解器（getSolverInstance()==nullptr）。检查 kinematics.yaml 是否生效/插件是否安装/参数命名空间是否正确。");
+      return;
+    }
+    
     // 获取base frame和tip frame
-    std::string base_frame = jmg->getSolverInstance()->getBaseFrame();
-    std::vector<std::string> tip_frames = jmg->getSolverInstance()->getTipFrames();
+    std::string base_frame = solver->getBaseFrame();
+    std::vector<std::string> tip_frames = solver->getTipFrames();
     
     RCLCPP_INFO(this->get_logger(), "IK求解器配置:");
     RCLCPP_INFO(this->get_logger(), "  Base Frame: %s", base_frame.c_str());
@@ -364,32 +380,9 @@ private:
       RCLCPP_INFO(this->get_logger(), "  Tip frame与SRDF group tip_link一致");
     }
     
-    // 尝试从参数服务器读取kinematics配置
-    std::string kinematics_prefix = "robot_description_kinematics.arm_group";
-    RCLCPP_INFO(this->get_logger(), "尝试读取kinematics配置参数 (前缀: %s):", kinematics_prefix.c_str());
-    
-    // 读取kinematics配置参数
-    std::vector<std::string> param_names = {
-      kinematics_prefix + ".kinematics_solver",
-      kinematics_prefix + ".kinematics_solver_timeout",
-      kinematics_prefix + ".position_only_ik",
-      kinematics_prefix + ".epsilon",
-      kinematics_prefix + ".solve_type"
-    };
-    
-    for (const auto& param_name : param_names)
-    {
-      if (this->has_parameter(param_name))
-      {
-        rclcpp::Parameter param = this->get_parameter(param_name);
-        RCLCPP_INFO(this->get_logger(), "  %s = %s", param_name.c_str(), 
-                    param.value_to_string().c_str());
-      }
-      else
-      {
-        RCLCPP_WARN(this->get_logger(), "  参数 %s 不存在", param_name.c_str());
-      }
-    }
+    // 注意：不在此节点上读取 MoveIt 的 kinematics 参数
+    // 原因：ROS2 默认不允许未声明参数，而 MoveIt 的参数是由 move_group 节点加载的
+    // 验证 IK 是否生效，通过 getSolverInstance() 是否为空 + solver->getTipFrames() 已经足够
     
     RCLCPP_INFO(this->get_logger(), "=== IK求解器配置验证结束 ===");
   }
@@ -565,11 +558,11 @@ private:
       return false;
     }
     
-    // 获取IK求解器实例
+    // 获取IK求解器实例（检查是否加载成功）
     const kinematics::KinematicsBaseConstPtr& solver = jmg->getSolverInstance();
     if (!solver)
     {
-      RCLCPP_ERROR(this->get_logger(), "无法获取IK求解器实例");
+      RCLCPP_ERROR(this->get_logger(), "arm_group 未加载IK求解器（getSolverInstance()==nullptr）。检查 kinematics.yaml 是否生效/插件是否安装/参数命名空间是否正确。");
       return false;
     }
     
@@ -667,6 +660,18 @@ private:
   {
     RCLCPP_INFO(this->get_logger(), "=== IK求解器测试 ===");
     
+    // 统一时间戳策略：优先使用target_pose.header.stamp（如果非0），否则使用当前时间
+    rclcpp::Time transform_time;
+    if (target_pose.header.stamp.sec != 0 || target_pose.header.stamp.nanosec != 0)
+    {
+      transform_time = rclcpp::Time(target_pose.header.stamp);
+    }
+    else
+    {
+      transform_time = this->now();
+    }
+    tf2::TimePoint tf_time_point = tf2_ros::fromMsg(transform_time);
+    
     const moveit::core::RobotModelConstPtr& robot_model = move_group_interface_->getRobotModel();
     const moveit::core::JointModelGroup* jmg = robot_model->getJointModelGroup("arm_group");
     if (!jmg)
@@ -685,8 +690,16 @@ private:
       eef_link = "LinkGG";
     }
     
+    // 获取IK求解器实例（检查是否加载成功）
+    auto solver = jmg->getSolverInstance();
+    if (!solver)
+    {
+      RCLCPP_ERROR(this->get_logger(), "arm_group 未加载IK求解器（getSolverInstance()==nullptr）。检查 kinematics.yaml 是否生效/插件是否安装/参数命名空间是否正确。");
+      return false;
+    }
+    
     // 获取IK求解器使用的base_frame
-    std::string ik_base_frame = jmg->getSolverInstance()->getBaseFrame();
+    std::string ik_base_frame = solver->getBaseFrame();
     RCLCPP_INFO(this->get_logger(), "IK求解器base_frame: %s", ik_base_frame.c_str());
     RCLCPP_INFO(this->get_logger(), "目标位姿frame_id: %s", target_pose.header.frame_id.c_str());
     RCLCPP_INFO(this->get_logger(), "Planning frame: %s", planning_frame_.c_str());
@@ -703,7 +716,7 @@ private:
         geometry_msgs::msg::TransformStamped transform = 
             tf_buffer_->lookupTransform(planning_frame_, 
                                        pose_in_planning_frame.header.frame_id, 
-                                       tf2::TimePointZero);
+                                       tf_time_point);
         tf2::doTransform(pose_in_planning_frame, pose_in_planning_frame, transform);
         pose_in_planning_frame.header.frame_id = planning_frame_;
         RCLCPP_INFO(this->get_logger(), "已转换目标位姿到planning frame: %s", planning_frame_.c_str());
@@ -726,7 +739,7 @@ private:
         geometry_msgs::msg::TransformStamped transform = 
             tf_buffer_->lookupTransform(ik_base_frame, 
                                        pose_in_planning_frame.header.frame_id, 
-                                       tf2::TimePointZero);
+                                       tf_time_point);
         tf2::doTransform(pose_in_planning_frame, pose_for_ik, transform);
         pose_for_ik.header.frame_id = ik_base_frame;
         RCLCPP_INFO(this->get_logger(), "已转换目标位姿到IK base_frame: %s", ik_base_frame.c_str());
@@ -944,115 +957,49 @@ private:
     }
   }
   
-  // 可达性快速过滤函数（基于URDF实际参数和关节限制的精确判定）
-  // 考虑Joint2和Joint3的限制（只能向下弯曲-1.57到0），进行更精确的工作空间验证
+  // 可达性软过滤函数：只拒绝明显超出最大半径/高度的点
+  // 其他情况都允许进入 IK 测试，由 direct IK 作为最终可达性判定
+  // 注意：4DOF + position_only_ik 的工作空间边界难以精确计算，硬过滤容易误杀
   bool is_reachable(double x, double y, double z)
   {
-    // URDF实际参数（从m5_updated_from_csv.urdf提取）
+    // URDF基本参数（用于计算明显超出边界的点）
     const double base_height = 0.141;  // Joint1在base_link上的高度
     const double link2_length = 0.264;  // Joint2到Joint3的距离
     const double link3_length = 0.143;  // Joint3到Joint4的距离（Z方向）
     const double link4_to_eef = 0.187;  // Joint4到LinkGG的距离
     
-    // Joint偏移参数
-    const double j2_offset_x = -0.048;
-    const double j2_offset_y = 0.0525;
-    const double j2_offset_z = 0.0735;
-    const double j4_offset_x = 0.048;
-    const double j4_offset_y = -0.0525;
-    const double j4_offset_z = 0.143;
+    // 计算理论最大伸展距离（完全伸展时，保守估计）
+    const double max_reach_radius = link2_length + link3_length + link4_to_eef;  // 约0.594m
+    const double max_reach_radius_with_margin = max_reach_radius * 1.2;  // 留20%余量，避免误杀
     
-    // 计算理论最大伸展距离（完全伸展时）
-    const double max_reach = link2_length + link3_length + link4_to_eef;  // 约0.594m
-    const double min_reach = 0.05;  // 最小距离（考虑关节偏移和基座）
+    // 计算理论最大高度（完全伸展时，保守估计）
+    const double max_height = base_height + 0.5;  // 保守估计最大高度（base_height + 约0.5m）
+    const double min_height = base_height - 0.3;  // 保守估计最小高度（base_height - 约0.3m）
     
     // 计算到基座的距离（半径）
     const double radius = std::sqrt(x * x + y * y);
     
-    // 计算相对高度（相对于Joint1，即base_height）
-    const double relative_height = z - base_height;
-    
-    // 考虑Joint2和Joint3的限制（只能向下弯曲-1.57到0）
-    // 这意味着机械臂主要工作在前方和下方区域
-    // 当Joint2和Joint3都为0时，机械臂完全伸展，末端执行器在最高位置
-    // 当Joint2和Joint3都为-1.57时，机械臂完全折叠，末端执行器在最低位置
-    
-    // 计算理论最小和最大高度
-    // 完全伸展时（Joint2=0, Joint3=0）：高度最大
-    const double max_height_theoretical = base_height + j2_offset_z + link2_length + j4_offset_z + link4_to_eef;
-    // 完全折叠时（Joint2=-1.57, Joint3=-1.57）：高度最小（简化计算）
-    const double min_height_theoretical = base_height - (link2_length + link3_length + link4_to_eef) * 0.5;  // 简化估算
-    
-    // 计算理论最小和最大半径
-    // 完全伸展时：半径最大
-    const double max_radius_theoretical = link2_length + link3_length + link4_to_eef;
-    // 完全折叠时：半径最小
-    const double min_radius_theoretical = 0.05;  // 最小半径估算
-    
-    // 调试信息
-    RCLCPP_INFO(this->get_logger(), "工作空间参数:");
-    RCLCPP_INFO(this->get_logger(), "  base_height = %.3f m", base_height);
-    RCLCPP_INFO(this->get_logger(), "  link2_length = %.3f m", link2_length);
-    RCLCPP_INFO(this->get_logger(), "  link3_length = %.3f m", link3_length);
-    RCLCPP_INFO(this->get_logger(), "  link4_to_eef = %.3f m", link4_to_eef);
-    RCLCPP_INFO(this->get_logger(), "  max_reach = %.3f m", max_reach);
-    RCLCPP_INFO(this->get_logger(), "  理论高度范围: [%.3f, %.3f] m", min_height_theoretical, max_height_theoretical);
-    RCLCPP_INFO(this->get_logger(), "  理论半径范围: [%.3f, %.3f] m", min_radius_theoretical, max_radius_theoretical);
-    RCLCPP_INFO(this->get_logger(), "目标位置分析:");
-    RCLCPP_INFO(this->get_logger(), "  半径 = %.6f m", radius);
-    RCLCPP_INFO(this->get_logger(), "  绝对高度 = %.6f m", z);
-    RCLCPP_INFO(this->get_logger(), "  相对高度 = %.6f m (相对于base_height)", relative_height);
-    
-    // 第一级：检查基本几何边界（考虑关节限制）
-    // 使用理论计算的范围，但留一些余量
-    const double min_radius = min_radius_theoretical * 0.8;   // 最小半径（留20%余量）
-    const double max_radius = max_radius_theoretical * 1.1;  // 最大半径（留10%余量）
-    const double min_height = min_height_theoretical - 0.05;  // 最小高度（留5cm余量）
-    const double max_height = max_height_theoretical + 0.05;  // 最大高度（留5cm余量）
-    
-    if (radius < min_radius || radius > max_radius || z < min_height || z > max_height)
+    // 软过滤：只拒绝明显超出最大半径/高度的点
+    // 其他情况都允许进入 IK 测试，由 direct IK 作为最终可达性判定
+    if (radius > max_reach_radius_with_margin)
     {
       RCLCPP_WARN(this->get_logger(),
-                  "目标位置 (%.3f, %.3f, %.3f) 超出理论工作空间边界 "
-                  "(半径范围: [%.3f, %.3f], 高度范围: [%.3f, %.3f])",
-                  x, y, z, min_radius, max_radius, min_height, max_height);
-      RCLCPP_WARN(this->get_logger(),
-                  "注意：Joint2和Joint3只能向下弯曲(-1.57到0)，限制了工作空间范围");
+                  "目标位置 (%.3f, %.3f, %.3f) 明显超出最大半径 (%.3f > %.3f m)，拒绝",
+                  x, y, z, radius, max_reach_radius_with_margin);
       return false;
     }
     
-    // 第二级：高成功率区域（推荐使用）- 基于实际测试和文档
-    const double safe_x_min = 0.15, safe_x_max = 0.40;
-    const double safe_y_min = -0.20, safe_y_max = 0.20;
-    const double safe_z_min = 0.20, safe_z_max = 0.40;
-    
-    if (x >= safe_x_min && x <= safe_x_max &&
-        y >= safe_y_min && y <= safe_y_max &&
-        z >= safe_z_min && z <= safe_z_max)
+    if (z > max_height || z < min_height)
     {
-      RCLCPP_INFO(this->get_logger(), "目标位置在安全区域内（高成功率）");
-      return true;  // 在安全区域内，直接通过
+      RCLCPP_WARN(this->get_logger(),
+                  "目标位置 (%.3f, %.3f, %.3f) 明显超出高度范围 (z=%.3f 不在 [%.3f, %.3f] m)，拒绝",
+                  x, y, z, z, min_height, max_height);
+      return false;
     }
     
-    // 第三级：中等成功率区域（谨慎使用）
-    const double medium_x_min = 0.10, medium_x_max = 0.50;
-    const double medium_y_min = -0.25, medium_y_max = 0.25;
-    const double medium_z_min = 0.15, medium_z_max = 0.45;
-    
-    if (x >= medium_x_min && x <= medium_x_max &&
-        y >= medium_y_min && y <= medium_y_max &&
-        z >= medium_z_min && z <= medium_z_max)
-    {
-      RCLCPP_INFO(this->get_logger(), "目标位置在中等成功率区域内");
-      return true;  // 在中等区域内，允许尝试
-    }
-    
-    // 第四级：其它区域 → 如果通过了基本几何边界检查，允许尝试但输出警告
-    // 让IK求解器自己判断是否真正可达，而不是在这里做复杂的2D IK验证
-    RCLCPP_WARN(this->get_logger(),
-                "目标不在推荐区域 (%.3f, %.3f, %.3f)，半径=%.3f, 相对高度=%.3f, "
-                "但基本几何验证通过，允许尝试（由IK求解器判断是否真正可达）",
-                x, y, z, radius, relative_height);
+    // 其他情况都允许进入 IK 测试
+    RCLCPP_INFO(this->get_logger(), "目标位置 (%.3f, %.3f, %.3f) 通过软过滤，进入 IK 测试（半径=%.3f m，高度=%.3f m）",
+                x, y, z, radius, z);
     return true;
   }
 
@@ -1069,26 +1016,40 @@ private:
     // 保护MoveGroupInterface的使用（线程安全）
     std::lock_guard<std::mutex> lock(moveit_mutex_);
 
+    // 统一时间戳策略：优先使用target_pose.header.stamp（如果非0），否则使用当前时间
+    // 这确保TF转换使用正确的时间点，避免时序错位（特别是来自视觉的目标位姿）
+    rclcpp::Time transform_time;
+    if (target_pose.header.stamp.sec != 0 || target_pose.header.stamp.nanosec != 0)
+    {
+      transform_time = rclcpp::Time(target_pose.header.stamp);
+    }
+    else
+    {
+      transform_time = this->now();
+    }
+    tf2::TimePoint tf_time_point = tf2_ros::fromMsg(transform_time);
+
     double x = target_pose.pose.position.x;
     double y = target_pose.pose.position.y;
     double z = target_pose.pose.position.z;
     
-    // 可达性快速过滤（三级判定：超边界拒绝，推荐区域直接通过，其它区域允许但警告）
-    RCLCPP_INFO(this->get_logger(), "=== 工作空间验证 ===");
+    // 可达性软过滤：只拒绝明显超出最大半径/高度的点
+    // 其他情况都允许进入 IK 测试，由 direct IK 作为最终可达性判定
+    RCLCPP_INFO(this->get_logger(), "=== 工作空间软过滤 ===");
     RCLCPP_INFO(this->get_logger(), "验证目标位置: (%.6f, %.6f, %.6f)", x, y, z);
     
     if (!is_reachable(x, y, z))
     {
-      RCLCPP_WARN(this->get_logger(), "目标位置 (%.6f, %.6f, %.6f) 超出工作空间边界，跳过规划",
+      RCLCPP_WARN(this->get_logger(), "目标位置 (%.6f, %.6f, %.6f) 明显超出工作空间边界，跳过规划",
                   x, y, z);
-      RCLCPP_INFO(this->get_logger(), "=== 工作空间验证结束（拒绝）===");
+      RCLCPP_INFO(this->get_logger(), "=== 工作空间软过滤结束（拒绝）===");
       // 发布状态：拒绝目标点
       this->publish_state("rejected");
       return;
     }
     
-    RCLCPP_INFO(this->get_logger(), "工作空间验证通过");
-    RCLCPP_INFO(this->get_logger(), "=== 工作空间验证结束 ===");
+    RCLCPP_INFO(this->get_logger(), "工作空间软过滤通过，将进入 IK 测试（由 direct IK 作为最终可达性判定）");
+    RCLCPP_INFO(this->get_logger(), "=== 工作空间软过滤结束 ===");
     
     RCLCPP_INFO(this->get_logger(), "开始处理规划任务: x=%.3f, y=%.3f, z=%.3f", x, y, z);
     
@@ -1163,9 +1124,11 @@ private:
     // 验证正向运动学
     verify_forward_kinematics(state);
 
-    // 参考成熟实现：直接使用传入的target_pose，不进行任何修改
-    // MoveIt会自动处理从base_link到planning frame的转换
-    RCLCPP_INFO(this->get_logger(), "=== 规划参数设置（参考成熟实现）===");
+    // Frame处理策略（统一）：
+    // 1. 规划使用planning_frame（MoveIt的setPoseTarget期望planning_frame）
+    // 2. 直接IK测试使用IK base_frame（IK求解器期望base_frame）
+    // 3. 所有TF转换使用统一时间戳（优先target_pose.header.stamp，否则now），避免时序错位
+    RCLCPP_INFO(this->get_logger(), "=== 规划参数设置 ===");
     RCLCPP_INFO(this->get_logger(), "清理之前的目标位姿...");
     move_group_interface_->clearPoseTargets();
     move_group_interface_->setStartStateToCurrentState();
@@ -1222,16 +1185,16 @@ private:
                final_target_pose.pose.orientation.x, final_target_pose.pose.orientation.y,
                final_target_pose.pose.orientation.z, final_target_pose.pose.orientation.w);
     
-    // 如果目标位姿的frame_id与planning frame不同，进行转换
+    // 如果目标位姿的frame_id与planning frame不同，进行转换（规划使用planning_frame）
     if (final_target_pose.header.frame_id != planning_frame_) {
       RCLCPP_WARN(this->get_logger(), "目标位姿frame_id (%s) 与planning frame (%s) 不匹配，进行转换",
                  final_target_pose.header.frame_id.c_str(), planning_frame_.c_str());
       try {
-        // 使用TF2转换到planning frame
+        // 使用TF2转换到planning frame（使用统一时间戳，避免时序错位）
         geometry_msgs::msg::TransformStamped transform = 
             tf_buffer_->lookupTransform(planning_frame_, 
                                        final_target_pose.header.frame_id, 
-                                       tf2::TimePointZero);
+                                       tf_time_point);
         tf2::doTransform(final_target_pose, final_target_pose, transform);
         final_target_pose.header.frame_id = planning_frame_;
         RCLCPP_INFO(this->get_logger(), "转换完成: frame_id=%s, position=(%.6f, %.6f, %.6f)",
@@ -1252,7 +1215,8 @@ private:
     }
     RCLCPP_INFO(this->get_logger(), "=== setPoseTarget前信息结束 ===");
     
-    // 参考成熟实现：使用setPoseTarget，MoveIt会自动处理坐标系转换（如果frame_id匹配planning frame）
+    // 注意：final_target_pose此时已经在planning_frame中（已在上方转换）
+    // 使用setPoseTarget时，frame_id必须匹配planning frame
     move_group_interface_->setPoseTarget(final_target_pose);
     
     // 规划参数已在init_moveit()中设置，这里只输出日志
@@ -1277,8 +1241,17 @@ private:
     const moveit::core::JointModelGroup* jmg_for_ik_test = robot_model_for_ik->getJointModelGroup("arm_group");
     if (jmg_for_ik_test)
     {
-      std::string ik_base_frame = jmg_for_ik_test->getSolverInstance()->getBaseFrame();
-      std::vector<std::string> ik_tip_frames = jmg_for_ik_test->getSolverInstance()->getTipFrames();
+      // 获取IK求解器实例（检查是否加载成功）
+      auto solver_for_ik = jmg_for_ik_test->getSolverInstance();
+      if (!solver_for_ik)
+      {
+        RCLCPP_ERROR(this->get_logger(), "arm_group 未加载IK求解器（getSolverInstance()==nullptr）。检查 kinematics.yaml 是否生效/插件是否安装/参数命名空间是否正确。");
+        this->publish_state("error");
+        return;
+      }
+      
+      std::string ik_base_frame = solver_for_ik->getBaseFrame();
+      std::vector<std::string> ik_tip_frames = solver_for_ik->getTipFrames();
       RCLCPP_INFO(this->get_logger(), "IK求解器配置: base_frame=%s, tip_frame=%s",
                   ik_base_frame.c_str(), 
                   ik_tip_frames.empty() ? "unknown" : ik_tip_frames[0].c_str());
@@ -1296,7 +1269,8 @@ private:
         // 发布状态：IK测试阶段
         this->publish_state("planning", "IK测试");
         
-        // 转换目标位姿到base_link坐标系
+        // 转换目标位姿到IK base_frame（直接IK测试使用ik_base_frame）
+        // 注意：final_target_pose此时已经在planning_frame中，需要转换到ik_base_frame
         geometry_msgs::msg::PoseStamped pose_in_base = final_target_pose;
         if (pose_in_base.header.frame_id != ik_base_frame)
         {
@@ -1305,7 +1279,7 @@ private:
             geometry_msgs::msg::TransformStamped transform = 
                 tf_buffer_->lookupTransform(ik_base_frame, 
                                            pose_in_base.header.frame_id, 
-                                           tf2::TimePointZero);
+                                           tf_time_point);
             tf2::doTransform(pose_in_base, pose_in_base, transform);
             pose_in_base.header.frame_id = ik_base_frame;
             RCLCPP_INFO(this->get_logger(), "已转换目标位姿到base_link坐标系进行直接IK测试");
@@ -1365,7 +1339,7 @@ private:
         std::string eef_link = move_group_interface_->getEndEffectorLink();
         if (eef_link.empty()) eef_link = "LinkGG";
         
-        // 转换目标位姿到planning frame（如果还没转换）
+        // 转换目标位姿到planning frame（如果还没转换，用于碰撞检测）
         geometry_msgs::msg::PoseStamped pose_for_ik = final_target_pose;
         if (pose_for_ik.header.frame_id != planning_frame_)
         {
@@ -1374,7 +1348,7 @@ private:
             geometry_msgs::msg::TransformStamped transform = 
                 tf_buffer_->lookupTransform(planning_frame_, 
                                            pose_for_ik.header.frame_id, 
-                                           tf2::TimePointZero);
+                                           tf_time_point);
             tf2::doTransform(pose_for_ik, pose_for_ik, transform);
             pose_for_ik.header.frame_id = planning_frame_;
           }
@@ -1454,7 +1428,7 @@ private:
       std::string eef_link = move_group_interface_->getEndEffectorLink();
       if (eef_link.empty()) eef_link = "LinkGG";
       
-      // 尝试IK求解获取目标关节角度
+      // 尝试IK求解获取目标关节角度（使用planning_frame）
       geometry_msgs::msg::PoseStamped pose_for_ik_validation = final_target_pose;
       if (pose_for_ik_validation.header.frame_id != planning_frame_)
       {
@@ -1463,7 +1437,7 @@ private:
           geometry_msgs::msg::TransformStamped transform = 
               tf_buffer_->lookupTransform(planning_frame_, 
                                          pose_for_ik_validation.header.frame_id, 
-                                         tf2::TimePointZero);
+                                         tf_time_point);
           tf2::doTransform(pose_for_ik_validation, pose_for_ik_validation, transform);
           pose_for_ik_validation.header.frame_id = planning_frame_;
         }
@@ -1536,6 +1510,33 @@ private:
     move_group_interface_->clearPoseTargets();
     move_group_interface_->setJointValueTarget(target_joint_values);
     RCLCPP_INFO(this->get_logger(), "使用直接IK求解得到的关节角度进行规划");
+    
+    // 改进1：在设置目标后再次设置起始状态为当前状态（保险起见，确保起始状态是最新的）
+    // 因为中间做了很多诊断，机器人状态可能已经变化
+    move_group_interface_->setStartStateToCurrentState();
+    RCLCPP_INFO(this->get_logger(), "已重新设置起始状态为当前状态（确保状态最新）");
+    
+    // 改进2：对目标关节状态做碰撞检测（快速验证，避免"能IK但规划失败"的情况）
+    if (jmg_for_planning)
+    {
+      const moveit::core::RobotModelConstPtr& robot_model = move_group_interface_->getRobotModel();
+      moveit::core::RobotState target_joint_state(robot_model);
+      target_joint_state.setJointGroupPositions(jmg_for_planning, target_joint_values);
+      target_joint_state.update();  // 更新正向运动学
+      
+      moveit::core::RobotStatePtr target_joint_state_ptr = 
+          std::make_shared<moveit::core::RobotState>(target_joint_state);
+      bool target_joint_collision = test_collision(target_joint_state_ptr, "目标关节状态（direct IK结果）");
+      if (target_joint_collision)
+      {
+        RCLCPP_WARN(this->get_logger(), "目标关节状态存在碰撞，规划可能失败");
+        RCLCPP_WARN(this->get_logger(), "建议：检查目标位置是否会导致自碰撞或环境碰撞");
+      }
+      else
+      {
+        RCLCPP_INFO(this->get_logger(), "目标关节状态无碰撞，可以继续规划");
+      }
+    }
     
     // 规划器自动切换：如果第一个规划器失败，自动尝试下一个
     std::vector<std::string> planner_ids = {"RRTConnect", "RRTstar", "EST"};
@@ -1678,8 +1679,8 @@ private:
       RCLCPP_ERROR(this->get_logger(), "  规划管道: %s", move_group_interface_->getPlanningPipelineId().c_str());
       RCLCPP_ERROR(this->get_logger(), "  规划器ID: %s", move_group_interface_->getPlannerId().c_str());
       RCLCPP_ERROR(this->get_logger(), "  规划时间: %.1f 秒", move_group_interface_->getPlanningTime());
-      // 注意：MoveGroupInterface没有getNumPlanningAttempts()方法，只能获取设置的值
-      RCLCPP_ERROR(this->get_logger(), "  规划尝试次数: 20 (已设置)");
+      // 使用成员变量保存的实际设置值（MoveGroupInterface没有getNumPlanningAttempts()方法）
+      RCLCPP_ERROR(this->get_logger(), "  规划尝试次数: %d (已设置)", num_planning_attempts_);
       
       // 输出目标位姿信息
       RCLCPP_ERROR(this->get_logger(), "目标位姿信息:");
@@ -1829,7 +1830,7 @@ int main(int argc, char * argv[])
   rclcpp::init(argc, argv);
 
   {
-    auto node = std::make_shared<MoveItDemo>();
+    auto node = std::make_shared<M5Planning>();
     node->start_executor();
     node->init_moveit();
 

@@ -6,13 +6,6 @@ find_package(rclcpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(moveit_ros_planning_interface REQUIRED)
 
-# 添加可执行文件
-add_executable(m5_planning_node src/m5_planning_node.cpp)
-ament_target_dependencies(m5_planning_node
-  rclcpp
-  moveit_ros_planning_interface
-)
-
 # 添加 joint_state_publisher_node
 add_executable(joint_state_publisher_node src/joint_state_publisher_node.cpp)
 ament_target_dependencies(joint_state_publisher_node
@@ -20,18 +13,17 @@ ament_target_dependencies(joint_state_publisher_node
   sensor_msgs
 )
 
-# 添加 demo_moveit
-add_executable(demo_moveit src/demo_moveit.cpp)
-ament_target_dependencies(demo_moveit
+# 添加 m5_planning
+add_executable(m5_planning src/m5_planning.cpp)
+ament_target_dependencies(m5_planning
   rclcpp
   moveit_ros_planning_interface
 )
 
 # 安装可执行文件
 install(TARGETS
-  m5_planning_node
   joint_state_publisher_node
-  demo_moveit
+  m5_planning
   DESTINATION lib/${PROJECT_NAME}
 )
 

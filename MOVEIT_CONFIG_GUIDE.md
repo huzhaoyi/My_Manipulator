@@ -438,12 +438,12 @@ source install/setup.bash
 
 如果配置包名称是 `m5_configure`（默认）：
 ```bash
-ros2 launch m5_configure demo.launch.py
+ros2 launch m5_bringup rviz.launch.py
 ```
 
 如果配置包名称是 `m5_moveit_config`：
 ```bash
-ros2 launch m5_moveit_config demo.launch.py
+ros2 launch m5_bringup rviz.launch.py
 ```
 
 **查找你的配置包名称**：

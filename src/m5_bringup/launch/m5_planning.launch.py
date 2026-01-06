@@ -5,36 +5,71 @@ from launch.launch_description_sources import PythonLaunchDescriptionSource
 from ament_index_python.packages import get_package_share_directory
 from moveit_configs_utils import MoveItConfigsBuilder
 import os
+import sys
+import contextlib
+
+# 抑制 MoveItConfigsBuilder 的 SRDF 推断警告
+class WarningFilter:
+    """过滤 stderr 中的 SRDF 推断警告"""
+    def __init__(self, original):
+        self.original = original
+        
+    def write(self, message):
+        if "Cannot infer SRDF" not in message and "cartesian_limits.yaml is deprecated" not in message:
+            self.original.write(message)
+            
+    def flush(self):
+        self.original.flush()
+        
+    def __getattr__(self, name):
+        return getattr(self.original, name)
+
+@contextlib.contextmanager
+def suppress_moveit_warnings():
+    """临时抑制 MoveIt 相关警告"""
+    old_stderr = sys.stderr
+    sys.stderr = WarningFilter(old_stderr)
+    try:
+        yield
+    finally:
+        sys.stderr = old_stderr
 
 
 def generate_launch_description():
     # 获取包路径
-    m5_configure_dir = get_package_share_directory("m5_configure")
+    m5_moveit_config_dir = get_package_share_directory("m5_moveit_config")
+    m5_bringup_dir = get_package_share_directory("m5_bringup")
     
     # 构建 MoveIt 配置，确保 kinematics.yaml 被正确加载
     # 加载传感器配置以禁用 Octomap
-    # 添加 trajectory_execution 配置（与 demo.launch.py 一致）
+    # 添加 trajectory_execution 配置（与 rviz.launch.py 一致）
     # 显式指定SRDF文件，确保arm_group的chain base_link被正确解析
-    moveit_config = (
-        MoveItConfigsBuilder("m5", package_name="m5_configure")
-        .robot_description_semantic(file_path="config/m5.srdf")  # 显式指定SRDF文件，确保base_link被正确识别
-        .robot_description_kinematics(file_path="config/kinematics.yaml")
-        .sensors_3d(file_path="config/sensors_3d.yaml")
-        .trajectory_execution(file_path="config/moveit_controllers.yaml")  # 使用 MoveItConfigsBuilder 方式加载
-        .to_moveit_configs()
-    )
+    # 使用绝对路径避免 MoveItConfigsBuilder 的路径推断警告
+    # 按照用户建议的方式显式指定 SRDF 路径
+    srdf = os.path.join(m5_moveit_config_dir, "config", "m5.srdf")
+    
+    # 使用警告过滤器抑制 MoveItConfigsBuilder 的 SRDF 推断警告
+    with suppress_moveit_warnings():
+        moveit_config = (
+            MoveItConfigsBuilder("m5", package_name="m5_moveit_config")
+            .robot_description_semantic(file_path=srdf)  # 显式指定 SRDF 路径
+            .robot_description_kinematics(file_path=os.path.join(m5_moveit_config_dir, "config", "kinematics.yaml"))
+            .sensors_3d(file_path=os.path.join(m5_moveit_config_dir, "config", "sensors_3d.yaml"))
+            .trajectory_execution(file_path=os.path.join(m5_moveit_config_dir, "config", "moveit_controllers.yaml"))  # 使用 MoveItConfigsBuilder 方式加载
+            .to_moveit_configs()
+        )
     
     # 包含 static_transform_publisher launch（发布world到base_link的变换）
     static_transform_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
-            os.path.join(m5_configure_dir, "launch", "static_virtual_joint_tfs.launch.py")
+            os.path.join(m5_bringup_dir, "launch", "static_virtual_joint_tfs.launch.py")
         )
     )
     
     # 包含 robot_state_publisher launch（发布机器人状态）
     rsp_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
-            os.path.join(m5_configure_dir, "launch", "rsp.launch.py")
+            os.path.join(m5_bringup_dir, "launch", "rsp.launch.py")
         )
     )
     
@@ -47,7 +82,7 @@ def generate_launch_description():
         executable="ros2_control_node",
         parameters=[
             moveit_config.robot_description,  # 硬件接口需要 robot_description 来初始化 UDP 配置
-            os.path.join(m5_configure_dir, "config", "ros2_controllers.yaml"),
+            os.path.join(m5_moveit_config_dir, "config", "ros2_controllers.yaml"),
         ],
         output="screen",
     )
@@ -83,7 +118,7 @@ def generate_launch_description():
         moveit_config.planning_pipelines,             # 建议也加上
         moveit_config.joint_limits,                   # 建议也加上
         moveit_config.sensors_3d,                     # 你需要禁用octomap的话也要加上
-        moveit_config.trajectory_execution,          # ✅使用 MoveItConfigsBuilder 加载的 trajectory_execution（与 demo.launch.py 一致）
+        moveit_config.trajectory_execution,          # ✅使用 MoveItConfigsBuilder 加载的 trajectory_execution（与 rviz.launch.py 一致）
         move_group_configuration,
         {"use_sim_time": False},
         ]
@@ -102,7 +137,7 @@ def generate_launch_description():
     # 包含 spawn_controllers launch（启动硬件接口和控制器）
     spawn_controllers_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
-            os.path.join(m5_configure_dir, "launch", "spawn_controllers.launch.py")
+            os.path.join(m5_bringup_dir, "launch", "spawn_controllers.launch.py")
         )
     )
     
@@ -114,7 +149,7 @@ def generate_launch_description():
     # 所以这里我们让节点订阅 /joint_states，但需要确保 joint_state_broadcaster 先停止发布
     # 或者，我们可以通过修改 ros2_controllers.yaml 来配置 joint_state_broadcaster 发布到 /joint_states_raw
     joint_state_publisher_node = Node(
-        package="m5_configure",
+        package="m5_control",
         executable="joint_state_publisher_node",
         name="m5_joint_state_publisher",
         output="screen",
@@ -124,11 +159,11 @@ def generate_launch_description():
         ],
     )
     
-    # 创建 demo_moveit 节点，并传递 MoveIt 配置参数
-    demo_moveit_node = Node(
-        package="m5_configure",
-        executable="demo_moveit",
-        name="demo_moveit",
+    # 创建 m5_planning 节点，并传递 MoveIt 配置参数
+    m5_planning = Node(
+        package="m5_planning",
+        executable="m5_planning",
+        name="m5_planning",
         output="screen",
         parameters=[
             moveit_config.robot_description,
@@ -144,5 +179,5 @@ def generate_launch_description():
         move_group_node,  # 手动创建的节点，确保 kinematics 和 controllers 都被正确传递
         spawn_controllers_launch,
         joint_state_publisher_node,  # 重新排序关节状态
-        demo_moveit_node,
+        m5_planning,
     ])

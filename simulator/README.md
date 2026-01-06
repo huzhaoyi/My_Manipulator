@@ -34,7 +34,7 @@ http://localhost:8080
 ```bash
 cd /home/huzy/My_Manipulator
 source install/setup.bash
-ros2 launch m5_configure demo.launch.py
+ros2 launch m5_bringup rviz.launch.py
 ```
 
 ## 协议说明

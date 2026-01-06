@@ -76,6 +76,7 @@ private:
   std::thread comm_thread_;
   std::atomic<bool> stop_thread_;
   std::atomic<bool> command_changed_;  // 命令值是否变化，需要发送
+  std::atomic<bool> has_received_feedback_;  // 是否已经收到过反馈（只有在收到反馈后才允许发送命令）
   std::mutex data_mutex_;
   
   // 关节数据

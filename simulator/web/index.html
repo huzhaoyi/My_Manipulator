@@ -674,7 +674,7 @@
         // 实现方法：使用欧拉角旋转
         // 方案1：绕X轴旋转-90度，然后绕Z轴旋转-90度
         // 方案2：绕Y轴旋转90度，然后绕X轴旋转90度
-        // 根据demo_moveit.cpp，Link2沿Z方向延伸，在ROS中Z是向上
+        // 根据m5_planning.cpp，Link2沿Z方向延伸，在ROS中Z是向上
         // 在Three.js中，Y是向上，所以需要将ROS的Z轴映射到Three.js的Y轴
         // 同时ROS的X轴（前）需要映射到Three.js的Z轴（前）
         // ROS的Y轴（左）需要映射到Three.js的-X轴（右的相反方向）
@@ -1338,7 +1338,7 @@
         
         function updateURDFRobot() {
             // 根据URDF的joint信息更新每个link的旋转
-            // 参考demo_moveit.cpp中的处理方式
+            // 参考m5_planning.cpp中的处理方式
             // Joint2和Joint3的范围是-1.57到0（-90°到0°），0度时应该是垂直向上
             // 注意：URDF中的axis定义的是旋转轴方向，正角度表示绕该轴正方向旋转
             

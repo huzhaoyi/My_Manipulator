@@ -153,6 +153,7 @@ hardware_interface::CallbackReturn M5HardwareInterface::on_init(
   socket_fd_ = -1;
   stop_thread_ = false;
   command_changed_ = false;
+  has_received_feedback_ = false;  // 初始化：还没有收到反馈
   robot_status_ = 0;
   last_successful_comm_ = std::chrono::steady_clock::now();
 
@@ -228,6 +229,11 @@ hardware_interface::CallbackReturn M5HardwareInterface::on_activate(
     hw_prev_commands_[i] = hw_positions_[i];  // 初始化上一次命令值
   }
 
+  // 重要：确保不会因为初始化而触发发送命令
+  // 只有在收到反馈后，才允许发送命令（避免开机时发送不必要的控制命令）
+  command_changed_ = false;
+  has_received_feedback_ = false;  // 重置反馈标志（激活时重置）
+
   RCLCPP_INFO_COLOR(rclcpp::get_logger("M5HardwareInterface"), COLOR_GREEN COLOR_BOLD, "硬件接口已激活 ✓");
   return hardware_interface::CallbackReturn::SUCCESS;
 }
@@ -258,22 +264,21 @@ hardware_interface::return_type M5HardwareInterface::read(
   
   // 从反馈数据更新状态
   // 如果没有收到反馈，使用命令值作为位置（用于接口验证）
-  static bool has_received_feedback = false;
   
   for (size_t i = 0; i < hw_positions_.size(); ++i)
   {
     if (i < feedback_positions_.size())
     {
-      // 检查是否收到过有效反馈（使用一个标志位）
-      if (!has_received_feedback && feedback_positions_[i] != 0.0)
+      // 检查是否收到过有效反馈（使用成员变量标志位）
+      if (!has_received_feedback_.load() && feedback_positions_[i] != 0.0)
       {
-        has_received_feedback = true;
+        has_received_feedback_ = true;
         RCLCPP_INFO_COLOR(rclcpp::get_logger("M5HardwareInterface"), COLOR_GREEN,
-          "首次收到反馈数据！");
+          "首次收到反馈数据！现在允许发送控制命令。");
       }
       
       // 优先使用反馈数据
-      if (has_received_feedback)
+      if (has_received_feedback_.load())
       {
         hw_positions_[i] = feedback_positions_[i];
       }
@@ -318,11 +323,24 @@ hardware_interface::return_type M5HardwareInterface::write(
     }
   }
   
-  // 如果有变化，标记需要发送
-  if (has_change)
+  // 如果有变化，且已经收到过反馈，才标记需要发送
+  // 这样可以避免在启动时（还未收到反馈）发送不必要的控制命令
+  if (has_change && has_received_feedback_.load())
   {
     command_changed_ = true;
     // 更新上一次命令值
+    for (size_t i = 0; i < hw_commands_.size(); ++i)
+    {
+      if (i < hw_prev_commands_.size())
+      {
+        hw_prev_commands_[i] = hw_commands_[i];
+      }
+    }
+  }
+  else if (has_change && !has_received_feedback_.load())
+  {
+    // 命令有变化但还没有收到反馈，只更新上一次命令值，不发送
+    // 这样可以避免在启动时发送命令
     for (size_t i = 0; i < hw_commands_.size(); ++i)
     {
       if (i < hw_prev_commands_.size())

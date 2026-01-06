@@ -27,18 +27,18 @@ echo "提示: 确保S3机械臂已启动并监听 192.168.32.150:7001"
 echo ""
 
 # 根据参数选择启动哪个launch文件
-LAUNCH_FILE="demo.launch.py"  # 默认启动demo.launch.py
+LAUNCH_FILE="rviz.launch.py"  # 默认启动rviz.launch.py (RViz可视化)
 
-if [ "$1" == "demo_moveit" ] || [ "$1" == "moveit" ]; then
-    LAUNCH_FILE="demo_moveit.launch.py"
-    echo "启动模式: demo_moveit (包含demo_moveit节点)"
-elif [ "$1" == "demo" ] || [ "$1" == "" ]; then
-    LAUNCH_FILE="demo.launch.py"
-    echo "启动模式: demo (包含RViz)"
+if [ "$1" == "planning" ] || [ "$1" == "moveit" ]; then
+    LAUNCH_FILE="m5_planning.launch.py"
+    echo "启动模式: planning (包含m5_planning节点)"
+elif [ "$1" == "rviz" ] || [ "$1" == "" ]; then
+    LAUNCH_FILE="rviz.launch.py"
+    echo "启动模式: rviz (包含RViz可视化)"
 else
-    echo "用法: $0 [demo|demo_moveit]"
-    echo "  demo        - 启动demo.launch.py (包含RViz，默认)"
-    echo "  demo_moveit - 启动demo_moveit.launch.py (包含demo_moveit节点)"
+    echo "用法: $0 [rviz|planning]"
+    echo "  rviz     - 启动rviz.launch.py (包含RViz可视化，默认)"
+    echo "  planning - 启动m5_planning.launch.py (包含m5_planning节点)"
     exit 1
 fi
 
@@ -47,4 +47,4 @@ echo "正在启动MoveIt ($LAUNCH_FILE)..."
 echo "提示: 硬件接口将自动连接到S3机械臂"
 echo ""
 
-ros2 launch m5_configure $LAUNCH_FILE
+ros2 launch m5_bringup $LAUNCH_FILE

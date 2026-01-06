@@ -90,7 +90,7 @@ class RobotSimulator:
                     10
                 )
                 
-                # 订阅机器人状态（从demo_moveit获取规划/执行状态）
+                # 订阅机器人状态（从m5_planning获取规划/执行状态）
                 self.robot_state_subscriber = self.ros2_node.create_subscription(
                     String,
                     '/robot_state',
@@ -367,7 +367,7 @@ class RobotSimulator:
                 print(f"[ROS2关节状态] axis5 (夹爪): {old_value:.2f}° -> {axis5_value:.2f}°")
     
     def robot_state_callback(self, msg):
-        """ROS2机器人状态回调（从demo_moveit获取）"""
+        """ROS2机器人状态回调（从m5_planning获取）"""
         state_data = msg.data
         # 支持格式：state 或 state:planner_name
         # 例如：planning:RRTConnect, error:RRTstar

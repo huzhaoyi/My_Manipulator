@@ -1,6 +1,6 @@
 # MoveIt uses this configuration for controller management
 # 使用顶层参数格式（供 MoveItConfigsBuilder.trajectory_execution() 使用）
-# 两个 launch 文件（demo.launch.py 和 m5_planning.launch.py）都使用 MoveItConfigsBuilder 加载此配置
+# 两个 launch 文件（rviz.launch.py 和 m5_planning.launch.py）都使用 MoveItConfigsBuilder 加载此配置
 
 moveit_controller_manager: moveit_simple_controller_manager/MoveItSimpleControllerManager
 moveit_manage_controllers: true
