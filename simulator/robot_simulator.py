@@ -12,6 +12,9 @@ import json
 import threading
 import time
 import math
+import atexit
+import signal
+import sys
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 from socketserver import UDPServer
 import os
@@ -55,6 +58,12 @@ class RobotSimulator:
         self.last_state_received_time = None  # 最后一次收到状态的时间
         self.has_received_state = False  # 是否收到过状态消息
         
+        # 抓取状态管理
+        self.grasp_state = "idle"  # idle, received, planning:pregrasp, executing:pregrasp, etc.
+        self.grasp_state_detail = ""  # 详细状态信息
+        self.last_grasp_state_received_time = None
+        self.has_received_grasp_state = False
+        
         # UDP socket（仅用于发送状态到机械臂，不用于接收关节角度数据）
         # 关节角度数据应该从ROS2的/joint_states话题获取（由m5_hardware_interface发布）
         self.udp_socket = None
@@ -69,18 +78,27 @@ class RobotSimulator:
         self.web_server = None
         self.web_thread = None
         
-        # ROS2节点、发布器和订阅器
+                # ROS2节点、发布器和订阅器
         self.ros2_node = None
         self.pose_publisher = None
+        self.cable_pose_publisher = None  # 缆绳位置发布器
         self.joint_state_subscriber = None
         self.arm_trajectory_publisher = None
         self.gripper_trajectory_publisher = None
+        self.grasp_state_subscriber = None  # 抓取状态订阅器
         if ROS2_AVAILABLE:
             try:
                 if not rclpy.ok():
                     rclpy.init()
+                    print("✓ ROS2已初始化")
+                else:
+                    print("✓ ROS2已就绪")
                 self.ros2_node = Node('robot_web_interface')
+                print(f"✓ ROS2节点已创建: {self.ros2_node.get_name()}")
                 self.pose_publisher = self.ros2_node.create_publisher(PoseStamped, '/target_pose', 10)
+                print(f"✓ 发布器已创建: /target_pose")
+                self.cable_pose_publisher = self.ros2_node.create_publisher(PoseStamped, '/cable_pose', 10)
+                print(f"✓ 发布器已创建: /cable_pose")
                 
                 # 订阅关节状态（从ROS2获取实时关节角度）
                 self.joint_state_subscriber = self.ros2_node.create_subscription(
@@ -98,6 +116,14 @@ class RobotSimulator:
                     10
                 )
                 
+                # 订阅抓取状态（从m5_grasp获取抓取状态）
+                self.grasp_state_subscriber = self.ros2_node.create_subscription(
+                    String,
+                    '/grasp_state',
+                    self.grasp_state_callback,
+                    10
+                )
+                
                 # 发布关节轨迹命令到控制器
                 self.arm_trajectory_publisher = self.ros2_node.create_publisher(
                     JointTrajectory,
@@ -111,10 +137,10 @@ class RobotSimulator:
                 )
                 
                 print("✓ ROS2节点已初始化")
-                print("  - 发布话题: /target_pose")
+                print("  - 发布话题: /target_pose, /cable_pose")
                 print("  - 发布话题: /arm_group_controller/joint_trajectory")
                 print("  - 发布话题: /gripper_group_controller/joint_trajectory")
-                print("  - 订阅话题: /joint_states, /robot_state")
+                print("  - 订阅话题: /joint_states, /robot_state, /grasp_state")
             except Exception as e:
                 print(f"警告: ROS2初始化失败: {e}")
                 self.ros2_node = None
@@ -128,33 +154,50 @@ class RobotSimulator:
         启动UDP服务器（仅用于识别机械臂地址和发送状态）
         注意：关节角度数据应该从ROS2的/joint_states话题获取（由m5_hardware_interface发布）
         """
-        self.udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.udp_socket.bind((self.host, self.udp_port))
-        self.udp_socket.settimeout(1.0)
-        
-        print(f"✓ UDP服务器启动在 {self.host}:{self.udp_port}")
-        print(f"  功能: 识别机械臂地址（用于发送状态），发送状态信息")
-        print(f"  注意: 关节角度数据从ROS2的/joint_states话题获取（由m5_hardware_interface发布）")
-        
-        print(f"UDP服务器监听中，等待机械臂反馈（仅用于识别地址）...")
-        recv_count = 0
-        while self.running:
-            try:
-                data, addr = self.udp_socket.recvfrom(4096)
-                recv_count += 1
-                if recv_count <= 5 or recv_count % 50 == 0:
-                    print(f"[UDP接收 #{recv_count}] 收到 {len(data)} 字节 from {addr}（仅用于识别地址）")
-                # 保存机械臂地址，用于后续发送状态
-                if self.robot_addr is None:
-                    self.robot_addr = addr
-                    print(f"✓ 已识别机械臂地址: {addr}（用于发送状态）")
-                self.handle_robot_feedback(data, addr)
-            except socket.timeout:
-                # 定期发送状态到机械臂
-                self.send_state_to_robot()
-                continue
-            except Exception as e:
-                print(f"UDP错误: {e}")
+        try:
+            self.udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            # 设置socket选项，允许地址重用
+            self.udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            self.udp_socket.bind((self.host, self.udp_port))
+            self.udp_socket.settimeout(1.0)
+            
+            print(f"✓ UDP服务器启动在 {self.host}:{self.udp_port}")
+            print(f"  功能: 识别机械臂地址（用于发送状态），发送状态信息")
+            print(f"  注意: 关节角度数据从ROS2的/joint_states话题获取（由m5_hardware_interface发布）")
+            
+            print(f"UDP服务器监听中，等待机械臂反馈（仅用于识别地址）...")
+            recv_count = 0
+            while self.running:
+                try:
+                    data, addr = self.udp_socket.recvfrom(4096)
+                    recv_count += 1
+                    if recv_count <= 5 or recv_count % 50 == 0:
+                        print(f"[UDP接收 #{recv_count}] 收到 {len(data)} 字节 from {addr}（仅用于识别地址）")
+                    # 保存机械臂地址，用于后续发送状态
+                    if self.robot_addr is None:
+                        self.robot_addr = addr
+                        print(f"✓ 已识别机械臂地址: {addr}（用于发送状态）")
+                    self.handle_robot_feedback(data, addr)
+                except socket.timeout:
+                    # 定期发送状态到机械臂
+                    self.send_state_to_robot()
+                    continue
+                except socket.error as e:
+                    if self.running:  # 只有在正常运行时才打印错误
+                        print(f"UDP socket错误: {e}")
+                    break
+                except Exception as e:
+                    if self.running:  # 只有在正常运行时才打印错误
+                        print(f"UDP错误: {e}")
+        except Exception as e:
+            print(f"启动UDP服务器失败: {e}")
+        finally:
+            # 确保socket被关闭
+            if self.udp_socket:
+                try:
+                    self.udp_socket.close()
+                except:
+                    pass
     
     def handle_robot_feedback(self, data, addr):
         """
@@ -391,6 +434,85 @@ class RobotSimulator:
         else:
             print(f"[ROS2状态] 收到未知状态: {state_data}")
     
+    def grasp_state_callback(self, msg):
+        """ROS2抓取状态回调（从m5_grasp获取）"""
+        state_data = msg.data
+        # 支持格式：state 或 state:detail
+        # 例如：executing:descend, error:close_gripper
+        parts = state_data.split(':', 1)
+        state = parts[0]
+        detail = parts[1] if len(parts) > 1 else ""
+        
+        if not self.has_received_grasp_state:
+            self.has_received_grasp_state = True
+            print("✓ 首次收到ROS2抓取状态消息")
+        self.last_grasp_state_received_time = time.time()
+        self.grasp_state = state
+        self.grasp_state_detail = detail
+        if detail:
+            print(f"[ROS2抓取状态] 收到状态: {state} ({detail})")
+        else:
+            print(f"[ROS2抓取状态] 收到状态: {state}")
+    
+    def publish_cable_pose(self, x, y, z, qx=0.0, qy=0.0, qz=0.0, qw=1.0):
+        """
+        发布缆绳位置到 /cable_pose 话题
+        
+        Args:
+            x, y, z: 缆绳位置（必需）
+            qx, qy, qz, qw: 缆绳orientation四元数（可选，默认为单位四元数）
+        
+        Returns:
+            dict: 包含成功状态和消息的字典
+        """
+        if not ROS2_AVAILABLE or self.cable_pose_publisher is None:
+            print(f"[缆绳抓取] ROS2未初始化或发布器为None (ROS2_AVAILABLE={ROS2_AVAILABLE}, cable_pose_publisher={self.cable_pose_publisher})")
+            return {
+                "success": False,
+                "message": "ROS2未初始化，无法发布缆绳位置"
+            }
+        
+        try:
+            msg = PoseStamped()
+            msg.header.stamp = self.ros2_node.get_clock().now().to_msg()
+            # 使用world_link作为frame_id（与publish_target_pose一致，MoveIt会自动处理坐标系转换）
+            # 注意：m5_grasp会通过transform_pose_to_planning转换到planning frame
+            msg.header.frame_id = 'world_link'
+            
+            msg.pose.position.x = float(x)
+            msg.pose.position.y = float(y)
+            msg.pose.position.z = float(z)
+            
+            msg.pose.orientation.x = float(qx)
+            msg.pose.orientation.y = float(qy)
+            msg.pose.orientation.z = float(qz)
+            msg.pose.orientation.w = float(qw)
+            
+            print(f"[缆绳抓取] 准备发布消息: frame_id={msg.header.frame_id}, position=({x:.3f}, {y:.3f}, {z:.3f}), orientation=({qx:.3f}, {qy:.3f}, {qz:.3f}, {qw:.3f})")
+            print(f"[缆绳抓取] 发布器状态: {self.cable_pose_publisher}, 节点状态: {self.ros2_node}, rclpy.ok(): {rclpy.ok()}")
+            # ROS2发布是异步的，不需要spin_once，但需要确保节点上下文有效
+            if not rclpy.ok():
+                raise RuntimeError("ROS2上下文无效")
+            if self.cable_pose_publisher is None:
+                raise RuntimeError("缆绳位置发布器未初始化")
+            self.cable_pose_publisher.publish(msg)
+            print(f"[缆绳抓取] 消息已发布到 /cable_pose 话题 (frame_id={msg.header.frame_id})")
+            
+            log_msg = f'已发布缆绳位置: ({x:.3f}, {y:.3f}, {z:.3f})'
+            print(f"[缆绳抓取] {log_msg}")
+            
+            return {
+                "success": True,
+                "message": log_msg
+            }
+        except Exception as e:
+            error_msg = f"发布缆绳位置失败: {e}"
+            print(f"[缆绳抓取错误] {error_msg}")
+            return {
+                "success": False,
+                "message": error_msg
+            }
+    
     def publish_target_pose(self, x, y, z, qx=0.0, qy=0.0, qz=0.0, qw=1.0):
         """
         发布目标位姿到 /target_pose 话题
@@ -404,6 +526,7 @@ class RobotSimulator:
             dict: 包含成功状态和消息的字典
         """
         if not ROS2_AVAILABLE or self.pose_publisher is None:
+            print(f"[坐标下发] ROS2未初始化或发布器为None (ROS2_AVAILABLE={ROS2_AVAILABLE}, pose_publisher={self.pose_publisher})")
             return {
                 "success": False,
                 "message": "ROS2未初始化，无法发布位姿"
@@ -427,7 +550,13 @@ class RobotSimulator:
             msg.pose.orientation.z = float(qz)
             msg.pose.orientation.w = float(qw)
             
+            print(f"[坐标下发] 准备发布消息: frame_id={msg.header.frame_id}, position=({x:.3f}, {y:.3f}, {z:.3f}), orientation=({qx:.3f}, {qy:.3f}, {qz:.3f}, {qw:.3f})")
+            print(f"[坐标下发] 发布器状态: {self.pose_publisher}, 节点状态: {self.ros2_node}, rclpy.ok(): {rclpy.ok()}")
+            # ROS2发布是异步的，不需要spin_once，但需要确保节点上下文有效
+            if not rclpy.ok():
+                raise RuntimeError("ROS2上下文无效")
             self.pose_publisher.publish(msg)
+            print(f"[坐标下发] 消息已发布到 /target_pose 话题")
             
             # 记录发布信息
             if qx == 0.0 and qy == 0.0 and qz == 0.0 and qw == 1.0:
@@ -503,15 +632,25 @@ class RobotSimulator:
                     if not self.simulator.has_received_state:
                         robot_state = "__unknown__"  # 从未收到过状态
                     
+                    # 获取抓取状态
+                    grasp_state = self.simulator.grasp_state
+                    grasp_state_detail = self.simulator.grasp_state_detail
+                    if not self.simulator.has_received_grasp_state:
+                        grasp_state = "__unknown__"
+                    
                     status = {
                         "axes": self.simulator.axes.copy(),
                         "status": hardware_status,  # 使用计算后的硬件状态
                         "robot_state": robot_state,  # 使用计算后的运行状态
                         "planner_name": planner_name,  # 规划器名称（如果有）
+                        "grasp_state": grasp_state,  # 抓取状态
+                        "grasp_state_detail": grasp_state_detail,  # 抓取状态详情
                         "has_received_robot_data": self.simulator.has_received_robot_data,  # 是否收到过机械臂数据
                         "last_data_received_time": self.simulator.last_data_received_time,  # 最后一次收到数据的时间
                         "has_received_state": self.simulator.has_received_state,  # 是否收到过状态消息
-                        "last_state_received_time": self.simulator.last_state_received_time  # 最后一次收到状态的时间
+                        "last_state_received_time": self.simulator.last_state_received_time,  # 最后一次收到状态的时间
+                        "has_received_grasp_state": self.simulator.has_received_grasp_state,  # 是否收到过抓取状态
+                        "last_grasp_state_received_time": self.simulator.last_grasp_state_received_time  # 最后一次收到抓取状态的时间
                     }
                     self.wfile.write(json.dumps(status).encode())
                 elif self.path == '/api/urdf':
@@ -596,11 +735,13 @@ class RobotSimulator:
                     
                     try:
                         data = json.loads(post_data.decode('utf-8'))
+                        print(f"[Web服务器] 收到位姿发布请求: {data}")
                         result = self.simulator.publish_target_pose(
                             data.get('x'), data.get('y'), data.get('z'),
                             data.get('qx', 0.0), data.get('qy', 0.0), 
                             data.get('qz', 0.0), data.get('qw', 1.0)
                         )
+                        print(f"[Web服务器] 位姿发布结果: {result}")
                         
                         self.send_response(200)
                         self.send_header('Content-type', 'application/json')
@@ -627,6 +768,32 @@ class RobotSimulator:
                             data.get('axis4', 0.0),
                             data.get('axis5', 0.0)
                         )
+                        
+                        self.send_response(200)
+                        self.send_header('Content-type', 'application/json')
+                        self.send_header('Access-Control-Allow-Origin', '*')
+                        self.end_headers()
+                        self.wfile.write(json.dumps(result).encode())
+                    except Exception as e:
+                        self.send_response(400)
+                        self.send_header('Content-type', 'application/json')
+                        self.send_header('Access-Control-Allow-Origin', '*')
+                        self.end_headers()
+                        error_msg = {"error": str(e)}
+                        self.wfile.write(json.dumps(error_msg).encode())
+                elif self.path == '/api/publish_cable_pose':
+                    content_length = int(self.headers['Content-Length'])
+                    post_data = self.rfile.read(content_length)
+                    
+                    try:
+                        data = json.loads(post_data.decode('utf-8'))
+                        print(f"[Web服务器] 收到缆绳位置发布请求: {data}")
+                        result = self.simulator.publish_cable_pose(
+                            data.get('x'), data.get('y'), data.get('z'),
+                            data.get('qx', 0.0), data.get('qy', 0.0), 
+                            data.get('qz', 0.0), data.get('qw', 1.0)
+                        )
+                        print(f"[Web服务器] 缆绳位置发布结果: {result}")
                         
                         self.send_response(200)
                         self.send_header('Content-type', 'application/json')
@@ -669,8 +836,17 @@ class RobotSimulator:
         print(f"  - 所有接口: http://0.0.0.0:{self.web_port}")
         try:
             self.web_server.serve_forever()
+        except Exception as e:
+            if self.running:  # 只有在正常运行时才打印错误
+                print(f"Web服务器错误: {e}")
         finally:
             os.chdir(original_dir)
+            # 确保服务器完全关闭
+            try:
+                if self.web_server:
+                    self.web_server.server_close()
+            except:
+                pass
     
     def start(self):
         """启动所有服务"""
@@ -728,18 +904,105 @@ class RobotSimulator:
     
     def stop(self):
         """停止所有服务"""
+        if not self.running:
+            return  # 已经停止过了
+        
         print("\n正在停止服务器...")
         self.running = False
-        if self.udp_socket:
-            self.udp_socket.close()
+        
+        # 停止Web服务器
         if self.web_server:
-            self.web_server.shutdown()
+            try:
+                print("  停止Web服务器...")
+                self.web_server.shutdown()
+                self.web_server.server_close()
+                self.web_server = None
+            except Exception as e:
+                print(f"  停止Web服务器时出错: {e}")
+        
+        # 停止UDP服务器
+        if self.udp_socket:
+            try:
+                print("  停止UDP服务器...")
+                self.udp_socket.close()
+                self.udp_socket = None
+            except Exception as e:
+                print(f"  停止UDP服务器时出错: {e}")
+        
+        # 等待线程结束（最多等待3秒）
+        if self.udp_thread and self.udp_thread.is_alive():
+            print("  等待UDP线程结束...")
+            self.udp_thread.join(timeout=2.0)
+        
+        if self.web_thread and self.web_thread.is_alive():
+            print("  等待Web线程结束...")
+            self.web_thread.join(timeout=2.0)
+        
+        # 清理ROS2资源
         if self.ros2_node is not None:
-            self.ros2_node.destroy_node()
-            if rclpy.ok():
-                rclpy.shutdown()
+            try:
+                print("  清理ROS2资源...")
+                # 先取消所有订阅和发布
+                if hasattr(self, 'pose_publisher') and self.pose_publisher:
+                    self.pose_publisher = None
+                if hasattr(self, 'cable_pose_publisher') and self.cable_pose_publisher:
+                    self.cable_pose_publisher = None
+                if hasattr(self, 'joint_state_subscriber') and self.joint_state_subscriber:
+                    self.joint_state_subscriber = None
+                if hasattr(self, 'robot_state_subscriber') and self.robot_state_subscriber:
+                    self.robot_state_subscriber = None
+                if hasattr(self, 'grasp_state_subscriber') and self.grasp_state_subscriber:
+                    self.grasp_state_subscriber = None
+                if hasattr(self, 'arm_trajectory_publisher') and self.arm_trajectory_publisher:
+                    self.arm_trajectory_publisher = None
+                if hasattr(self, 'gripper_trajectory_publisher') and self.gripper_trajectory_publisher:
+                    self.gripper_trajectory_publisher = None
+                
+                # 销毁节点
+                self.ros2_node.destroy_node()
+                self.ros2_node = None
+                
+                # 关闭ROS2
+                if rclpy.ok():
+                    rclpy.shutdown()
+            except Exception as e:
+                print(f"  清理ROS2资源时出错: {e}")
+        
         print("服务器已停止")
 
 if __name__ == '__main__':
-    simulator = RobotSimulator(host='0.0.0.0', udp_port=7001, web_port=8081)
-    simulator.start()
+    simulator = None
+    
+    def signal_handler(signum, frame):
+        """信号处理函数"""
+        print(f"\n收到信号 {signum}，正在退出...")
+        if simulator:
+            simulator.stop()
+        sys.exit(0)
+    
+    def cleanup_on_exit():
+        """退出时清理资源"""
+        if simulator:
+            simulator.stop()
+    
+    # 注册信号处理
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+    
+    # 注册退出处理
+    atexit.register(cleanup_on_exit)
+    
+    try:
+        simulator = RobotSimulator(host='0.0.0.0', udp_port=7001, web_port=8081)
+        simulator.start()
+    except KeyboardInterrupt:
+        print("\n收到中断信号...")
+        if simulator:
+            simulator.stop()
+    except Exception as e:
+        print(f"\n发生错误: {e}")
+        import traceback
+        traceback.print_exc()
+        if simulator:
+            simulator.stop()
+        sys.exit(1)

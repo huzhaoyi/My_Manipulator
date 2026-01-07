@@ -28,6 +28,10 @@ public:
       this->declare_parameter<std::string>("source_topic", "/joint_states_raw");
       std::string source_topic = this->get_parameter("source_topic").as_string();
       
+      // 声明参数：输出话题名称（默认发布到 /joint_states_fixed，避免与 joint_state_broadcaster 冲突）
+      this->declare_parameter<std::string>("output_topic", "/joint_states_fixed");
+      std::string output_topic = this->get_parameter("output_topic").as_string();
+      
       // 创建订阅者，订阅 joint_state_broadcaster 发布的原始消息
       // 订阅原始话题，然后重新排序后发布
       joint_state_sub_ = this->create_subscription<sensor_msgs::msg::JointState>(
@@ -37,8 +41,9 @@ public:
       );
 
       // 创建发布者，发布带有正确时间戳和顺序的 joint_states
+      // 注意：发布到 /joint_states_fixed 而不是 /joint_states，避免与 joint_state_broadcaster 冲突
       joint_state_pub_ = this->create_publisher<sensor_msgs::msg::JointState>(
-        "/joint_states", 
+        output_topic,  // 输出话题（可通过参数配置，默认 /joint_states_fixed）
         rclcpp::QoS(10)
       );
 
@@ -55,8 +60,8 @@ public:
 
       RCLCPP_INFO(this->get_logger(), "JointStatePublisherNode 已启动（重新发布模式）");
       RCLCPP_INFO(this->get_logger(), "订阅话题: %s", source_topic.c_str());
-      RCLCPP_INFO(this->get_logger(), "发布话题: /joint_states");
-      RCLCPP_INFO(this->get_logger(), "将确保每条 /joint_states 消息都使用 node->now() 设置时间戳");
+      RCLCPP_INFO(this->get_logger(), "发布话题: %s (避免与 joint_state_broadcaster 冲突)", output_topic.c_str());
+      RCLCPP_INFO(this->get_logger(), "将确保每条消息都使用 node->now() 设置时间戳");
       RCLCPP_INFO(this->get_logger(), "关节顺序将调整为: Joint1, Joint2, Joint3, Joint4, JointGL, JointGR");
     }
     else

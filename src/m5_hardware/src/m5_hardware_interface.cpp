@@ -513,17 +513,31 @@ bool M5HardwareInterface::send_command(const std::vector<double> & joint_positio
     double joint_gl_pos = joint_positions[joint_gl_idx];
     if (!std::isnan(joint_gl_pos) && !std::isinf(joint_gl_pos))
     {
-      // 反向映射：JointGL [-1.01, 1.01] 弧度 -> axis5 [-1100, 0] 度
-      const double joint_min = -1.01;    // 弧度
-      const double joint_max = 1.01;      // 弧度
-      const double axis5_min = -1100.0;   // 度
-      const double axis5_max = 0.0;       // 度
+      // 反向映射：JointGL [1.01, -1.01] 弧度 -> axis5 [0, -1100] 度
+      // 映射关系：JointGL = 1.01 rad (闭合) → axis5 = 0°, JointGL = -1.01 rad (打开) → axis5 = -1100°
+      const double joint_min = -1.01;    // 弧度（打开）
+      const double joint_max = 1.01;      // 弧度（闭合）
+      const double axis5_min = -1100.0;   // 度（打开）
+      const double axis5_max = 0.0;       // 度（闭合）
       
       // 限制在有效范围内
       joint_gl_pos = std::max(joint_min, std::min(joint_max, joint_gl_pos));
       
-      // 线性映射
+      // 线性映射：JointGL [1.01, -1.01] 弧度 -> axis5 [0, -1100] 度
+      // 公式：axis5 = (joint_gl_pos - joint_min) / (joint_max - joint_min) * (axis5_max - axis5_min) + axis5_min
       double axis5_value = (joint_gl_pos - joint_min) / (joint_max - joint_min) * (axis5_max - axis5_min) + axis5_min;
+      
+      // 验证映射：当 joint_gl_pos = -1.01 时，应该得到 axis5 = -1100.0°
+      // 当 joint_gl_pos = 1.01 时，应该得到 axis5 = 0.0°
+      // 添加调试日志（仅在关键值附近打印）
+      if (std::abs(joint_gl_pos + 1.01) < 0.01 || std::abs(joint_gl_pos - 1.01) < 0.01)
+      {
+        RCLCPP_DEBUG(rclcpp::get_logger("M5HardwareInterface"),
+          "[夹爪映射] JointGL=%.4f rad (%.2f°) -> axis5=%.2f° (期望: %.2f°)",
+          joint_gl_pos, joint_gl_pos * 180.0 / M_PI, axis5_value,
+          (joint_gl_pos < 0 ? -1100.0 : 0.0));
+      }
+      
       axis_values[4] = axis5_value;  // axis5是第5个元素（索引4）
     }
   }
@@ -719,12 +733,13 @@ bool M5HardwareInterface::parse_feedback_json(const std::string & json_str)
         if (axis_num == 5)
         {
           // axis5范围：-1100° 到 0°（度），映射到JointGL和JointGR（-1.01 到 1.01 弧度）
-          // 线性映射：axis5 [-1100, 0] 度 -> 弧度 [-1.01, 1.01]
+          // 映射关系：axis5 = 0° (闭合) → JointGL = 1.01 rad, axis5 = -1100° (打开) → JointGL = -1.01 rad
+          // 线性映射：axis5 [0, -1100] 度 -> JointGL [1.01, -1.01] 弧度
           // 公式：value_rad = (value - axis5_min) / (axis5_max - axis5_min) * (joint_max - joint_min) + joint_min
-          const double axis5_min = -1100.0;  // 度
-          const double axis5_max = 0.0;      // 度
-          const double joint_min = -1.01;    // 弧度
-          const double joint_max = 1.01;      // 弧度
+          const double axis5_min = -1100.0;  // 度（打开）
+          const double axis5_max = 0.0;      // 度（闭合）
+          const double joint_min = -1.01;    // 弧度（打开）
+          const double joint_max = 1.01;      // 弧度（闭合）
           
           // 线性映射
           double value_rad = (value - axis5_min) / (axis5_max - axis5_min) * (joint_max - joint_min) + joint_min;

@@ -48,7 +48,51 @@ echo ""
 echo "本机IP地址: $LOCAL_IP"
 echo ""
 
+# 清理函数
+cleanup() {
+    echo ""
+    echo "正在清理资源..."
+    
+    # 查找并终止robot_simulator.py进程
+    PIDS=$(pgrep -f "robot_simulator.py")
+    if [ -n "$PIDS" ]; then
+        echo "  终止robot_simulator.py进程: $PIDS"
+        kill -TERM $PIDS 2>/dev/null
+        sleep 2
+        # 如果还没停止，强制终止
+        PIDS=$(pgrep -f "robot_simulator.py")
+        if [ -n "$PIDS" ]; then
+            echo "  强制终止进程: $PIDS"
+            kill -9 $PIDS 2>/dev/null
+        fi
+    fi
+    
+    # 释放端口
+    echo "  释放端口 7001 和 8081..."
+    lsof -ti:7001 | xargs kill -9 2>/dev/null
+    lsof -ti:8081 | xargs kill -9 2>/dev/null
+    
+    # 清理ROS2节点（如果存在）
+    if command -v ros2 &> /dev/null && [ -f "../install/setup.bash" ]; then
+        source ../install/setup.bash 2>/dev/null
+        ROS2_NODES=$(ros2 node list 2>/dev/null | grep -E "(robot_web_interface|m5_)" || true)
+        if [ -n "$ROS2_NODES" ]; then
+            echo "  检测到ROS2节点，请手动检查:"
+            echo "$ROS2_NODES"
+        fi
+    fi
+    
+    echo "清理完成"
+    exit 0
+}
+
+# 注册信号处理
+trap cleanup SIGINT SIGTERM EXIT
+
 # 启动上位机
 echo "正在启动上位机..."
 echo ""
 python3 robot_simulator.py
+
+# 如果正常退出，也执行清理
+cleanup

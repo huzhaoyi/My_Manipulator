@@ -78,4 +78,5 @@
     <disable_collisions link1="LinkGG" link2="base_link" reason="Never"/>
     <disable_collisions link1="LinkGL" link2="base_link" reason="Never"/>
     <disable_collisions link1="LinkGR" link2="base_link" reason="Never"/>
+    <disable_collisions link1="LinkGL" link2="LinkGR" reason="Default"/>
 </robot>

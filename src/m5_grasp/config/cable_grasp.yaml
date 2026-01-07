@@ -1,0 +1,29 @@
+/**:
+  ros__parameters:
+    cable:
+      name: "cable_1"
+      diameter: 0.008          # m  缆绳直径（8mm）
+      length: 0.20             # m  用于碰撞近似的长度（可以只取局部一段）
+      frame_id: "world"        # 缆绳pose所在坐标系（如果你的视觉输出不同就填视觉frame）
+      shape: "cylinder"        # cylinder 或 capsule（如果你实现）
+      center_offset_z: 0.0     # m  cable_pose到圆柱中心的Z偏移（默认0.0表示cable_pose是中心，如需从底部推中心可设为length*0.5）
+
+    grasp:
+      approach_offset_z: 0.10  # m  预抓取点：目标上方10cm
+      descend_distance: 0.08   # m  下压距离（用于cartesian path）
+      lift_distance: 0.06      # m  抬起确认高度
+      max_pos_error: 0.01      # m  抓取允许位置误差
+      use_cartesian: true
+      eef_step: 0.005          # m  cartesian步长
+      jump_threshold: 1.0      # 跳跃阈值（0表示关闭检查，建议使用1.0或2.0以确保安全）
+
+    gripper:
+      mode: "position"         # 仅支持位置控制（不支持力控）
+      open_width: 0.060        # m  张开宽度（两指之间）
+      close_width: 0.010       # m  目标闭合宽度（抓细缆绳要小）
+      close_extra: 0.002       # m  额外压紧量（避免夹不住）
+      hold_time_ms: 200        # ms  闭合后保持一下
+
+    scene:
+      add_collision_object: true
+      allow_touch_links: ["LinkGG", "LinkGL", "LinkGR"]  # 允许接触的link

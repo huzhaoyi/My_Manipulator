@@ -472,6 +472,52 @@
             padding-top: 15px;
             border-top: 1px solid rgba(100, 120, 140, 0.2);
         }
+        
+        /* 标签页样式 */
+        .tabs-container {
+            margin-bottom: 20px;
+        }
+        
+        .tabs {
+            display: flex;
+            gap: 5px;
+            border-bottom: 2px solid rgba(100, 120, 140, 0.3);
+            margin-bottom: 20px;
+        }
+        
+        .tab {
+            padding: 12px 20px;
+            background: rgba(15, 20, 28, 0.5);
+            border: 1px solid rgba(100, 120, 140, 0.2);
+            border-bottom: none;
+            border-radius: 8px 8px 0 0;
+            cursor: pointer;
+            transition: all 0.3s;
+            color: #b0b0b0;
+            font-weight: 500;
+            font-size: 14px;
+        }
+        
+        .tab:hover {
+            background: rgba(100, 120, 140, 0.1);
+            color: #a0b8c8;
+        }
+        
+        .tab.active {
+            background: rgba(15, 20, 28, 0.9);
+            border-color: rgba(100, 120, 140, 0.4);
+            color: #a0b8c8;
+            border-bottom: 2px solid rgba(15, 20, 28, 0.9);
+            margin-bottom: -2px;
+        }
+        
+        .tab-content {
+            display: none;
+        }
+        
+        .tab-content.active {
+            display: block;
+        }
     </style>
 </head>
 <body>
@@ -528,6 +574,10 @@
                     <span class="status-label">运行状态:</span>
                     <span class="status-value" id="robot-state">空闲</span>
                 </div>
+                <div class="status-item">
+                    <span class="status-label">抓取状态:</span>
+                    <span class="status-value" id="grasp-state">空闲</span>
+                </div>
             </div>
         </div>
         
@@ -543,8 +593,18 @@
         <div class="right-panel">
             <h1>🎮 控制面板</h1>
             
-            <div class="control-box">
-                <h3>坐标下发</h3>
+            <!-- 标签页容器 -->
+            <div class="tabs-container">
+                <div class="tabs">
+                    <div class="tab active" onclick="switchTab('pose', this)">坐标下发</div>
+                    <div class="tab" onclick="switchTab('joint', this)">关节角度控制</div>
+                    <div class="tab" onclick="switchTab('cable', this)">缆绳抓取</div>
+                </div>
+                
+                <!-- 坐标下发标签页 -->
+                <div id="tab-pose" class="tab-content active">
+                    <div class="control-box">
+                        <h3>坐标下发</h3>
                 <div class="input-group">
                     <label>位置 X (m):</label>
                     <input type="number" id="pose-x" step="0.001" value="0.25" placeholder="0.25">
@@ -593,10 +653,13 @@
                 </div>
                 
                 <div class="message-box" id="pose-message"></div>
-            </div>
-            
-            <div class="control-box">
-                <h3>关节角度控制</h3>
+                    </div>
+                </div>
+                
+                <!-- 关节角度控制标签页 -->
+                <div id="tab-joint" class="tab-content">
+                    <div class="control-box">
+                        <h3>关节角度控制</h3>
                 <div class="input-group">
                     <label>Joint 1 (度):</label>
                     <input type="number" id="joint1-input" step="0.1" value="0.0" placeholder="0.0" min="-180" max="180">
@@ -624,14 +687,73 @@
                 </div>
                 
                 <div class="message-box" id="joint-message"></div>
+                    </div>
+                </div>
+                
+                <!-- 缆绳抓取标签页 -->
+                <div id="tab-cable" class="tab-content">
+                    <div class="control-box">
+                        <h3>缆绳抓取</h3>
+                <div class="input-group">
+                    <label>缆绳位置 X (m):</label>
+                    <input type="number" id="cable-x" step="0.001" value="0.25" placeholder="0.25">
+                </div>
+                <div class="input-row">
+                    <div class="input-group">
+                        <label>缆绳位置 Y (m):</label>
+                        <input type="number" id="cable-y" step="0.001" value="0.0" placeholder="0.0">
+                    </div>
+                    <div class="input-group">
+                        <label>缆绳位置 Z (m):</label>
+                        <input type="number" id="cable-z" step="0.001" value="0.20" placeholder="0.20">
+                    </div>
+                </div>
+                
+                <div class="toggle-advanced" onclick="toggleCableAdvanced()">
+                    <span id="toggle-cable-text">显示高级选项 (Orientation)</span>
+                </div>
+                
+                <div class="advanced-controls" id="cable-advanced-controls">
+                    <div class="input-row">
+                        <div class="input-group">
+                            <label>Orientation QX:</label>
+                            <input type="number" id="cable-qx" step="0.001" value="0.0" placeholder="0.0">
+                        </div>
+                        <div class="input-group">
+                            <label>Orientation QY:</label>
+                            <input type="number" id="cable-qy" step="0.001" value="0.0" placeholder="0.0">
+                        </div>
+                    </div>
+                    <div class="input-row">
+                        <div class="input-group">
+                            <label>Orientation QZ:</label>
+                            <input type="number" id="cable-qz" step="0.001" value="0.0" placeholder="0.0">
+                        </div>
+                        <div class="input-group">
+                            <label>Orientation QW:</label>
+                            <input type="number" id="cable-qw" step="0.001" value="1.0" placeholder="1.0">
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="button-group">
+                    <button class="btn-primary" onclick="publishCablePose()">开始抓取</button>
+                    <button class="btn-secondary" onclick="resetCablePose()">重置</button>
+                </div>
+                
+                <div class="message-box" id="cable-message"></div>
+                    </div>
+                </div>
             </div>
             
             <div class="info-box">
                 <strong>使用说明:</strong><br>
                 • 接收机械臂JSON反馈 (UDP端口7001)<br>
                 • 发送坐标到 /target_pose 话题<br>
+                • 发送缆绳位置到 /cable_pose 话题（抓取）<br>
                 • 直接控制5个自由度（关节角度）<br>
                 • 实时显示规划/执行状态<br>
+                • 实时显示抓取状态<br>
                 • 自动加载STL模型
             </div>
         </div>
@@ -1455,6 +1577,7 @@
         
         // 状态更新
         let lastRobotState = 'idle';  // 保存上一次的状态，用于超时显示
+        let lastGraspState = 'idle';  // 保存上一次的抓取状态
         function updateStatus(data) {
             // 检查是否收到过机械臂数据
             const hasReceivedData = data.has_received_robot_data || false;
@@ -1569,6 +1692,66 @@
                 stateElement.textContent = stateText;
                 stateElement.style.color = stateColor;
             }
+            
+            // 更新抓取状态
+            const graspStateMap = {
+                'idle': '空闲',
+                'received': '已接收',
+                'planning:pregrasp': '规划预抓取',
+                'executing:pregrasp': '执行预抓取',
+                'executing:descend': '执行下压',
+                'gripper:closing': '夹爪闭合中',
+                'gripper:holding': '夹爪保持中',
+                'executing:lift': '执行抬起',
+                'scene:attach': '附着物体',
+                'completed': '完成',
+                '__unknown__': '未知',
+                '__timeout__': '超时'
+            };
+            const graspState = data.grasp_state || '__unknown__';
+            const graspStateDetail = data.grasp_state_detail || '';
+            const graspStateElement = document.getElementById('grasp-state');
+            if (graspStateElement) {
+                let graspStateText = graspStateMap[graspState] || graspState;
+                let graspStateColor = '#a0b8c8'; // 默认主题色
+                
+                // 根据状态改变颜色
+                if (graspState === '__unknown__') {
+                    graspStateText = '未知';
+                    graspStateColor = '#b0b0b0';
+                } else if (graspState === '__timeout__') {
+                    graspStateText = '超时';
+                    graspStateColor = '#ffb74d';
+                } else if (graspState.startsWith('error:')) {
+                    graspStateText = '错误: ' + graspState.split(':')[1];
+                    graspStateColor = '#e57373';
+                } else if (graspState === 'received') {
+                    graspStateColor = '#64b5f6';
+                } else if (graspState.startsWith('planning:')) {
+                    graspStateColor = '#ffb74d';
+                } else if (graspState.startsWith('executing:')) {
+                    graspStateColor = '#81c784';
+                } else if (graspState.startsWith('gripper:')) {
+                    graspStateColor = '#ba68c8';
+                } else if (graspState === 'scene:attach') {
+                    graspStateColor = '#4caf50';
+                } else if (graspState === 'completed') {
+                    graspStateColor = '#4caf50';
+                }
+                
+                // 如果有详情，显示详情
+                if (graspStateDetail) {
+                    graspStateText += ' (' + graspStateDetail + ')';
+                }
+                
+                graspStateElement.textContent = graspStateText;
+                graspStateElement.style.color = graspStateColor;
+                
+                // 更新lastGraspState（如果不是超时状态）
+                if (graspState !== '__timeout__') {
+                    lastGraspState = graspState;
+                }
+            }
         }
         
         // 轮询状态
@@ -1623,6 +1806,9 @@
                 qw: qw
             };
             
+            // 添加调试日志
+            console.log('[网页调试] 发送位姿数据:', data);
+            
             fetch('/api/publish_pose', {
                 method: 'POST',
                 headers: {
@@ -1630,8 +1816,12 @@
                 },
                 body: JSON.stringify(data)
             })
-            .then(response => response.json())
+            .then(response => {
+                console.log('[网页调试] 收到响应状态:', response.status, response.statusText);
+                return response.json();
+            })
             .then(result => {
+                console.log('[网页调试] 收到响应数据:', result);
                 if (result.success) {
                     showMessage(result.message, 'success');
                 } else {
@@ -1639,6 +1829,7 @@
                 }
             })
             .catch(error => {
+                console.error('[网页调试] 请求错误:', error);
                 showMessage('网络错误: ' + error.message, 'error');
             });
         }
@@ -1703,6 +1894,100 @@
             showMessage('', 'success');
         }
         
+        function toggleCableAdvanced() {
+            const controls = document.getElementById('cable-advanced-controls');
+            const text = document.getElementById('toggle-cable-text');
+            if (controls.style.display === 'none' || controls.style.display === '') {
+                controls.style.display = 'block';
+                text.textContent = '隐藏高级选项 (Orientation)';
+            } else {
+                controls.style.display = 'none';
+                text.textContent = '显示高级选项 (Orientation)';
+            }
+        }
+        
+        function publishCablePose() {
+            const x = parseFloat(document.getElementById('cable-x').value);
+            const y = parseFloat(document.getElementById('cable-y').value);
+            const z = parseFloat(document.getElementById('cable-z').value);
+            const qx = parseFloat(document.getElementById('cable-qx').value) || 0.0;
+            const qy = parseFloat(document.getElementById('cable-qy').value) || 0.0;
+            const qz = parseFloat(document.getElementById('cable-qz').value) || 0.0;
+            const qw = parseFloat(document.getElementById('cable-qw').value) || 1.0;
+            
+            if (isNaN(x) || isNaN(y) || isNaN(z)) {
+                showCableMessage('请输入有效的坐标值', 'error');
+                return;
+            }
+            
+            const data = {
+                x: x,
+                y: y,
+                z: z,
+                qx: qx,
+                qy: qy,
+                qz: qz,
+                qw: qw
+            };
+            
+            // 添加调试日志
+            console.log('[网页调试] 发送缆绳位置数据:', data);
+            
+            fetch('/api/publish_cable_pose', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(data)
+            })
+            .then(response => {
+                console.log('[网页调试] 收到响应状态:', response.status, response.statusText);
+                return response.json();
+            })
+            .then(result => {
+                console.log('[网页调试] 收到响应数据:', result);
+                if (result.success) {
+                    showCableMessage(result.message, 'success');
+                } else {
+                    showCableMessage(result.message || '发布失败', 'error');
+                }
+            })
+            .catch(error => {
+                console.error('[网页调试] 请求错误:', error);
+                showCableMessage('网络错误: ' + error.message, 'error');
+            });
+        }
+        
+        function resetCablePose() {
+            document.getElementById('cable-x').value = '0.25';
+            document.getElementById('cable-y').value = '0.0';
+            document.getElementById('cable-z').value = '0.20';
+            document.getElementById('cable-qx').value = '0.0';
+            document.getElementById('cable-qy').value = '0.0';
+            document.getElementById('cable-qz').value = '0.0';
+            document.getElementById('cable-qw').value = '1.0';
+            showCableMessage('', 'success');
+        }
+        
+        function showCableMessage(message, type) {
+            const messageBox = document.getElementById('cable-message');
+            if (!message) {
+                messageBox.style.display = 'none';
+                return;
+            }
+            
+            messageBox.textContent = message;
+            messageBox.className = 'message-box message-' + type;
+            messageBox.style.display = 'block';
+            
+            // 3秒后自动隐藏成功消息
+            if (type === 'success') {
+                setTimeout(() => {
+                    messageBox.style.display = 'none';
+                }, 3000);
+            }
+        }
+        
         function showMessage(message, type) {
             const messageBox = document.getElementById('pose-message');
             if (!message) {
@@ -1719,6 +2004,30 @@
                 setTimeout(() => {
                     messageBox.style.display = 'none';
                 }, 3000);
+            }
+        }
+        
+        // 标签页切换
+        function switchTab(tabName, tabElement) {
+            // 隐藏所有标签页内容
+            document.querySelectorAll('.tab-content').forEach(content => {
+                content.classList.remove('active');
+            });
+            
+            // 移除所有标签的active类
+            document.querySelectorAll('.tab').forEach(tab => {
+                tab.classList.remove('active');
+            });
+            
+            // 显示选中的标签页内容
+            const selectedContent = document.getElementById('tab-' + tabName);
+            if (selectedContent) {
+                selectedContent.classList.add('active');
+            }
+            
+            // 激活选中的标签
+            if (tabElement) {
+                tabElement.classList.add('active');
             }
         }
         
