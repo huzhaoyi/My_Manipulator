@@ -1389,6 +1389,70 @@ private:
     return true;
   }
 
+  // 分段提升 fallback（4DOF机械臂常用策略）
+  // 将提升路径分成多个waypoint，对每个waypoint进行IK→joint target规划
+  // 这样比Cartesian路径更稳，因为避免了OMPL的constraint sampler问题
+  bool execute_segmented_lift(const geometry_msgs::msg::PoseStamped& start_pose,
+                              const geometry_msgs::msg::PoseStamped& end_pose,
+                              int num_segments = 3)
+  {
+    RCLCPP_INFO(this->get_logger(), 
+                "[分段提升] 开始分段提升，从 (%.3f, %.3f, %.3f) 到 (%.3f, %.3f, %.3f)，分段数: %d",
+                start_pose.pose.position.x, start_pose.pose.position.y, start_pose.pose.position.z,
+                end_pose.pose.position.x, end_pose.pose.position.y, end_pose.pose.position.z,
+                num_segments);
+
+    // 计算每个分段的位置增量
+    double dx = (end_pose.pose.position.x - start_pose.pose.position.x) / num_segments;
+    double dy = (end_pose.pose.position.y - start_pose.pose.position.y) / num_segments;
+    double dz = (end_pose.pose.position.z - start_pose.pose.position.z) / num_segments;
+
+    // 创建waypoint列表（包括起点和终点）
+    std::vector<geometry_msgs::msg::PoseStamped> waypoints;
+    waypoints.push_back(start_pose);  // 起点
+
+    // 生成中间waypoints
+    for (int i = 1; i < num_segments; ++i)
+    {
+      geometry_msgs::msg::PoseStamped waypoint = start_pose;
+      waypoint.pose.position.x += dx * i;
+      waypoint.pose.position.y += dy * i;
+      waypoint.pose.position.z += dz * i;
+      // 保持orientation（使用起点或终点的orientation，这里使用起点）
+      waypoint.pose.orientation = start_pose.pose.orientation;
+      waypoints.push_back(waypoint);
+    }
+
+    waypoints.push_back(end_pose);  // 终点
+
+    // 逐段执行IK→joint target规划
+    // 跳过第一段（i=0），因为它是起点，已经在那个位置，不需要移动
+    for (size_t i = 1; i < waypoints.size(); ++i)
+    {
+      RCLCPP_INFO(this->get_logger(), 
+                  "[分段提升] 执行段 %zu/%zu: 位置=(%.3f, %.3f, %.3f)",
+                  i + 1, waypoints.size(),
+                  waypoints[i].pose.position.x,
+                  waypoints[i].pose.position.y,
+                  waypoints[i].pose.position.z);
+
+      if (!plan_execute_ik_joint_target(waypoints[i]))
+      {
+        RCLCPP_WARN(this->get_logger(), 
+                    "[分段提升] 段 %zu/%zu 执行失败", i + 1, waypoints.size());
+        return false;
+      }
+      
+      // 等待状态稳定（每段执行后都等待，确保状态同步）
+      RCLCPP_INFO(this->get_logger(), 
+                  "[分段提升] 段 %zu/%zu 执行成功，等待150ms确保状态稳定...", i + 1, waypoints.size());
+      std::this_thread::sleep_for(std::chrono::milliseconds(150));
+    }
+
+    RCLCPP_INFO(this->get_logger(), "[分段提升] 所有段执行成功");
+    return true;
+  }
+
   // IK→joint target 规划执行（内部实现，无锁版本）
   // 注意：调用者必须已经持有 moveit_mutex_ 锁
   bool plan_execute_ik_joint_target_impl(const geometry_msgs::msg::PoseStamped& target_pose, 
@@ -2033,28 +2097,111 @@ private:
     lift_pose.pose.position.z += lift_distance_;
     // lift_pose已经在planning_frame_中，因为它是从grasp_pose复制的
     
+    RCLCPP_INFO(this->get_logger(), 
+                "[Lift阶段] 目标提升位置: (%.3f, %.3f, %.3f), 提升距离: %.3f m",
+                lift_pose.pose.position.x, lift_pose.pose.position.y, lift_pose.pose.position.z,
+                lift_distance_);
+    
     std::vector<geometry_msgs::msg::Pose> lift_waypoints;
     lift_waypoints.push_back(grasp_pose.pose);  // 已经在planning_frame_中
     lift_waypoints.push_back(lift_pose.pose);   // 已经在planning_frame_中
     
     bool lift_success = false;
-    if (use_cartesian_)
+    
+    if (is_4dof_)
     {
-      lift_success = execute_cartesian(lift_waypoints, false);  // false 表示 lift
-      if (!lift_success)
+      // 4DOF：优先分段提升（IK→joint target，更稳，避免OMPL constraint sampler问题）
+      RCLCPP_INFO(this->get_logger(), "[4DOF策略] 优先使用分段提升（IK→joint target）");
+      if (execute_segmented_lift(grasp_pose, lift_pose, 3))
       {
-        // Fallback到普通规划
-        lift_success = plan_execute_pose_target(lift_pose);
+        lift_success = true;
+        RCLCPP_INFO(this->get_logger(), "[4DOF策略] 分段提升成功");
+      }
+      else
+      {
+        // Fallback 1: 尝试笛卡尔路径（如果启用）
+        if (use_cartesian_)
+        {
+          RCLCPP_WARN(this->get_logger(), "[4DOF策略] 分段提升失败，尝试笛卡尔路径fallback");
+          lift_success = execute_cartesian(lift_waypoints, false);  // false 表示 lift
+          if (lift_success)
+          {
+            RCLCPP_INFO(this->get_logger(), "[4DOF策略] 笛卡尔路径fallback成功");
+          }
+        }
+        
+        // Fallback 2: 普通规划（IK→joint target）
+        if (!lift_success)
+        {
+          RCLCPP_WARN(this->get_logger(), "[4DOF策略] 分段提升和笛卡尔路径都失败，尝试普通规划fallback");
+          if (plan_execute_pose_target(lift_pose))
+          {
+            lift_success = true;
+            RCLCPP_INFO(this->get_logger(), "[4DOF策略] 普通规划fallback成功");
+          }
+        }
       }
     }
     else
     {
-      lift_success = plan_execute_pose_target(lift_pose);
+      // 非4DOF：保持原逻辑（优先Cartesian，失败后fallback到分段提升）
+      if (use_cartesian_)
+      {
+        RCLCPP_INFO(this->get_logger(), "[非4DOF策略] 尝试笛卡尔路径");
+        lift_success = execute_cartesian(lift_waypoints, false);  // false 表示 lift
+        if (lift_success)
+        {
+          RCLCPP_INFO(this->get_logger(), "[非4DOF策略] 笛卡尔路径成功");
+        }
+        else
+        {
+          // Fallback 1: 分段提升（使用IK→joint target）
+          RCLCPP_WARN(this->get_logger(), "[非4DOF策略] 笛卡尔路径失败，尝试分段提升fallback（IK→joint target）");
+          if (execute_segmented_lift(grasp_pose, lift_pose, 3))
+          {
+            lift_success = true;
+            RCLCPP_INFO(this->get_logger(), "[非4DOF策略] 分段提升fallback成功");
+          }
+          else
+          {
+            // Fallback 2: 普通规划（直接到目标点）
+            RCLCPP_WARN(this->get_logger(), "[非4DOF策略] 分段提升失败，尝试普通规划fallback");
+            if (plan_execute_pose_target(lift_pose))
+            {
+              lift_success = true;
+              RCLCPP_INFO(this->get_logger(), "[非4DOF策略] 普通规划fallback成功");
+            }
+          }
+        }
+      }
+      else
+      {
+        // 不使用Cartesian，直接使用分段提升或普通规划
+        RCLCPP_INFO(this->get_logger(), "[非4DOF策略] 使用分段提升（IK→joint target）");
+        if (execute_segmented_lift(grasp_pose, lift_pose, 3))
+        {
+          lift_success = true;
+          RCLCPP_INFO(this->get_logger(), "[非4DOF策略] 分段提升成功");
+        }
+        else
+        {
+          RCLCPP_WARN(this->get_logger(), "[非4DOF策略] 分段提升失败，尝试普通规划fallback");
+          if (plan_execute_pose_target(lift_pose))
+          {
+            lift_success = true;
+            RCLCPP_INFO(this->get_logger(), "[非4DOF策略] 普通规划fallback成功");
+          }
+        }
+      }
     }
 
     if (!lift_success)
     {
       RCLCPP_WARN(this->get_logger(), "抬起失败，但继续尝试附着物体");
+    }
+    else
+    {
+      RCLCPP_INFO(this->get_logger(), "抬起成功完成");
     }
 
     // 9. 成功判定（简化：如果抬起不报错就认为成功）
