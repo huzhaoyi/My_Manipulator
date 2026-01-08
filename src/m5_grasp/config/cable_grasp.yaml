@@ -16,14 +16,100 @@
       use_cartesian: true
       eef_step: 0.005          # m  cartesian步长
       jump_threshold: 1.0      # 跳跃阈值（0表示关闭检查，建议使用1.0或2.0以确保安全）
+      
+      # MoveIt规划参数
+      planning_time: 15.0      # s  默认规划时间
+      num_planning_attempts: 30 # 规划尝试次数
+      max_velocity_scaling: 0.9  # 最大速度缩放因子
+      max_acceleration_scaling: 0.9  # 最大加速度缩放因子
+      goal_position_tolerance: 0.01  # m  目标位置容差
+      goal_orientation_tolerance: 0.5  # rad  目标姿态容差
+      fallback_planning_time: 2.0  # s  fallback策略的规划时间
+      
+      # IK和状态检查参数
+      ik_timeout: 0.1          # s  IK求解超时时间
+      state_check_timeout: 1.0  # s  状态检查超时时间
+      state_check_interval: 0.1  # s  状态检查间隔
+      
+      # 启动等待时间
+      robot_state_publisher_wait: 2.0  # s  等待robot_state_publisher启动的时间
+      executor_startup_wait: 0.5       # s  executor启动后的等待时间
+      segment_execution_wait: 0.5      # s  分段执行后的等待时间（确保状态稳定，从0.1s增加到0.5s，避免状态未稳定）
+      state_sync_wait: 0.1             # s  执行前状态同步等待时间（等待current_state更新，经验值0.1s）
+      
+      # 机械臂控制频率
+      control_frequency: 20.0          # Hz  机械臂控制频率（发送命令频率）
+      read_frequency: 20.0             # Hz  机械臂状态读取频率
+      main_loop_frequency: 20.0        # Hz  main循环频率
+
+    trajectory:
+      # 笛卡尔空间直线插补配置
+      use_linear_interpolation: true  # 是否使用精确直线插补（使用TrajectoryPlanner）
+      linear_velocity: 0.1            # m/s  直线插补的默认速度
+      linear_min_duration: 1.0        # s  线性插补最小持续时间
+      linear_step_scale: 0.5          # 线性插补时步长缩放因子（相对于eef_step）
+      
+      # 笛卡尔路径规划参数
+      cartesian_timeout: 3.0          # s  笛卡尔路径计算超时时间
+      cartesian_descend_threshold: 0.95  # descend（下压）路径成功率阈值
+      cartesian_lift_threshold: 0.90     # lift（抬起）路径成功率阈值
+      
+      # 关节空间多项式插值配置
+      use_polynomial_interpolation: true  # 是否启用多项式插值轨迹规划
+      polynomial_type: "cubic"             # "cubic" 或 "quintic"
+      polynomial_duration: 2.0            # s  多项式轨迹持续时间
+      polynomial_dt: 0.01                 # s  多项式轨迹时间步长
+      
+      # B样条曲线轨迹规划配置
+      use_bspline: true        # 是否启用B样条曲线轨迹规划
+      bspline_degree: 3         # B样条阶数（3或4）
+      bspline_duration: 3.0     # s  B样条轨迹持续时间
+      bspline_dt: 0.01         # s  B样条轨迹时间步长
 
     gripper:
       mode: "position"         # 仅支持位置控制（不支持力控）
-      open_width: 0.060        # m  张开宽度（两指之间）
+      open_width: 0.030        # m  张开宽度（两指之间）
       close_width: 0.010       # m  目标闭合宽度（抓细缆绳要小）
       close_extra: 0.002       # m  额外压紧量（避免夹不住）
       hold_time_ms: 200        # ms  闭合后保持一下
+      
+      # 夹爪角度映射参数
+      angle_min: 1.01          # rad  闭合时的关节角度（对应axis5=0°）
+      angle_max: -1.01         # rad  张开时的关节角度（对应axis5=-1100°）
+      width_min: 0.0           # m   最小宽度（完全闭合）
 
     scene:
       add_collision_object: true
       allow_touch_links: ["LinkGG", "LinkGL", "LinkGR"]  # 允许接触的link
+      
+    workspace:
+      # URDF机械臂参数（用于工作空间检查）
+      base_height: 0.141       # m  Joint1在base_link上的高度
+      link2_length: 0.264      # m  Joint2到Joint3的距离
+      link3_length: 0.143      # m  Joint3到Joint4的距离（Z方向）
+      link4_to_eef: 0.187      # m  Joint4到LinkGG的距离
+      
+      # 工作空间检查参数
+      reach_radius_margin: 1.2  # 最大伸展半径的余量系数（20%）
+      max_height_offset: 0.9     # m  最大高度偏移（base_height + offset）
+      min_height_offset: -0.3   # m  最小高度偏移（base_height + offset）
+      
+      # 安全区域（高成功率区域）
+      safe_x_min: 0.20
+      safe_x_max: 0.35
+      safe_y_min: -0.15
+      safe_y_max: 0.15
+      safe_z_min: 0.25
+      safe_z_max: 0.35
+      
+      # 中等成功率区域
+      medium_x_min: 0.15
+      medium_x_max: 0.45
+      medium_y_min: -0.20
+      medium_y_max: 0.20
+      medium_z_min: 0.20
+      medium_z_max: 0.40
+      
+    tolerance:
+      # 浮点数比较阈值
+      orientation_epsilon: 1e-6  # 四元数比较阈值

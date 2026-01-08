@@ -82,6 +82,7 @@ class RobotSimulator:
         self.ros2_node = None
         self.pose_publisher = None
         self.cable_pose_publisher = None  # 缆绳位置发布器
+        self.emergency_stop_publisher = None  # 急停发布器
         self.joint_state_subscriber = None
         self.arm_trajectory_publisher = None
         self.gripper_trajectory_publisher = None
@@ -99,6 +100,12 @@ class RobotSimulator:
                 print(f"✓ 发布器已创建: /target_pose")
                 self.cable_pose_publisher = self.ros2_node.create_publisher(PoseStamped, '/cable_pose', 10)
                 print(f"✓ 发布器已创建: /cable_pose")
+                self.emergency_stop_publisher = self.ros2_node.create_publisher(String, '/emergency_stop', 10)
+                print(f"✓ 急停发布器已创建: /emergency_stop (队列大小: 10)")
+                
+                # 等待一小段时间让发布器注册到ROS2
+                time.sleep(0.1)
+                print(f"✓ 急停发布器已注册到ROS2")
                 
                 # 订阅关节状态（从ROS2获取实时关节角度）
                 self.joint_state_subscriber = self.ros2_node.create_subscription(
@@ -513,6 +520,73 @@ class RobotSimulator:
                 "message": error_msg
             }
     
+    def publish_emergency_stop(self):
+        """
+        发布急停消息到 /emergency_stop 话题
+        
+        Returns:
+            dict: 包含成功状态和消息的字典
+        """
+        if not ROS2_AVAILABLE or self.emergency_stop_publisher is None:
+            print(f"[急停] ROS2未初始化或发布器为None")
+            return {
+                "success": False,
+                "message": "ROS2未初始化，无法发布急停消息"
+            }
+        
+        try:
+            msg = String()
+            msg.data = "EMERGENCY_STOP"
+            
+            print(f"[急停] ========================================")
+            print(f"[急停] 准备发布急停消息到 /emergency_stop 话题")
+            print(f"[急停] 发布器状态: {self.emergency_stop_publisher}")
+            print(f"[急停] 节点状态: {self.ros2_node}")
+            print(f"[急停] ROS2上下文: rclpy.ok()={rclpy.ok()}")
+            
+            # 检查订阅者数量
+            if self.emergency_stop_publisher:
+                try:
+                    sub_count = self.emergency_stop_publisher.get_subscription_count()
+                    print(f"[急停] 订阅者数量: {sub_count}")
+                    if sub_count == 0:
+                        print(f"[急停] ⚠️ 警告：没有订阅者！m5_grasp节点可能未订阅此话题")
+                    else:
+                        print(f"[急停] ✓ 检测到 {sub_count} 个订阅者")
+                except Exception as e:
+                    print(f"[急停] 无法获取订阅者数量: {e}")
+            
+            # 发布消息（ROS2发布是异步的）
+            # 注意：由于ROS2节点在单独的spin线程中运行，消息会自动发送
+            # 但为了确保消息立即发送，我们调用一次spin_once
+            self.emergency_stop_publisher.publish(msg)
+            print(f"[急停] 消息已发布到发布器，内容: {msg.data}")
+            
+            # 调用spin_once确保消息立即发送（即使有spin线程，这也确保消息队列被处理）
+            try:
+                rclpy.spin_once(self.ros2_node, timeout_sec=0.1)
+                print(f"[急停] spin_once执行完成")
+            except Exception as e:
+                print(f"[急停] spin_once警告: {e}（可能正常，因为spin线程也在运行）")
+            
+            # 额外等待一小段时间确保消息通过ROS2网络传输
+            time.sleep(0.2)
+            
+            print(f"[急停] 急停消息发布完成")
+            print(f"[急停] ========================================")
+            
+            return {
+                "success": True,
+                "message": "急停消息已发布"
+            }
+        except Exception as e:
+            error_msg = f"发布急停消息失败: {e}"
+            print(f"[急停错误] {error_msg}")
+            return {
+                "success": False,
+                "message": error_msg
+            }
+    
     def publish_target_pose(self, x, y, z, qx=0.0, qy=0.0, qz=0.0, qw=1.0):
         """
         发布目标位姿到 /target_pose 话题
@@ -807,6 +881,25 @@ class RobotSimulator:
                         self.end_headers()
                         error_msg = {"error": str(e)}
                         self.wfile.write(json.dumps(error_msg).encode())
+                elif self.path == '/api/emergency_stop':
+                    # 急停接口
+                    try:
+                        print(f"[Web服务器] 收到急停请求")
+                        result = self.simulator.publish_emergency_stop()
+                        print(f"[Web服务器] 急停发布结果: {result}")
+                        
+                        self.send_response(200)
+                        self.send_header('Content-type', 'application/json')
+                        self.send_header('Access-Control-Allow-Origin', '*')
+                        self.end_headers()
+                        self.wfile.write(json.dumps(result).encode())
+                    except Exception as e:
+                        self.send_response(400)
+                        self.send_header('Content-type', 'application/json')
+                        self.send_header('Access-Control-Allow-Origin', '*')
+                        self.end_headers()
+                        error_msg = {"error": str(e)}
+                        self.wfile.write(json.dumps(error_msg).encode())
                 # 移除 /api/set_state 接口，状态只能由C++端发布
                 else:
                     self.send_response(404)
@@ -953,6 +1046,8 @@ class RobotSimulator:
                     self.robot_state_subscriber = None
                 if hasattr(self, 'grasp_state_subscriber') and self.grasp_state_subscriber:
                     self.grasp_state_subscriber = None
+                if hasattr(self, 'emergency_stop_publisher') and self.emergency_stop_publisher:
+                    self.emergency_stop_publisher = None
                 if hasattr(self, 'arm_trajectory_publisher') and self.arm_trajectory_publisher:
                     self.arm_trajectory_publisher = None
                 if hasattr(self, 'gripper_trajectory_publisher') and self.gripper_trajectory_publisher:

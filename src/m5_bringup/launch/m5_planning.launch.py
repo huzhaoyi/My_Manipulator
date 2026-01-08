@@ -7,6 +7,7 @@ from moveit_configs_utils import MoveItConfigsBuilder
 import os
 import sys
 import contextlib
+import yaml
 
 # 抑制 MoveItConfigsBuilder 的 SRDF 推断警告
 class WarningFilter:
@@ -92,6 +93,19 @@ def generate_launch_description():
     from launch.substitutions import LaunchConfiguration
     from launch_ros.parameter_descriptions import ParameterValue
     
+    # 加载pilz_cartesian_limits.yaml并添加到robot_description_planning命名空间
+    pilz_cartesian_limits_path = os.path.join(m5_moveit_config_dir, "config", "pilz_cartesian_limits.yaml")
+    robot_description_planning = {}
+    if os.path.exists(pilz_cartesian_limits_path):
+        with open(pilz_cartesian_limits_path, 'r') as f:
+            pilz_limits = yaml.safe_load(f)
+            if 'cartesian_limits' in pilz_limits:
+                robot_description_planning = {
+                    "robot_description_planning": {
+                        "cartesian_limits": pilz_limits['cartesian_limits']
+                    }
+                }
+    
     # 构建 move_group 参数列表
     move_group_configuration = {
         "publish_robot_description_semantic": True,
@@ -120,6 +134,7 @@ def generate_launch_description():
         moveit_config.sensors_3d,                     # 你需要禁用octomap的话也要加上
         moveit_config.trajectory_execution,          # ✅使用 MoveItConfigsBuilder 加载的 trajectory_execution（与 rviz.launch.py 一致）
         move_group_configuration,
+        robot_description_planning,  # 添加robot_description_planning参数
         {"use_sim_time": False},
         ]
 

@@ -430,6 +430,70 @@
             border-color: rgba(200, 200, 200, 0.5);
         }
         
+        .btn-emergency {
+            width: 100%;
+            padding: 16px;
+            background: rgba(244, 67, 54, 0.2);
+            color: #e57373;
+            border: 2px solid rgba(244, 67, 54, 0.5);
+            border-radius: 12px;
+            font-size: 18px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.3s;
+            box-shadow: 0 2px 8px rgba(244, 67, 54, 0.3);
+            text-shadow: none;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .btn-emergency::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.1), transparent);
+            transition: left 0.5s;
+        }
+        
+        .btn-emergency:hover {
+            background: rgba(244, 67, 54, 0.3);
+            border-color: rgba(244, 67, 54, 0.7);
+            color: #ff5252;
+            box-shadow: 0 4px 12px rgba(244, 67, 54, 0.4);
+            transform: translateY(-1px);
+        }
+        
+        .btn-emergency:hover::before {
+            left: 100%;
+        }
+        
+        .btn-emergency:active {
+            transform: translateY(0);
+            box-shadow: 0 2px 6px rgba(244, 67, 54, 0.3);
+            background: rgba(244, 67, 54, 0.25);
+        }
+        
+        .btn-emergency:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .btn-emergency.stopped {
+            background: rgba(76, 175, 80, 0.2);
+            border-color: rgba(76, 175, 80, 0.5);
+            color: #81c784;
+            box-shadow: 0 2px 8px rgba(76, 175, 80, 0.3);
+        }
+        
+        .btn-emergency.stopped:hover {
+            background: rgba(76, 175, 80, 0.25);
+            border-color: rgba(76, 175, 80, 0.6);
+        }
+        
         .message-box {
             margin-top: 15px;
             padding: 10px;
@@ -529,6 +593,13 @@
             
             <div class="connection-status" id="connectionStatus">
                 <span id="statusText">连接中...</span>
+            </div>
+            
+            <!-- 急停按钮 -->
+            <div style="margin-bottom: 20px;">
+                <button id="emergency-stop-btn" class="btn-emergency" onclick="emergencyStop()">
+                    ⚠️ 急停
+                </button>
             </div>
             
             <div class="status-box">
@@ -1696,6 +1767,33 @@
             // 更新抓取状态
             const graspStateMap = {
                 'idle': '空闲',
+                '已接收': '已接收',
+                '规划:预抓取': '规划预抓取',
+                '执行:预抓取': '执行预抓取',
+                '执行:下压': '执行下压',
+                '夹爪:闭合中': '夹爪闭合中',
+                '夹爪:保持中': '夹爪保持中',
+                '执行:抬起': '执行抬起',
+                '场景:附着': '附着物体',
+                '完成': '完成',
+                '__unknown__': '未知',
+                '__timeout__': '超时',
+                // 错误状态
+                '错误:未就绪': '错误:未就绪',
+                '错误:异常': '错误:异常',
+                '错误:打开夹爪失败': '错误:打开夹爪失败',
+                '错误:预抓取位姿转换失败': '错误:预抓取位姿转换失败',
+                '错误:抓取位姿转换失败': '错误:抓取位姿转换失败',
+                '错误:缆绳位姿转换失败': '错误:缆绳位姿转换失败',
+                '错误:预抓取失败': '错误:预抓取失败',
+                '错误:添加物体失败': '错误:添加物体失败',
+                '错误:下压失败': '错误:下压失败',
+                '错误:闭合夹爪失败': '错误:闭合夹爪失败',
+                // 急停状态
+                '急停:已停止': '急停:已停止',
+                '急停:任务已取消': '急停:任务已取消',
+                '急停:任务已停止': '急停:任务已停止',
+                // 兼容旧状态（如果还有）
                 'received': '已接收',
                 'planning:pregrasp': '规划预抓取',
                 'executing:pregrasp': '执行预抓取',
@@ -1705,8 +1803,7 @@
                 'executing:lift': '执行抬起',
                 'scene:attach': '附着物体',
                 'completed': '完成',
-                '__unknown__': '未知',
-                '__timeout__': '超时'
+                'gripper:opening': '夹爪打开中'
             };
             const graspState = data.grasp_state || '__unknown__';
             const graspStateDetail = data.grasp_state_detail || '';
@@ -1722,20 +1819,29 @@
                 } else if (graspState === '__timeout__') {
                     graspStateText = '超时';
                     graspStateColor = '#ffb74d';
+                } else if (graspState.startsWith('急停:')) {
+                    // 急停状态
+                    graspStateText = graspState;
+                    graspStateColor = '#f44336';  // 红色
+                } else if (graspState.startsWith('错误:')) {
+                    // 中文错误状态直接显示
+                    graspStateText = graspState;
+                    graspStateColor = '#e57373';
                 } else if (graspState.startsWith('error:')) {
+                    // 兼容旧格式错误状态
                     graspStateText = '错误: ' + graspState.split(':')[1];
                     graspStateColor = '#e57373';
-                } else if (graspState === 'received') {
+                } else if (graspState === '已接收' || graspState === 'received') {
                     graspStateColor = '#64b5f6';
-                } else if (graspState.startsWith('planning:')) {
+                } else if (graspState.startsWith('规划:') || graspState.startsWith('planning:')) {
                     graspStateColor = '#ffb74d';
-                } else if (graspState.startsWith('executing:')) {
+                } else if (graspState.startsWith('执行:') || graspState.startsWith('executing:')) {
                     graspStateColor = '#81c784';
-                } else if (graspState.startsWith('gripper:')) {
+                } else if (graspState.startsWith('夹爪:') || graspState.startsWith('gripper:')) {
                     graspStateColor = '#ba68c8';
-                } else if (graspState === 'scene:attach') {
+                } else if (graspState === '场景:附着' || graspState === 'scene:attach') {
                     graspStateColor = '#4caf50';
-                } else if (graspState === 'completed') {
+                } else if (graspState === '完成' || graspState === 'completed') {
                     graspStateColor = '#4caf50';
                 }
                 
@@ -2005,6 +2111,57 @@
                     messageBox.style.display = 'none';
                 }, 3000);
             }
+        }
+        
+        // 急停功能
+        function emergencyStop() {
+            const btn = document.getElementById('emergency-stop-btn');
+            const originalText = btn.textContent;
+            const originalClass = btn.className;
+            
+            // 立即更新按钮状态，提供视觉反馈
+            btn.textContent = '急停中...';
+            btn.disabled = true;
+            
+            fetch('/api/emergency_stop', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    // 成功：显示已急停状态
+                    btn.textContent = '✓ 已急停';
+                    btn.className = 'btn-emergency stopped';
+                    btn.disabled = false;
+                    
+                    // 2秒后恢复按钮
+                    setTimeout(() => {
+                        btn.textContent = originalText;
+                        btn.className = originalClass;
+                    }, 2000);
+                } else {
+                    // 失败：恢复按钮并显示错误
+                    btn.textContent = '✗ 急停失败';
+                    btn.disabled = false;
+                    
+                    setTimeout(() => {
+                        btn.textContent = originalText;
+                    }, 2000);
+                }
+            })
+            .catch(error => {
+                console.error('急停请求错误:', error);
+                // 网络错误：恢复按钮
+                btn.textContent = '✗ 网络错误';
+                btn.disabled = false;
+                
+                setTimeout(() => {
+                    btn.textContent = originalText;
+                }, 2000);
+            });
         }
         
         // 标签页切换

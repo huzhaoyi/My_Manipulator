@@ -275,6 +275,13 @@ hardware_interface::return_type M5HardwareInterface::read(
         has_received_feedback_ = true;
         RCLCPP_INFO_COLOR(rclcpp::get_logger("M5HardwareInterface"), COLOR_GREEN,
           "首次收到反馈数据！现在允许发送控制命令。");
+        
+        // 重要：同步上一次命令值，避免因为初始值差异而触发不必要的发送
+        // 这样确保只有在真正有新的命令变化时才会发送
+        for (size_t j = 0; j < hw_commands_.size() && j < hw_prev_commands_.size(); ++j)
+        {
+          hw_prev_commands_[j] = hw_commands_[j];
+        }
       }
       
       // 优先使用反馈数据
@@ -585,14 +592,15 @@ bool M5HardwareInterface::send_command(const std::vector<double> & joint_positio
   last_successful_comm_ = std::chrono::steady_clock::now();
   
   // 调试：打印发送的JSON（每次发送都打印，用于验证）
-  static int debug_send = 0;
-  debug_send++;
-  if (debug_send <= 10 || debug_send % 10 == 0)  // 前10次和每10次打印
-  {
-    RCLCPP_INFO_COLOR(rclcpp::get_logger("M5HardwareInterface"), COLOR_BLUE,
-      "[UDP发送 #" << debug_send << "] 发送 " << sent << " 字节到 " 
-      << robot_ip_ << ":" << robot_port_ << " | JSON: " << json_str);
-  }
+  // 日志输出已禁用以减少资源占用
+  // static int debug_send = 0;
+  // debug_send++;
+  // if (debug_send <= 10 || debug_send % 10 == 0)  // 前10次和每10次打印
+  // {
+  //   RCLCPP_INFO_COLOR(rclcpp::get_logger("M5HardwareInterface"), COLOR_BLUE,
+  //     "[UDP发送 #" << debug_send << "] 发送 " << sent << " 字节到 " 
+  //     << robot_ip_ << ":" << robot_port_ << " | JSON: " << json_str);
+  // }
   
   return true;
 }
@@ -869,15 +877,15 @@ void M5HardwareInterface::communication_thread()
       {
         std::lock_guard<std::mutex> lock(data_mutex_);
         
-        // 添加调试：打印发送的命令
-        static int send_count = 0;
-        send_count++;
-        RCLCPP_INFO_COLOR(rclcpp::get_logger("M5HardwareInterface"), COLOR_CYAN,
-          "[命令发送 #" << send_count << "] J1=" << std::fixed << std::setprecision(2) 
-          << (hw_commands_.size() > 0 ? hw_commands_[0] * 180.0 / M_PI : 0)
-          << "° J2=" << (hw_commands_.size() > 1 ? hw_commands_[1] * 180.0 / M_PI : 0)
-          << "° J3=" << (hw_commands_.size() > 2 ? hw_commands_[2] * 180.0 / M_PI : 0)
-          << "° J4=" << (hw_commands_.size() > 3 ? hw_commands_[3] * 180.0 / M_PI : 0) << "°");
+        // 日志输出已禁用以减少资源占用
+        // static int send_count = 0;
+        // send_count++;
+        // RCLCPP_INFO_COLOR(rclcpp::get_logger("M5HardwareInterface"), COLOR_CYAN,
+        //   "[命令发送 #" << send_count << "] J1=" << std::fixed << std::setprecision(2) 
+        //   << (hw_commands_.size() > 0 ? hw_commands_[0] * 180.0 / M_PI : 0)
+        //   << "° J2=" << (hw_commands_.size() > 1 ? hw_commands_[1] * 180.0 / M_PI : 0)
+        //   << "° J3=" << (hw_commands_.size() > 2 ? hw_commands_[2] * 180.0 / M_PI : 0)
+        //   << "° J4=" << (hw_commands_.size() > 3 ? hw_commands_[3] * 180.0 / M_PI : 0) << "°");
         
         if (send_command(hw_commands_))
         {

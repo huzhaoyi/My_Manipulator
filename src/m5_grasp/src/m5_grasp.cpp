@@ -18,8 +18,8 @@
 #include <std_msgs/msg/string.hpp>
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_listener.h>
-#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 #include <tf2/time.h>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 #include <tf2/LinearMath/Quaternion.h>
 #include <chrono>
 #include <moveit/planning_scene/planning_scene.h>
@@ -34,6 +34,7 @@
 #include <shape_msgs/msg/solid_primitive.hpp>
 #include <control_msgs/action/follow_joint_trajectory.hpp>
 #include <rclcpp_action/rclcpp_action.hpp>
+#include "m5_grasp/trajectory_planner.hpp"
 
 class M5Grasp : public rclcpp::Node
 {
@@ -49,6 +50,11 @@ public:
         "/cable_pose", 10, 
         std::bind(&M5Grasp::cable_pose_callback, this, std::placeholders::_1));
 
+    // 订阅急停话题
+    emergency_stop_sub_ = this->create_subscription<std_msgs::msg::String>(
+        "/emergency_stop", 10,
+        std::bind(&M5Grasp::emergency_stop_callback, this, std::placeholders::_1));
+
     // 发布抓取状态
     state_publisher_ = this->create_publisher<std_msgs::msg::String>("/grasp_state", 10);
 
@@ -63,6 +69,9 @@ public:
     RCLCPP_INFO(this->get_logger(), "订阅话题: /cable_pose");
     RCLCPP_INFO(this->get_logger(), "  消息类型: geometry_msgs::msg::PoseStamped");
     RCLCPP_INFO(this->get_logger(), "  队列大小: 10");
+    RCLCPP_INFO(this->get_logger(), "订阅话题: /emergency_stop");
+    RCLCPP_INFO(this->get_logger(), "  消息类型: std_msgs::msg::String");
+    RCLCPP_INFO(this->get_logger(), "  队列大小: 10");
     RCLCPP_INFO(this->get_logger(), "发布话题: /grasp_state");
     RCLCPP_INFO(this->get_logger(), "  消息类型: std_msgs::msg::String");
     RCLCPP_INFO(this->get_logger(), "  队列大小: 10");
@@ -71,15 +80,21 @@ public:
     
     // 验证订阅器是否创建成功
     if (cable_pose_sub_) {
-      RCLCPP_INFO(this->get_logger(), "✓ 订阅器创建成功");
+      RCLCPP_INFO(this->get_logger(), "✓ 缆绳位置订阅器创建成功");
     } else {
-      RCLCPP_ERROR(this->get_logger(), "✗ 订阅器创建失败！");
+      RCLCPP_ERROR(this->get_logger(), "✗ 缆绳位置订阅器创建失败！");
+    }
+    
+    if (emergency_stop_sub_) {
+      RCLCPP_INFO(this->get_logger(), "✓ 急停订阅器创建成功");
+    } else {
+      RCLCPP_ERROR(this->get_logger(), "✗ 急停订阅器创建失败！");
     }
     
     if (state_publisher_) {
-      RCLCPP_INFO(this->get_logger(), "✓ 发布器创建成功");
+      RCLCPP_INFO(this->get_logger(), "✓ 状态发布器创建成功");
     } else {
-      RCLCPP_ERROR(this->get_logger(), "✗ 发布器创建失败！");
+      RCLCPP_ERROR(this->get_logger(), "✗ 状态发布器创建失败！");
     }
   }
 
@@ -91,18 +106,28 @@ public:
     for (auto& t : worker_threads_)
       if (t.joinable()) t.join();
 
-    // 停止 executor
+    // 停止 executor（修复顺序：先cancel，再join，最后remove_node）
     if (executor_)
     {
+      // 1. 先cancel，停止executor的spin
+      executor_->cancel();
+      
+      // 2. 等待executor线程结束
+      if (executor_thread_.joinable())
+        executor_thread_.join();
+      
+      // 3. 最后remove_node（或让executor析构时自动处理）
+      // 注意：某些ROS2版本在executor析构时会自动remove，这里可选
       if (node_self_ptr_)
       {
         executor_->remove_node(node_self_ptr_);
       }
-      executor_->cancel();
     }
-
-    if (executor_thread_.joinable())
+    else if (executor_thread_.joinable())
+    {
+      // 如果executor_为空但线程还在运行，直接join
       executor_thread_.join();
+    }
   }
 
   // 初始化MoveIt接口（在对象创建后调用）
@@ -114,7 +139,8 @@ public:
     // 但需要等待robot_state_publisher启动（通常由launch文件保证）
     // 等待一小段时间确保robot_state_publisher已启动
     RCLCPP_INFO(this->get_logger(), "等待robot_state_publisher启动...");
-    std::this_thread::sleep_for(std::chrono::milliseconds(2000));  // 等待2秒
+    std::this_thread::sleep_for(std::chrono::milliseconds(
+      static_cast<int>(robot_state_publisher_wait_ * 1000)));
     
     // 初始化 MoveIt 接口
     // 注意：shared_from_this() 只能在构造函数完成后调用
@@ -144,16 +170,16 @@ public:
 
     // 等待 joint_states 流起来（MoveIt 获取 current state 依赖 joint_states）
     RCLCPP_INFO(this->get_logger(), "等待 joint_states 流起来...");
-    const int max_attempts = 50;  // 最多等待 5 秒（50 * 0.1s）
-    const int wait_ms = 100;
+    int max_attempts = static_cast<int>(state_check_timeout_ / state_check_interval_);
+    int wait_ms = static_cast<int>(state_check_interval_ * 1000);
     bool joint_states_ready = false;
     
     for (int i = 0; i < max_attempts; ++i)
     {
       try
       {
-        // 尝试获取当前状态（0.1s timeout）
-        auto state = move_group_interface_->getCurrentState(0.1);
+        // 尝试获取当前状态（使用配置的超时时间，线程安全）
+        auto state = getCurrentStateSafe(state_check_interval_);
         if (state)
         {
           // 检查所有关节数量（应该包括arm_group的4个关节 + gripper_group的2个关节 = 6个关节）
@@ -200,14 +226,13 @@ public:
                   max_attempts * wait_ms);
     }
 
-    // 设置规划参数
-    default_planning_time_ = 15.0;
+    // 设置规划参数（从配置读取）
     move_group_interface_->setPlanningTime(default_planning_time_);
-    move_group_interface_->setNumPlanningAttempts(30);
-    move_group_interface_->setMaxVelocityScalingFactor(0.9);
-    move_group_interface_->setMaxAccelerationScalingFactor(0.9);
-    move_group_interface_->setGoalPositionTolerance(0.01);
-    move_group_interface_->setGoalOrientationTolerance(0.5);
+    move_group_interface_->setNumPlanningAttempts(num_planning_attempts_);
+    move_group_interface_->setMaxVelocityScalingFactor(max_velocity_scaling_);
+    move_group_interface_->setMaxAccelerationScalingFactor(max_acceleration_scaling_);
+    move_group_interface_->setGoalPositionTolerance(goal_position_tolerance_);
+    move_group_interface_->setGoalOrientationTolerance(goal_orientation_tolerance_);
     move_group_interface_->allowReplanning(true);
     move_group_interface_->setPlanningPipelineId("ompl");
     move_group_interface_->setPlannerId("RRTConnect");
@@ -260,8 +285,8 @@ public:
 
     // 打印当前关节值用于诊断
     try {
-      auto arm_jv = move_group_interface_->getCurrentJointValues();
-      auto grip_jv = gripper_group_interface_->getCurrentJointValues();
+      auto arm_jv = getCurrentJointValuesSafe();
+      auto grip_jv = getCurrentGripperJointValuesSafe();
       
       RCLCPP_INFO(this->get_logger(), "=== MoveIt 当前关节值诊断 ===");
       RCLCPP_INFO(this->get_logger(), "Arm joints (%zu个):", arm_jv.size());
@@ -311,15 +336,72 @@ public:
     });
     RCLCPP_INFO(this->get_logger(), "✓ Executor线程已启动");
     
-    // 等待一小段时间确保executor开始运行
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    // 等待足够的时间确保executor开始运行并注册订阅器
+    // ROS2订阅器需要executor spin一段时间才能注册到系统中
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    
+    // 验证executor线程是否运行
+    if (executor_thread_.joinable())
+    {
+      RCLCPP_INFO(this->get_logger(), "✓ Executor线程正在运行");
+    }
+    else
+    {
+      RCLCPP_ERROR(this->get_logger(), "✗ Executor线程未运行！");
+    }
     
     // 验证订阅器是否已注册
+    RCLCPP_INFO(this->get_logger(), "=== 订阅器诊断信息 ===");
     if (cable_pose_sub_) {
-      RCLCPP_INFO(this->get_logger(), "✓ 订阅器已注册到executor");
+      size_t pub_count = cable_pose_sub_->get_publisher_count();
+      RCLCPP_INFO(this->get_logger(), "✓ 缆绳位置订阅器已创建");
+      RCLCPP_INFO(this->get_logger(), "  订阅话题: /cable_pose");
+      RCLCPP_INFO(this->get_logger(), "  发布者数量: %zu", pub_count);
     } else {
-      RCLCPP_ERROR(this->get_logger(), "✗ 订阅器未注册！");
+      RCLCPP_ERROR(this->get_logger(), "✗ 缆绳位置订阅器未创建！");
     }
+    
+    if (emergency_stop_sub_) {
+      size_t pub_count = emergency_stop_sub_->get_publisher_count();
+      RCLCPP_INFO(this->get_logger(), "✓ 急停订阅器已创建");
+      RCLCPP_INFO(this->get_logger(), "  订阅话题: /emergency_stop");
+      RCLCPP_INFO(this->get_logger(), "  发布者数量: %zu", pub_count);
+      if (pub_count == 0)
+      {
+        RCLCPP_WARN(this->get_logger(), "  [警告] 没有发布者，但订阅器已创建，等待发布者连接...");
+      }
+      else
+      {
+        RCLCPP_INFO(this->get_logger(), "  [成功] 检测到发布者，急停功能可用");
+      }
+      RCLCPP_INFO(this->get_logger(), "  等待急停消息...");
+    } else {
+      RCLCPP_ERROR(this->get_logger(), "✗ 急停订阅器未创建！");
+    }
+    RCLCPP_INFO(this->get_logger(), "=== 订阅器诊断完成 ===");
+    
+    // 验证状态发布器
+    RCLCPP_INFO(this->get_logger(), "=== 发布器诊断信息 ===");
+    if (state_publisher_)
+    {
+      size_t sub_count = state_publisher_->get_subscription_count();
+      RCLCPP_INFO(this->get_logger(), "✓ 状态发布器已创建");
+      RCLCPP_INFO(this->get_logger(), "  发布话题: /grasp_state");
+      RCLCPP_INFO(this->get_logger(), "  订阅者数量: %zu", sub_count);
+      if (sub_count == 0)
+      {
+        RCLCPP_WARN(this->get_logger(), "  [警告] 没有订阅者，状态消息可能无法接收");
+      }
+      else
+      {
+        RCLCPP_INFO(this->get_logger(), "  [成功] 检测到订阅者，状态消息可以发送");
+      }
+    }
+    else
+    {
+      RCLCPP_ERROR(this->get_logger(), "✗ 状态发布器未创建！");
+    }
+    RCLCPP_INFO(this->get_logger(), "=== 发布器诊断完成 ===");
   }
 
 private:
@@ -342,6 +424,23 @@ private:
     this->declare_parameter("grasp.use_cartesian", true);
     this->declare_parameter("grasp.eef_step", 0.005);
     this->declare_parameter("grasp.jump_threshold", 0.0);
+    this->declare_parameter("grasp.planning_time", 15.0);
+    this->declare_parameter("grasp.num_planning_attempts", 30);
+    this->declare_parameter("grasp.max_velocity_scaling", 0.9);
+    this->declare_parameter("grasp.max_acceleration_scaling", 0.9);
+    this->declare_parameter("grasp.goal_position_tolerance", 0.01);
+    this->declare_parameter("grasp.goal_orientation_tolerance", 0.5);
+    this->declare_parameter("grasp.fallback_planning_time", 2.0);
+    this->declare_parameter("grasp.ik_timeout", 0.1);
+    this->declare_parameter("grasp.state_check_timeout", 1.0);
+    this->declare_parameter("grasp.state_check_interval", 0.1);
+    this->declare_parameter("grasp.robot_state_publisher_wait", 2.0);
+    this->declare_parameter("grasp.executor_startup_wait", 0.5);
+    this->declare_parameter("grasp.segment_execution_wait", 0.1);
+    this->declare_parameter("grasp.state_sync_wait", 0.1);
+    this->declare_parameter("grasp.control_frequency", 10.0);
+    this->declare_parameter("grasp.read_frequency", 10.0);
+    this->declare_parameter("grasp.main_loop_frequency", 10.0);
 
     // Gripper parameters (position control only, no force control)
     this->declare_parameter("gripper.mode", "position");
@@ -349,10 +448,54 @@ private:
     this->declare_parameter("gripper.close_width", 0.010);
     this->declare_parameter("gripper.close_extra", 0.002);
     this->declare_parameter("gripper.hold_time_ms", 200);
+    this->declare_parameter("gripper.angle_min", 1.01);
+    this->declare_parameter("gripper.angle_max", -1.01);
+    this->declare_parameter("gripper.width_min", 0.0);
 
     // Scene parameters
     this->declare_parameter("scene.add_collision_object", true);
     this->declare_parameter("scene.allow_touch_links", std::vector<std::string>{"LinkGG", "LinkGL", "LinkGR"});
+
+    // Workspace parameters
+    this->declare_parameter("workspace.base_height", 0.141);
+    this->declare_parameter("workspace.link2_length", 0.264);
+    this->declare_parameter("workspace.link3_length", 0.143);
+    this->declare_parameter("workspace.link4_to_eef", 0.187);
+    this->declare_parameter("workspace.reach_radius_margin", 1.2);
+    this->declare_parameter("workspace.max_height_offset", 0.9);
+    this->declare_parameter("workspace.min_height_offset", -0.3);
+    this->declare_parameter("workspace.safe_x_min", 0.20);
+    this->declare_parameter("workspace.safe_x_max", 0.35);
+    this->declare_parameter("workspace.safe_y_min", -0.15);
+    this->declare_parameter("workspace.safe_y_max", 0.15);
+    this->declare_parameter("workspace.safe_z_min", 0.25);
+    this->declare_parameter("workspace.safe_z_max", 0.35);
+    this->declare_parameter("workspace.medium_x_min", 0.15);
+    this->declare_parameter("workspace.medium_x_max", 0.45);
+    this->declare_parameter("workspace.medium_y_min", -0.20);
+    this->declare_parameter("workspace.medium_y_max", 0.20);
+    this->declare_parameter("workspace.medium_z_min", 0.20);
+    this->declare_parameter("workspace.medium_z_max", 0.40);
+
+    // Tolerance parameters
+    this->declare_parameter("tolerance.orientation_epsilon", 1e-6);
+
+    // Trajectory planning parameters
+    this->declare_parameter("trajectory.use_linear_interpolation", false);
+    this->declare_parameter("trajectory.linear_velocity", 0.1);
+    this->declare_parameter("trajectory.linear_min_duration", 1.0);
+    this->declare_parameter("trajectory.linear_step_scale", 0.5);
+    this->declare_parameter("trajectory.cartesian_timeout", 3.0);
+    this->declare_parameter("trajectory.cartesian_descend_threshold", 0.95);
+    this->declare_parameter("trajectory.cartesian_lift_threshold", 0.90);
+    this->declare_parameter("trajectory.use_polynomial_interpolation", false);
+    this->declare_parameter("trajectory.polynomial_type", "cubic");
+    this->declare_parameter("trajectory.polynomial_duration", 2.0);
+    this->declare_parameter("trajectory.polynomial_dt", 0.01);
+    this->declare_parameter("trajectory.use_bspline", false);
+    this->declare_parameter("trajectory.bspline_degree", 3);
+    this->declare_parameter("trajectory.bspline_duration", 3.0);
+    this->declare_parameter("trajectory.bspline_dt", 0.01);
 
     // 读取参数
     load_parameters();
@@ -375,24 +518,192 @@ private:
     use_cartesian_ = this->get_parameter("grasp.use_cartesian").as_bool();
     eef_step_ = this->get_parameter("grasp.eef_step").as_double();
     jump_threshold_ = this->get_parameter("grasp.jump_threshold").as_double();
+    default_planning_time_ = this->get_parameter("grasp.planning_time").as_double();
+    num_planning_attempts_ = this->get_parameter("grasp.num_planning_attempts").as_int();
+    max_velocity_scaling_ = this->get_parameter("grasp.max_velocity_scaling").as_double();
+    max_acceleration_scaling_ = this->get_parameter("grasp.max_acceleration_scaling").as_double();
+    goal_position_tolerance_ = this->get_parameter("grasp.goal_position_tolerance").as_double();
+    goal_orientation_tolerance_ = this->get_parameter("grasp.goal_orientation_tolerance").as_double();
+    fallback_planning_time_ = this->get_parameter("grasp.fallback_planning_time").as_double();
+    ik_timeout_ = this->get_parameter("grasp.ik_timeout").as_double();
+    state_check_timeout_ = this->get_parameter("grasp.state_check_timeout").as_double();
+    state_check_interval_ = this->get_parameter("grasp.state_check_interval").as_double();
+    robot_state_publisher_wait_ = this->get_parameter("grasp.robot_state_publisher_wait").as_double();
+    executor_startup_wait_ = this->get_parameter("grasp.executor_startup_wait").as_double();
+    segment_execution_wait_ = this->get_parameter("grasp.segment_execution_wait").as_double();
+    state_sync_wait_ = this->get_parameter("grasp.state_sync_wait").as_double();
+    control_frequency_ = this->get_parameter("grasp.control_frequency").as_double();
+    read_frequency_ = this->get_parameter("grasp.read_frequency").as_double();
+    main_loop_frequency_ = this->get_parameter("grasp.main_loop_frequency").as_double();
+    
+    // 计算周期（秒）
+    control_period_ = 1.0 / control_frequency_;
+    read_period_ = 1.0 / read_frequency_;
+    main_loop_period_ = 1.0 / main_loop_frequency_;
 
     gripper_mode_ = this->get_parameter("gripper.mode").as_string();
     gripper_open_width_ = this->get_parameter("gripper.open_width").as_double();
     gripper_close_width_ = this->get_parameter("gripper.close_width").as_double();
     gripper_close_extra_ = this->get_parameter("gripper.close_extra").as_double();
     gripper_hold_time_ms_ = this->get_parameter("gripper.hold_time_ms").as_int();
+    gripper_angle_min_ = this->get_parameter("gripper.angle_min").as_double();
+    gripper_angle_max_ = this->get_parameter("gripper.angle_max").as_double();
+    gripper_width_min_ = this->get_parameter("gripper.width_min").as_double();
 
     add_collision_object_ = this->get_parameter("scene.add_collision_object").as_bool();
     allow_touch_links_ = this->get_parameter("scene.allow_touch_links").as_string_array();
 
+    // Workspace parameters
+    workspace_base_height_ = this->get_parameter("workspace.base_height").as_double();
+    workspace_link2_length_ = this->get_parameter("workspace.link2_length").as_double();
+    workspace_link3_length_ = this->get_parameter("workspace.link3_length").as_double();
+    workspace_link4_to_eef_ = this->get_parameter("workspace.link4_to_eef").as_double();
+    workspace_reach_radius_margin_ = this->get_parameter("workspace.reach_radius_margin").as_double();
+    workspace_max_height_offset_ = this->get_parameter("workspace.max_height_offset").as_double();
+    workspace_min_height_offset_ = this->get_parameter("workspace.min_height_offset").as_double();
+    workspace_safe_x_min_ = this->get_parameter("workspace.safe_x_min").as_double();
+    workspace_safe_x_max_ = this->get_parameter("workspace.safe_x_max").as_double();
+    workspace_safe_y_min_ = this->get_parameter("workspace.safe_y_min").as_double();
+    workspace_safe_y_max_ = this->get_parameter("workspace.safe_y_max").as_double();
+    workspace_safe_z_min_ = this->get_parameter("workspace.safe_z_min").as_double();
+    workspace_safe_z_max_ = this->get_parameter("workspace.safe_z_max").as_double();
+    workspace_medium_x_min_ = this->get_parameter("workspace.medium_x_min").as_double();
+    workspace_medium_x_max_ = this->get_parameter("workspace.medium_x_max").as_double();
+    workspace_medium_y_min_ = this->get_parameter("workspace.medium_y_min").as_double();
+    workspace_medium_y_max_ = this->get_parameter("workspace.medium_y_max").as_double();
+    workspace_medium_z_min_ = this->get_parameter("workspace.medium_z_min").as_double();
+    workspace_medium_z_max_ = this->get_parameter("workspace.medium_z_max").as_double();
+
+    // Tolerance parameters
+    orientation_epsilon_ = this->get_parameter("tolerance.orientation_epsilon").as_double();
+
+    // Trajectory planning parameters
+    use_linear_interpolation_ = this->get_parameter("trajectory.use_linear_interpolation").as_bool();
+    linear_velocity_ = this->get_parameter("trajectory.linear_velocity").as_double();
+    linear_min_duration_ = this->get_parameter("trajectory.linear_min_duration").as_double();
+    linear_step_scale_ = this->get_parameter("trajectory.linear_step_scale").as_double();
+    cartesian_timeout_ = this->get_parameter("trajectory.cartesian_timeout").as_double();
+    cartesian_descend_threshold_ = this->get_parameter("trajectory.cartesian_descend_threshold").as_double();
+    cartesian_lift_threshold_ = this->get_parameter("trajectory.cartesian_lift_threshold").as_double();
+    use_polynomial_interpolation_ = this->get_parameter("trajectory.use_polynomial_interpolation").as_bool();
+    polynomial_type_ = this->get_parameter("trajectory.polynomial_type").as_string();
+    polynomial_duration_ = this->get_parameter("trajectory.polynomial_duration").as_double();
+    polynomial_dt_ = this->get_parameter("trajectory.polynomial_dt").as_double();
+    use_bspline_ = this->get_parameter("trajectory.use_bspline").as_bool();
+    bspline_degree_ = this->get_parameter("trajectory.bspline_degree").as_int();
+    bspline_duration_ = this->get_parameter("trajectory.bspline_duration").as_double();
+    bspline_dt_ = this->get_parameter("trajectory.bspline_dt").as_double();
+
     RCLCPP_INFO(this->get_logger(), "参数加载完成");
     RCLCPP_INFO(this->get_logger(), "缆绳直径: %.3f m, 长度: %.3f m", cable_diameter_, cable_length_);
     RCLCPP_INFO(this->get_logger(), "夹爪打开宽度: %.3f m, 闭合宽度: %.3f m", gripper_open_width_, gripper_close_width_);
+    
+    // 打印轨迹规划配置
+    RCLCPP_INFO(this->get_logger(), "=== 轨迹规划配置 ===");
+    RCLCPP_INFO(this->get_logger(), "线性插补: %s (速度: %.3f m/s, 最小持续时间: %.2f s, 步长缩放: %.2f)", 
+                use_linear_interpolation_ ? "启用" : "禁用", linear_velocity_, 
+                linear_min_duration_, linear_step_scale_);
+    RCLCPP_INFO(this->get_logger(), "笛卡尔路径: 超时: %.1f s, descend阈值: %.2f, lift阈值: %.2f",
+                cartesian_timeout_, cartesian_descend_threshold_, cartesian_lift_threshold_);
+    RCLCPP_INFO(this->get_logger(), "多项式插值: %s (类型: %s, 持续时间: %.2f s, 时间步长: %.3f s)", 
+                use_polynomial_interpolation_ ? "启用" : "禁用", 
+                polynomial_type_.c_str(), polynomial_duration_, polynomial_dt_);
+    RCLCPP_INFO(this->get_logger(), "B样条: %s (阶数: %d, 持续时间: %.2f s, 时间步长: %.3f s)", 
+                use_bspline_ ? "启用" : "禁用", bspline_degree_, bspline_duration_, bspline_dt_);
+    RCLCPP_INFO(this->get_logger(), "===================");
+    
+    // 打印频率配置
+    RCLCPP_INFO(this->get_logger(), "=== 频率配置 ===");
+    RCLCPP_INFO(this->get_logger(), "控制频率: %.1f Hz (周期: %.3f s)", 
+                control_frequency_, control_period_);
+    RCLCPP_INFO(this->get_logger(), "读取频率: %.1f Hz (周期: %.3f s)", 
+                read_frequency_, read_period_);
+    RCLCPP_INFO(this->get_logger(), "主循环频率: %.1f Hz (周期: %.3f s)", 
+                main_loop_frequency_, main_loop_period_);
+    RCLCPP_INFO(this->get_logger(), "===================");
   }
 
   // 缆绳位置回调
+  // 急停回调函数
+  void emergency_stop_callback(const std_msgs::msg::String::SharedPtr msg)
+  {
+    // 检查executor是否运行
+    if (!executor_ || !rclcpp::ok())
+    {
+      RCLCPP_ERROR(this->get_logger(), "[急停] Executor未运行或ROS2上下文无效！");
+      return;
+    }
+    
+    // 检查订阅器
+    if (!emergency_stop_sub_)
+    {
+      RCLCPP_ERROR(this->get_logger(), "[急停] 订阅器无效！");
+      return;
+    }
+    
+    // 使用ERROR级别确保消息一定会显示
+    RCLCPP_ERROR(this->get_logger(), "========================================");
+    RCLCPP_ERROR(this->get_logger(), "⚠️⚠️⚠️  收到急停信号！⚠️⚠️⚠️");
+    RCLCPP_ERROR(this->get_logger(), "  消息内容: %s", msg ? msg->data.c_str() : "NULL");
+    RCLCPP_ERROR(this->get_logger(), "  订阅器状态: %s", emergency_stop_sub_ ? "有效" : "无效");
+    RCLCPP_ERROR(this->get_logger(), "  发布者数量: %zu", emergency_stop_sub_->get_publisher_count());
+    
+    // 获取时间戳（seconds()返回double，需要转换）
+    auto now = this->now();
+    int64_t sec = static_cast<int64_t>(now.seconds());
+    uint32_t nsec = now.nanoseconds() % 1000000000;
+    RCLCPP_ERROR(this->get_logger(), "  当前时间: %ld.%09u", sec, nsec);
+    RCLCPP_ERROR(this->get_logger(), "========================================");
+    
+    // 设置急停标志
+    emergency_stop_ = true;
+    
+    // 清空任务队列
+    {
+      std::lock_guard<std::mutex> lock(queue_mutex_);
+      while (!task_queue_.empty()) {
+        task_queue_.pop();
+      }
+      queue_cv_.notify_all();
+    }
+    
+    // 停止MoveIt执行
+    {
+      std::lock_guard<std::mutex> lock(moveit_mutex_);
+      if (move_group_interface_)
+      {
+        try {
+          move_group_interface_->stop();
+          RCLCPP_WARN(this->get_logger(), "已停止机械臂运动");
+        } catch (const std::exception& e) {
+          RCLCPP_ERROR(this->get_logger(), "停止机械臂运动时出错: %s", e.what());
+        }
+      }
+      if (gripper_group_interface_)
+      {
+        try {
+          gripper_group_interface_->stop();
+          RCLCPP_WARN(this->get_logger(), "已停止夹爪运动");
+        } catch (const std::exception& e) {
+          RCLCPP_ERROR(this->get_logger(), "停止夹爪运动时出错: %s", e.what());
+        }
+      }
+    }
+    
+    publish_state("急停:已停止");
+    RCLCPP_WARN(this->get_logger(), "急停处理完成");
+  }
+
   void cable_pose_callback(const geometry_msgs::msg::PoseStamped::SharedPtr msg)
   {
+    // 如果之前处于急停状态，收到新任务时自动重置急停状态
+    if (emergency_stop_)
+    {
+      RCLCPP_INFO(this->get_logger(), "收到新的缆绳位置消息，自动重置急停状态");
+      emergency_stop_ = false;
+      publish_state("急停:已重置");
+    }
+    
     // 先记录收到消息（无论MoveIt是否初始化）
     RCLCPP_INFO(this->get_logger(), "========================================");
     RCLCPP_INFO(this->get_logger(), "✓ 收到缆绳位置消息！");
@@ -410,11 +721,11 @@ private:
 
     if (!move_group_interface_) {
       RCLCPP_WARN(this->get_logger(), "MoveGroupInterface not ready yet, dropping cable_pose");
-      publish_state("error:not_ready");
+      publish_state("错误:未就绪");
       return;
     }
 
-    publish_state("received");
+    publish_state("已接收");
 
     geometry_msgs::msg::PoseStamped cable_pose = *msg;
     
@@ -451,8 +762,21 @@ private:
       {
         msg.data = state;
       }
+      
+      // 添加详细日志
+      size_t sub_count = state_publisher_->get_subscription_count();
+      RCLCPP_INFO(this->get_logger(), "[状态发布] 发布状态到 /grasp_state: %s (订阅者数量: %zu)", 
+                  msg.data.c_str(), sub_count);
       state_publisher_->publish(msg);
-      RCLCPP_INFO(this->get_logger(), "发布状态: %s", msg.data.c_str());
+      
+      if (sub_count == 0)
+      {
+        RCLCPP_WARN(this->get_logger(), "[状态发布] 警告：没有订阅者，状态消息可能无法接收");
+      }
+    }
+    else
+    {
+      RCLCPP_ERROR(this->get_logger(), "[状态发布] 发布器无效！无法发布状态: %s", state.c_str());
     }
   }
 
@@ -485,29 +809,142 @@ private:
 
       if (has_task)
       {
+        // 检查急停状态
+        if (emergency_stop_)
+        {
+          RCLCPP_WARN(this->get_logger(), "系统处于急停状态，取消当前任务");
+          publish_state("急停:任务已取消");
+          continue;
+        }
+        
         try {
           do_cable_grasp(task);
         } catch (const std::exception& e) {
           RCLCPP_ERROR(this->get_logger(), "处理抓取任务时发生异常: %s", e.what());
-          publish_state("error:exception");
+          publish_state("错误:异常");
         }
       }
     }
     RCLCPP_INFO(this->get_logger(), "工作线程退出");
   }
 
+  // 线程安全的 MoveIt 接口访问封装函数
+  // 所有对 move_group_interface_、gripper_group_interface_、planning_scene_interface_ 的访问
+  // 都必须通过这些函数，确保线程安全
+  geometry_msgs::msg::PoseStamped getCurrentPoseSafe()
+  {
+    std::lock_guard<std::mutex> lock(moveit_mutex_);
+    return move_group_interface_->getCurrentPose();
+  }
+
+  moveit::core::RobotStatePtr getCurrentStateSafe(double timeout = 0.0)
+  {
+    std::lock_guard<std::mutex> lock(moveit_mutex_);
+    if (timeout > 0.0)
+    {
+      return move_group_interface_->getCurrentState(timeout);
+    }
+    return move_group_interface_->getCurrentState();
+  }
+
+  std::vector<double> getCurrentJointValuesSafe()
+  {
+    std::lock_guard<std::mutex> lock(moveit_mutex_);
+    return move_group_interface_->getCurrentJointValues();
+  }
+
+  std::vector<double> getCurrentGripperJointValuesSafe()
+  {
+    std::lock_guard<std::mutex> lock(moveit_mutex_);
+    return gripper_group_interface_->getCurrentJointValues();
+  }
+
+  // 等待状态稳定：连续N次joint_state变化 < 阈值再继续
+  // 用于确保执行完上一段后，机械臂"回读状态"已经稳定
+  bool waitForStateStable(double max_wait_time = 1.0, 
+                          int stable_count = 5, 
+                          double threshold = 0.002)
+  {
+    std::lock_guard<std::mutex> lock(moveit_mutex_);
+    
+    // 通过 getCurrentState() 获取 RobotState，然后获取 JointModelGroup
+    auto state = move_group_interface_->getCurrentState();
+    const auto* jmg = state->getJointModelGroup("arm_group");
+    if (!jmg)
+    {
+      RCLCPP_WARN(this->get_logger(), "[状态稳定] 无法获取arm_group，使用简单等待");
+      std::this_thread::sleep_for(std::chrono::milliseconds(500));
+      return false;
+    }
+
+    auto start_time = std::chrono::steady_clock::now();
+    std::vector<double> prev_joint_values;
+    int consecutive_stable = 0;
+
+    while (std::chrono::duration<double>(std::chrono::steady_clock::now() - start_time).count() < max_wait_time)
+    {
+      auto current_state = move_group_interface_->getCurrentState();
+      std::vector<double> current_joint_values;
+      current_state->copyJointGroupPositions(jmg, current_joint_values);
+
+      if (!prev_joint_values.empty() && prev_joint_values.size() == current_joint_values.size())
+      {
+        // 计算关节值变化
+        double max_change = 0.0;
+        for (size_t i = 0; i < current_joint_values.size(); ++i)
+        {
+          double change = std::abs(current_joint_values[i] - prev_joint_values[i]);
+          if (change > max_change)
+          {
+            max_change = change;
+          }
+        }
+
+        if (max_change < threshold)
+        {
+          consecutive_stable++;
+          if (consecutive_stable >= stable_count)
+          {
+            RCLCPP_DEBUG(this->get_logger(), 
+                        "[状态稳定] 状态已稳定（连续%d次变化 < %.4f rad）", 
+                        stable_count, threshold);
+            return true;
+          }
+        }
+        else
+        {
+          consecutive_stable = 0;  // 重置计数
+        }
+      }
+
+      prev_joint_values = current_joint_values;
+      std::this_thread::sleep_for(std::chrono::milliseconds(50));  // 每50ms检查一次
+    }
+
+    RCLCPP_WARN(this->get_logger(), 
+                "[状态稳定] 超时（%.1fs），状态可能未完全稳定，但继续执行", 
+                max_wait_time);
+    return false;  // 超时，但返回false表示未完全稳定
+  }
+
   // 宽度到角度转换（需要根据实际夹爪几何测试确定）
   double width_to_joint_angle(double width)
   {
     // 线性映射
-    // width: 0.0 (完全闭合) -> gripper_open_width_ (完全张开)
-    // JointGL: 1.01 (闭合) -> -1.01 (张开)
-    // 根据axis5映射：axis5 [0°, -1100°] -> JointGL [1.01, -1.01] 弧度
-    // 闭合时 axis5=0° → JointGL=1.01 rad，打开时 axis5=-1100° → JointGL=-1.01 rad
-    const double width_min = 0.0;
+    // 使用配置的参数进行映射
+    const double width_min = gripper_width_min_;
     const double width_max = gripper_open_width_;
-    const double angle_min = 1.01;   // 闭合（对应 axis5 = 0°）
-    const double angle_max = -1.01;  // 张开（对应 axis5 = -1100°）
+    const double angle_min = gripper_angle_min_;   // 闭合（对应 axis5 = 0°）
+    const double angle_max = gripper_angle_max_;  // 张开（对应 axis5 = -1100°）
+    
+    // 除零保护：检查width_max > width_min
+    if (width_max <= width_min)
+    {
+      RCLCPP_ERROR(this->get_logger(), 
+                   "width_to_joint_angle: width_max (%.3f) <= width_min (%.3f)，配置错误！返回默认角度",
+                   width_max, width_min);
+      return angle_min;  // 返回闭合角度作为默认值
+    }
     
     width = std::max(width_min, std::min(width_max, width));
     double angle = (width - width_min) / (width_max - width_min) * (angle_max - angle_min) + angle_min;
@@ -711,6 +1148,7 @@ private:
   }
 
   // 附着物体到末端执行器（包含完整几何信息）
+  // 改进：ATTACH时使用eef_link frame，pose使用相对eef_link的位姿，减少RViz闪烁
   bool scene_attach(const std::string& object_id, const std::string& eef_link, 
                     const geometry_msgs::msg::PoseStamped& cable_pose)
   {
@@ -720,7 +1158,9 @@ private:
     moveit_msgs::msg::AttachedCollisionObject attached_object;
     attached_object.object.id = object_id;
     attached_object.object.operation = moveit_msgs::msg::CollisionObject::ADD;
-    attached_object.object.header.frame_id = planning_frame_;
+    
+    // ATTACH时使用eef_link frame（而不是planning_frame），减少RViz闪烁
+    attached_object.object.header.frame_id = eef_link;
     
     // 创建圆柱体几何（与scene_add_cable_object中相同）
     shape_msgs::msg::SolidPrimitive cylinder;
@@ -728,7 +1168,7 @@ private:
     cylinder.dimensions.resize(2);
     cylinder.dimensions[0] = cable_length_;  // height
     cylinder.dimensions[1] = cable_diameter_ / 2.0;  // radius
-    
+
     attached_object.object.primitives.push_back(cylinder);
     
     // cable_pose 应该已经在 planning frame 中（由调用者保证）
@@ -744,12 +1184,41 @@ private:
       }
     }
     
-    // 使用统一函数计算圆柱pose（确保与add时一致，避免attach时物体跳变）
-    geometry_msgs::msg::Pose cylinder_pose = make_cable_cylinder_pose(pose_in_planning);
-    attached_object.object.primitive_poses.push_back(cylinder_pose);
+    // 计算cable_pose相对于eef_link的位姿
+    // 1. 计算cable在planning_frame中的位姿（使用make_cable_cylinder_pose）
+    geometry_msgs::msg::Pose cylinder_pose_planning = make_cable_cylinder_pose(pose_in_planning);
+    
+    // 2. 将cylinder_pose从planning_frame转换到eef_link frame
+    geometry_msgs::msg::PoseStamped cylinder_pose_stamped;
+    cylinder_pose_stamped.header.frame_id = planning_frame_;
+    cylinder_pose_stamped.pose = cylinder_pose_planning;
+    
+    try {
+      // 使用TF转换：从planning_frame转换到eef_link
+      geometry_msgs::msg::TransformStamped transform = 
+          tf_buffer_->lookupTransform(eef_link, planning_frame_, tf2::TimePointZero);
+      tf2::doTransform(cylinder_pose_stamped, cylinder_pose_stamped, transform);
+      
+      // 使用相对eef_link的位姿
+      attached_object.object.primitive_poses.push_back(cylinder_pose_stamped.pose);
+    } catch (const tf2::TransformException& ex) {
+      // 如果TF转换失败，fallback到planning_frame（兼容旧行为）
+      RCLCPP_WARN(this->get_logger(), 
+                  "无法转换到eef_link frame，fallback到planning_frame: %s", ex.what());
+      attached_object.object.header.frame_id = planning_frame_;
+      attached_object.object.primitive_poses.push_back(cylinder_pose_planning);
+    }
     
     attached_object.link_name = eef_link;
     attached_object.touch_links = allow_touch_links_;
+
+    // 先尝试 detach 同名旧 attached（即使不存在也没关系）
+    moveit_msgs::msg::AttachedCollisionObject rm;
+    rm.object.id = object_id;
+    rm.link_name = eef_link;  // 用参数 eef_link
+    rm.object.operation = moveit_msgs::msg::CollisionObject::REMOVE;
+    planning_scene_interface_->applyAttachedCollisionObject(rm);
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
 
     // 先移除场景中的对象，避免 attach 时覆盖/重建导致闪烁
     // PlanningSceneInterface 的 add/apply 是异步的，如果 add 还没完全传播就 attach，
@@ -785,9 +1254,30 @@ private:
     return true;
   }
 
+  // 清理函数：detach + remove（避免残留对象导致冲突）
+  bool scene_detach_and_remove(const std::string& object_id, const std::string& eef_link)
+  {
+    std::lock_guard<std::mutex> lock(moveit_mutex_);
+
+    // 1) Detach (REMOVE attached)
+    moveit_msgs::msg::AttachedCollisionObject aco;
+    aco.object.id = object_id;
+    aco.link_name = eef_link;  // 必填：表示从哪个link上detach
+    aco.object.operation = moveit_msgs::msg::CollisionObject::REMOVE;
+    planning_scene_interface_->applyAttachedCollisionObject(aco);
+
+    // 2) Remove world object (如果也存在)
+    planning_scene_interface_->removeCollisionObjects({object_id});
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    RCLCPP_INFO(this->get_logger(), "清理完成(detach+remove): %s", object_id.c_str());
+    return true;
+  }
+
   // 转换位姿到planning frame（通用函数）
   // 优先使用 pose.header.stamp，失败则 fallback 到 tf2::TimePointZero
   // 这样可以处理视觉延迟（优先用stamp），同时避免时间戳不同步导致的 extrapolation 错误
+  // 改进：使用canTransform预检查，减少异常；添加fallback计数，超过阈值报警
   bool transform_pose_to_planning(geometry_msgs::msg::PoseStamped& pose)
   {
     if (pose.header.frame_id == planning_frame_)
@@ -799,37 +1289,72 @@ private:
     // 这样可以处理视觉检测延迟，使用对应时间点的 TF
     if (pose.header.stamp.sec != 0 || pose.header.stamp.nanosec != 0)
     {
-      try
+      rclcpp::Time transform_time(pose.header.stamp);
+      rclcpp::Duration timeout(0, 100000000);  // 100ms超时
+      
+      // 先使用canTransform检查，避免频繁抛异常
+      if (tf_buffer_->canTransform(planning_frame_, pose.header.frame_id, transform_time, timeout))
       {
-        rclcpp::Time transform_time(pose.header.stamp);
-        geometry_msgs::msg::TransformStamped transform = 
-            tf_buffer_->lookupTransform(planning_frame_, 
-                                       pose.header.frame_id, 
-                                       transform_time);
-        tf2::doTransform(pose, pose, transform);
-        pose.header.frame_id = planning_frame_;
-        return true;
+        try
+        {
+          geometry_msgs::msg::TransformStamped transform = 
+              tf_buffer_->lookupTransform(planning_frame_, 
+                                         pose.header.frame_id, 
+                                         transform_time);
+          tf2::doTransform(pose, pose, transform);
+          pose.header.frame_id = planning_frame_;
+          return true;
+        }
+        catch (const tf2::TransformException& ex)
+        {
+          // canTransform通过但lookup失败，记录但继续fallback
+          RCLCPP_DEBUG(this->get_logger(), 
+                       "canTransform通过但lookup失败，fallback到最新TF: %s", 
+                       ex.what());
+        }
       }
-      catch (const tf2::TransformException& ex)
+      else
       {
-        // stamp 失败，fallback 到最新 TF
+        // canTransform失败，stamp不可用或超时，fallback到latest
         RCLCPP_DEBUG(this->get_logger(), 
-                     "使用 stamp 转换失败（可能时间戳不同步），fallback 到最新 TF: %s", 
-                     ex.what());
+                     "stamp转换不可用（canTransform失败），fallback到最新TF");
       }
     }
 
     // Fallback：使用 tf2::TimePointZero 获取最新 TF
     // 这样可以避免时间戳不同步导致的 extrapolation 错误
+    // 记录fallback次数，超过阈值报警
+    tf_fallback_count_++;
+    if (tf_fallback_count_ > 10)
+    {
+      RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 5.0,
+                           "TF转换fallback次数过多（%zu次），可能系统时钟/TF延迟有问题", 
+                           tf_fallback_count_.load());
+    }
+    
     try
     {
-      geometry_msgs::msg::TransformStamped transform = 
-          tf_buffer_->lookupTransform(planning_frame_, 
-                                     pose.header.frame_id, 
-                                     tf2::TimePointZero);
-      tf2::doTransform(pose, pose, transform);
-      pose.header.frame_id = planning_frame_;
-      return true;
+      // 使用canTransform检查latest TF是否可用
+      // 注意：对于tf2::TimePointZero，需要使用tf2::Duration而不是rclcpp::Duration
+      // tf2::Duration 是 std::chrono::nanoseconds 的类型别名，直接使用 std::chrono::nanoseconds
+      std::chrono::nanoseconds timeout_ns(100000000);  // 100ms超时
+      tf2::Duration timeout(timeout_ns);
+      if (tf_buffer_->canTransform(planning_frame_, pose.header.frame_id, tf2::TimePointZero, timeout))
+      {
+        geometry_msgs::msg::TransformStamped transform = 
+            tf_buffer_->lookupTransform(planning_frame_, 
+                                       pose.header.frame_id, 
+                                       tf2::TimePointZero);
+        tf2::doTransform(pose, pose, transform);
+        pose.header.frame_id = planning_frame_;
+        return true;
+      }
+      else
+      {
+        RCLCPP_ERROR(this->get_logger(), 
+                     "转换位姿到planning frame失败：canTransform检查失败（TF不可用）");
+        return false;
+      }
     }
     catch (const tf2::TransformException& ex)
     {
@@ -878,7 +1403,7 @@ private:
     if (move_group_interface_)
     {
       try {
-        auto current_pose = move_group_interface_->getCurrentPose();
+        auto current_pose = getCurrentPoseSafe();
         if (!is_default_orientation(current_pose.pose.orientation))
         {
           candidates.push_back(current_pose.pose.orientation);
@@ -894,29 +1419,28 @@ private:
   // 检查orientation是否为默认值
   bool is_default_orientation(const geometry_msgs::msg::Quaternion& orientation)
   {
-    return (std::abs(orientation.x) < 1e-6 &&
-            std::abs(orientation.y) < 1e-6 &&
-            std::abs(orientation.z) < 1e-6 &&
-            std::abs(orientation.w - 1.0) < 1e-6);
+    return (std::abs(orientation.x) < orientation_epsilon_ &&
+            std::abs(orientation.y) < orientation_epsilon_ &&
+            std::abs(orientation.z) < orientation_epsilon_ &&
+            std::abs(orientation.w - 1.0) < orientation_epsilon_);
   }
 
   // 检查位置是否在工作空间内（参考m5_planning.cpp的实现）
   bool is_reachable(double x, double y, double z)
   {
-    // URDF基本参数（用于计算明显超出边界的点）
-    const double base_height = 0.141;  // Joint1在base_link上的高度
-    const double link2_length = 0.264;  // Joint2到Joint3的距离
-    const double link3_length = 0.143;  // Joint3到Joint4的距离（Z方向）
-    const double link4_to_eef = 0.187;  // Joint4到LinkGG的距离
+    // URDF基本参数（从配置读取）
+    const double base_height = workspace_base_height_;
+    const double link2_length = workspace_link2_length_;
+    const double link3_length = workspace_link3_length_;
+    const double link4_to_eef = workspace_link4_to_eef_;
     
     // 计算理论最大伸展距离（完全伸展时，保守估计）
-    const double max_reach_radius = link2_length + link3_length + link4_to_eef;  // 约0.594m
-    const double max_reach_radius_with_margin = max_reach_radius * 1.2;  // 留20%余量，避免误杀
+    const double max_reach_radius = link2_length + link3_length + link4_to_eef;
+    const double max_reach_radius_with_margin = max_reach_radius * workspace_reach_radius_margin_;
     
     // 计算理论最大高度（完全伸展时，保守估计）
-    // 提高阈值以覆盖实际可达高度（当前实际可达z=0.809，避免误判）
-    const double max_height = base_height + 0.9;  // 约1.041m，覆盖实际可达高度
-    const double min_height = base_height - 0.3;  // 保守估计最小高度（base_height - 约0.3m）
+    const double max_height = base_height + workspace_max_height_offset_;
+    const double min_height = base_height + workspace_min_height_offset_;
     
     // 计算到基座的距离（半径）
     const double radius = std::sqrt(x * x + y * y);
@@ -948,21 +1472,21 @@ private:
   // 调整位置到工作空间内的安全位置
   void adjust_to_workspace(double& x, double& y, double& z)
   {
-    // 高成功率区域（推荐使用）
-    const double safe_x_min = 0.20;
-    const double safe_x_max = 0.35;
-    const double safe_y_min = -0.15;
-    const double safe_y_max = 0.15;
-    const double safe_z_min = 0.25;
-    const double safe_z_max = 0.35;
+    // 高成功率区域（从配置读取）
+    const double safe_x_min = workspace_safe_x_min_;
+    const double safe_x_max = workspace_safe_x_max_;
+    const double safe_y_min = workspace_safe_y_min_;
+    const double safe_y_max = workspace_safe_y_max_;
+    const double safe_z_min = workspace_safe_z_min_;
+    const double safe_z_max = workspace_safe_z_max_;
     
-    // 中等成功率区域（如果高成功率区域不可用）
-    const double medium_x_min = 0.15;
-    const double medium_x_max = 0.45;
-    const double medium_y_min = -0.20;
-    const double medium_y_max = 0.20;
-    const double medium_z_min = 0.20;
-    const double medium_z_max = 0.40;
+    // 中等成功率区域（从配置读取）
+    const double medium_x_min = workspace_medium_x_min_;
+    const double medium_x_max = workspace_medium_x_max_;
+    const double medium_y_min = workspace_medium_y_min_;
+    const double medium_y_max = workspace_medium_y_max_;
+    const double medium_z_min = workspace_medium_z_min_;
+    const double medium_z_max = workspace_medium_z_max_;
     
     bool adjusted = false;
     double original_x = x, original_y = y, original_z = z;
@@ -1001,7 +1525,9 @@ private:
   }
 
   // IK检查函数（仅检查IK，不做碰撞检查）
-  bool check_ik_only(const geometry_msgs::msg::PoseStamped& pose_in_planning)
+  // 无锁版本：接受已获取的状态，避免在锁内重复加锁
+  bool check_ik_only_impl(const geometry_msgs::msg::PoseStamped& pose_in_planning,
+                          const moveit::core::RobotStatePtr& state)
   {
     RCLCPP_INFO(this->get_logger(), 
                 "[IK检查] 目标位姿: 位置=(%.3f, %.3f, %.3f), orientation=(%.3f, %.3f, %.3f, %.3f), frame=%s",
@@ -1014,7 +1540,6 @@ private:
                 pose_in_planning.pose.orientation.w,
                 pose_in_planning.header.frame_id.c_str());
     
-    auto state = move_group_interface_->getCurrentState(1.0);
     if (!state) {
       RCLCPP_WARN(this->get_logger(), "[IK检查] 无法获取当前机器人状态");
       return false;
@@ -1028,8 +1553,8 @@ private:
 
     geometry_msgs::msg::Pose p = pose_in_planning.pose;
 
-    // 0.1s IK timeout
-    bool ok = state->setFromIK(jmg, p, eef_link_, 0.1);
+    // 使用配置的IK timeout
+    bool ok = state->setFromIK(jmg, p, eef_link_, ik_timeout_);
     
     if (ok) {
       // 获取IK解出的关节值
@@ -1047,6 +1572,13 @@ private:
     }
     
     return ok;
+  }
+
+  // IK检查函数（公共接口，带锁）
+  bool check_ik_only(const geometry_msgs::msg::PoseStamped& pose_in_planning)
+  {
+    auto state = getCurrentStateSafe(state_check_timeout_);
+    return check_ik_only_impl(pose_in_planning, state);
   }
 
   // IK检查（带碰撞检测）- 用于诊断"IK成功但goal state全碰撞"的情况
@@ -1092,7 +1624,7 @@ private:
     // 因为新建的PlanningScene没有接入PlanningSceneMonitor，看不到真实的collision objects
     // 如需完整诊断，需要接入PlanningSceneMonitor或订阅/move_group/monitored_planning_scene
     bool found = state.setFromIK(
-        jmg, pose_in_planning.pose, eef_link_, 0.1,
+        jmg, pose_in_planning.pose, eef_link_, ik_timeout_,
         [&](moveit::core::RobotState* st, const moveit::core::JointModelGroup*, const double*){
           // 检查自碰撞
           collision_detection::CollisionRequest req;
@@ -1138,7 +1670,7 @@ private:
       if (move_group_interface_)
       {
         try {
-          auto current_pose = move_group_interface_->getCurrentPose();
+          auto current_pose = getCurrentPoseSafe();
           current_orientation = current_pose.pose.orientation;
           
           RCLCPP_INFO(this->get_logger(), 
@@ -1248,7 +1780,7 @@ private:
     if (is_default_orientation && move_group_interface_)
     {
       try {
-        auto current_pose = move_group_interface_->getCurrentPose();
+        auto current_pose = getCurrentPoseSafe();
         grasp_pose.pose.orientation = current_pose.pose.orientation;
       } catch (const std::exception& e) {
         RCLCPP_WARN(this->get_logger(), "无法获取当前末端执行器orientation: %s", e.what());
@@ -1263,42 +1795,193 @@ private:
     return grasp_pose;
   }
 
-  // 执行笛卡尔路径
-  // use_descend: true 表示下压（descend），false 表示抬起（lift）
-  // descend 阈值 0.95，lift 阈值 0.90（lift 是确认动作，可以更宽松）
-  // 添加超时机制（3秒），避免 computeCartesianPath 卡住
-  bool execute_cartesian(const std::vector<geometry_msgs::msg::Pose>& waypoints, bool use_descend = true)
+  // 辅助函数：带超时的 computeCartesianPath
+  // 使用异步执行避免阻塞工作线程
+  bool compute_cartesian_path_with_timeout(
+      const std::vector<geometry_msgs::msg::Pose>& waypoints,
+      double step,
+      double jump_threshold,
+      moveit_msgs::msg::RobotTrajectory& trajectory,
+      double timeout_sec)
   {
-    // 使用 std::async 在单独线程中执行 computeCartesianPath，带超时
-    // 注意：computeCartesianPath 需要访问 move_group_interface_，需要在锁内执行
-    auto future = std::async(std::launch::async, [this, &waypoints]() -> std::pair<double, moveit_msgs::msg::RobotTrajectory> {
+    // 在锁内准备状态
+    {
       std::lock_guard<std::mutex> lock(moveit_mutex_);
       move_group_interface_->setStartStateToCurrentState();
-      
-      // 尊重参数值：jump_threshold=0 表示关闭跳跃检查（MoveIt约定）
-      // 不要强制改成非零值，否则可能导致 fraction 下降
-      moveit_msgs::msg::RobotTrajectory trajectory;
-      double fraction = move_group_interface_->computeCartesianPath(
-          waypoints, eef_step_, jump_threshold_, trajectory);
-      return {fraction, trajectory};
+    }
+    
+    // 在单独线程中执行 computeCartesianPath，避免阻塞
+    auto future = std::async(std::launch::async, [this, &waypoints, step, jump_threshold, &trajectory]() -> double {
+      // 注意：computeCartesianPath 需要访问 move_group_interface_，但通常可以安全地从不同线程调用
+      // 我们已经在锁外，但这是可接受的风险，因为 computeCartesianPath 主要是只读操作
+      std::lock_guard<std::mutex> lock(moveit_mutex_);
+      return move_group_interface_->computeCartesianPath(waypoints, step, jump_threshold, trajectory);
     });
     
-    // 等待结果，带超时（3秒）
-    if (future.wait_for(std::chrono::seconds(3)) == std::future_status::timeout)
+    // 等待结果，带超时
+    auto status = future.wait_for(std::chrono::milliseconds(static_cast<int>(timeout_sec * 1000)));
+    
+    if (status == std::future_status::timeout)
     {
-      RCLCPP_WARN(this->get_logger(), "笛卡尔路径计算超时（3秒），触发fallback");
-      return false;  // 超时，触发 fallback
+      RCLCPP_WARN(this->get_logger(), "笛卡尔路径计算超时（%.1f秒），触发fallback", timeout_sec);
+      return -1.0;  // 返回负数表示超时
     }
     
     // 获取结果
-    auto result_pair = future.get();
-    double fraction = result_pair.first;
-    moveit_msgs::msg::RobotTrajectory trajectory = result_pair.second;
+    try {
+      double fraction = future.get();
+      return fraction;
+    } catch (const std::exception& e) {
+      RCLCPP_ERROR(this->get_logger(), "笛卡尔路径计算异常: %s", e.what());
+      return -1.0;
+    }
+  }
 
-    // 根据用途设置不同的阈值
-    // descend（下压）：0.95（真实硬件上容易 0.95~0.98）
-    // lift（抬起）：0.90（lift 是确认动作，可以更宽松）
-    double threshold = use_descend ? 0.95 : 0.90;
+  // 执行笛卡尔路径（改进版：支持使用精确直线插补和B样条）
+  // use_descend: true 表示下压（descend），false 表示抬起（lift）
+  // descend 阈值 0.95，lift 阈值 0.90（lift 是确认动作，可以更宽松）
+  // 添加超时机制（3秒），避免 computeCartesianPath 卡住
+  // 注意：是否使用线性插补或B样条由配置文件中的参数控制
+  bool execute_cartesian(const std::vector<geometry_msgs::msg::Pose>& waypoints, bool use_descend = true)
+  {
+    // 如果配置启用B样条且waypoints数量足够，使用B样条生成平滑笛卡尔轨迹
+    if (use_bspline_ && waypoints.size() >= static_cast<size_t>(bspline_degree_ + 1))
+    {
+      RCLCPP_INFO(this->get_logger(), "使用B样条生成笛卡尔轨迹（%zu个控制点，阶数=%d）", 
+                  waypoints.size(), bspline_degree_);
+      
+      try {
+        // 生成B样条笛卡尔轨迹
+        std::vector<geometry_msgs::msg::Pose> bspline_waypoints = 
+            trajectory_planner_.generateBSplineCartesianTrajectory(
+              waypoints, bspline_degree_, bspline_duration_, bspline_dt_);
+        
+        if (bspline_waypoints.empty())
+        {
+          RCLCPP_WARN(this->get_logger(), "B样条轨迹生成失败，回退到标准方法");
+        }
+        else
+        {
+          RCLCPP_INFO(this->get_logger(), "B样条生成 %zu 个笛卡尔轨迹点", bspline_waypoints.size());
+          
+          // 使用生成的B样条waypoints调用MoveIt的computeCartesianPath（带超时）
+          moveit_msgs::msg::RobotTrajectory trajectory;
+          double fraction = compute_cartesian_path_with_timeout(
+              bspline_waypoints, eef_step_, jump_threshold_, trajectory, cartesian_timeout_);
+          
+          if (fraction < 0.0)  // 超时或异常
+          {
+            RCLCPP_WARN(this->get_logger(), "B样条笛卡尔路径计算超时，回退到标准方法");
+            // 继续执行，尝试标准方法
+          }
+          else
+          {
+          
+            double threshold = use_descend ? cartesian_descend_threshold_ : cartesian_lift_threshold_;
+            if (fraction >= threshold)
+            {
+              moveit::planning_interface::MoveGroupInterface::Plan plan;
+              plan.trajectory_ = trajectory;
+              
+              moveit::core::MoveItErrorCode result = move_group_interface_->execute(plan);
+              if (result == moveit::core::MoveItErrorCode::SUCCESS)
+              {
+                RCLCPP_INFO(this->get_logger(), "B样条笛卡尔路径执行成功");
+                return true;
+              }
+            }
+            RCLCPP_WARN(this->get_logger(), 
+                       "B样条笛卡尔路径执行失败（成功率: %.2f%%，阈值: %.2f%%），回退到标准方法", 
+                       fraction * 100.0, threshold * 100.0);
+          }
+        }
+      } catch (const std::exception& e) {
+        RCLCPP_WARN(this->get_logger(), "B样条轨迹生成失败: %s，回退到标准方法", e.what());
+      }
+    }
+    
+    // 如果配置启用线性插补且waypoints只有2个点，使用TrajectoryPlanner生成精确直线轨迹
+    if (use_linear_interpolation_ && waypoints.size() == 2)
+    {
+      RCLCPP_INFO(this->get_logger(), "使用精确直线插补生成笛卡尔轨迹");
+      
+      // 计算轨迹持续时间（基于距离和配置的速度）
+      double distance = std::sqrt(
+        std::pow(waypoints[1].position.x - waypoints[0].position.x, 2) +
+        std::pow(waypoints[1].position.y - waypoints[0].position.y, 2) +
+        std::pow(waypoints[1].position.z - waypoints[0].position.z, 2)
+      );
+      
+      // 使用配置的速度计算持续时间
+      double duration = std::max(linear_min_duration_, distance / linear_velocity_);
+      
+      // 生成线性插补轨迹
+      std::vector<geometry_msgs::msg::Pose> linear_waypoints;
+      bool linear_interpolation_success = false;
+      try {
+        linear_waypoints = trajectory_planner_.generateLinearCartesianTrajectory(
+          waypoints[0], waypoints[1], duration, eef_step_);
+        linear_interpolation_success = !linear_waypoints.empty();
+      } catch (const std::exception& e) {
+        RCLCPP_WARN(this->get_logger(), "线性插补生成失败: %s，回退到MoveIt方法", e.what());
+        linear_interpolation_success = false;
+      }
+      
+      if (linear_interpolation_success)
+      {
+        // 使用生成的线性插补waypoints调用MoveIt的computeCartesianPath（带超时）
+        // 这样可以确保路径是精确的直线
+        RCLCPP_INFO(this->get_logger(), "使用 %zu 个线性插补点进行笛卡尔路径规划", linear_waypoints.size());
+        
+        moveit_msgs::msg::RobotTrajectory trajectory;
+        // 使用配置的步长缩放因子，因为我们已经有了精确的插补点
+        double scaled_step = eef_step_ * linear_step_scale_;
+        double fraction = compute_cartesian_path_with_timeout(
+            linear_waypoints, scaled_step, jump_threshold_, trajectory, cartesian_timeout_);
+        
+        if (fraction < 0.0)  // 超时或异常
+        {
+          RCLCPP_WARN(this->get_logger(), "线性插补笛卡尔路径计算超时，回退到标准方法");
+          // 继续执行，尝试标准方法
+        }
+        else
+        {
+        
+          double threshold = use_descend ? cartesian_descend_threshold_ : cartesian_lift_threshold_;
+          if (fraction >= threshold)
+          {
+            moveit::planning_interface::MoveGroupInterface::Plan plan;
+            plan.trajectory_ = trajectory;
+            
+            moveit::core::MoveItErrorCode result = move_group_interface_->execute(plan);
+            if (result == moveit::core::MoveItErrorCode::SUCCESS)
+            {
+              RCLCPP_INFO(this->get_logger(), "线性插补笛卡尔路径执行成功");
+              return true;
+            }
+          }
+          RCLCPP_WARN(this->get_logger(), "线性插补笛卡尔路径执行失败（成功率: %.2f%%，阈值: %.2f%%），回退到标准方法", 
+                     fraction * 100.0, threshold * 100.0);
+        }
+      }
+    }
+    
+    // 标准方法：使用 MoveIt 的 computeCartesianPath（带超时）
+    // 使用异步执行避免阻塞工作线程
+    // 尊重参数值：jump_threshold=0 表示关闭跳跃检查（MoveIt约定）
+    // 不要强制改成非零值，否则可能导致 fraction 下降
+    moveit_msgs::msg::RobotTrajectory trajectory;
+    double fraction = compute_cartesian_path_with_timeout(
+        waypoints, eef_step_, jump_threshold_, trajectory, cartesian_timeout_);
+    
+    if (fraction < 0.0)  // 超时或异常
+    {
+      RCLCPP_WARN(this->get_logger(), "笛卡尔路径计算超时（%.1f秒），触发fallback", cartesian_timeout_);
+      return false;
+    }
+
+    // 根据用途设置不同的阈值（从配置读取）
+    double threshold = use_descend ? cartesian_descend_threshold_ : cartesian_lift_threshold_;
     if (fraction < threshold)
     {
       RCLCPP_WARN(this->get_logger(), 
@@ -1307,9 +1990,8 @@ private:
       return false;
     }
 
-    // 执行轨迹（需要在锁内执行）
+    // 执行轨迹（已在锁内）
     {
-      std::lock_guard<std::mutex> lock(moveit_mutex_);
       moveit::planning_interface::MoveGroupInterface::Plan plan;
       plan.trajectory_ = trajectory;
 
@@ -1372,6 +2054,19 @@ private:
                   waypoints[i].pose.position.y,
                   waypoints[i].pose.position.z);
 
+      // 执行前状态同步：等待状态更新并强制使用最新状态
+      RCLCPP_INFO(this->get_logger(), 
+                  "[分段下压] 段 %zu/%zu 执行前，等待%.0fms并同步状态...", 
+                  i + 1, waypoints.size(), state_sync_wait_ * 1000);
+      std::this_thread::sleep_for(std::chrono::milliseconds(
+        static_cast<int>(state_sync_wait_ * 1000)));
+      
+      // 强制用最新状态作为 start_state（MoveIt C++ 常用做法）
+      {
+        std::lock_guard<std::mutex> lock(moveit_mutex_);
+        move_group_interface_->setStartStateToCurrentState();
+      }
+
       if (!plan_execute_ik_joint_target(waypoints[i]))
       {
         RCLCPP_WARN(this->get_logger(), 
@@ -1380,9 +2075,17 @@ private:
       }
       
       // 等待状态稳定（每段执行后都等待，确保状态同步）
+      // ✅ 修复：使用状态稳定判断函数，而不是简单的sleep
       RCLCPP_INFO(this->get_logger(), 
-                  "[分段下压] 段 %zu/%zu 执行成功，等待150ms确保状态稳定...", i + 1, waypoints.size());
-      std::this_thread::sleep_for(std::chrono::milliseconds(150));
+                  "[分段下压] 段 %zu/%zu 执行成功，等待状态稳定...", 
+                  i + 1, waypoints.size());
+      if (!waitForStateStable(segment_execution_wait_, 5, 0.002))
+      {
+        // 如果状态稳定判断超时，至少等待最小时间
+        RCLCPP_WARN(this->get_logger(), 
+                    "[分段下压] 状态稳定判断超时，使用最小等待时间");
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+      }
     }
 
     RCLCPP_INFO(this->get_logger(), "[分段下压] 所有段执行成功");
@@ -1425,7 +2128,104 @@ private:
 
     waypoints.push_back(end_pose);  // 终点
 
-    // 逐段执行IK→joint target规划
+    // 如果启用B样条且waypoints数量足够，使用B样条生成平滑轨迹
+    if (use_bspline_ && waypoints.size() >= static_cast<size_t>(bspline_degree_ + 1))
+    {
+      RCLCPP_INFO(this->get_logger(), 
+                  "[分段提升] 使用B样条生成平滑轨迹（%zu个控制点，阶数=%d）", 
+                  waypoints.size(), bspline_degree_);
+      
+      // 对所有waypoints进行IK求解，得到关节空间的控制点
+      std::vector<std::vector<double>> control_points;
+      std::lock_guard<std::mutex> lock(moveit_mutex_);
+      
+      for (size_t i = 0; i < waypoints.size(); ++i)
+      {
+        geometry_msgs::msg::PoseStamped pose_in_planning = waypoints[i];
+        if (!transform_pose_to_planning(pose_in_planning))
+        {
+          RCLCPP_WARN(this->get_logger(), 
+                      "[分段提升] waypoint #%zu 转换失败，fallback到逐段执行", i);
+          control_points.clear();
+          break;
+        }
+        
+        auto state = move_group_interface_->getCurrentState();
+        const auto* jmg = state->getJointModelGroup("arm_group");
+        if (!jmg)
+        {
+          RCLCPP_WARN(this->get_logger(), 
+                      "[分段提升] 无法获取arm_group，fallback到逐段执行");
+          control_points.clear();
+          break;
+        }
+        
+        // IK求解
+        if (i > 0)
+        {
+          // 后续waypoints使用前一个waypoint的关节值作为seed
+          state->setJointGroupPositions(jmg, control_points.back());
+        }
+        
+        if (state->setFromIK(jmg, pose_in_planning.pose, eef_link_, ik_timeout_))
+        {
+          std::vector<double> joint_values;
+          state->copyJointGroupPositions(jmg, joint_values);
+          control_points.push_back(joint_values);
+        }
+        else
+        {
+          RCLCPP_WARN(this->get_logger(), 
+                      "[分段提升] waypoint #%zu IK求解失败，fallback到逐段执行", i);
+          control_points.clear();
+          break;
+        }
+      }
+      
+      // 如果所有waypoints的IK都成功，使用B样条执行
+      if (control_points.size() == waypoints.size())
+      {
+        // 重新获取state和jmg（因为它们在循环内定义）
+        auto state_for_bspline = move_group_interface_->getCurrentState();
+        const auto* jmg_for_bspline = state_for_bspline->getJointModelGroup("arm_group");
+        if (jmg_for_bspline)
+        {
+          try {
+            std::vector<std::string> joint_names = jmg_for_bspline->getActiveJointModelNames();
+          
+          trajectory_msgs::msg::JointTrajectory trajectory = 
+              trajectory_planner_.generateBSplineJointTrajectory(
+                control_points, bspline_degree_, bspline_duration_, 
+                joint_names, bspline_dt_);
+          
+          moveit::planning_interface::MoveGroupInterface::Plan plan;
+          plan.trajectory_.joint_trajectory = trajectory;
+          plan.trajectory_.joint_trajectory.header.stamp = this->get_clock()->now();
+          plan.trajectory_.joint_trajectory.header.frame_id = planning_frame_;
+          
+          move_group_interface_->setStartStateToCurrentState();
+          moveit::core::MoveItErrorCode result = move_group_interface_->execute(plan);
+          
+          if (result == moveit::core::MoveItErrorCode::SUCCESS)
+          {
+            RCLCPP_INFO(this->get_logger(), "[分段提升] B样条轨迹执行成功");
+            return true;
+          }
+          else
+          {
+            RCLCPP_WARN(this->get_logger(), 
+                        "[分段提升] B样条轨迹执行失败，fallback到逐段执行，错误代码: %d", 
+                        result.val);
+          }
+          } catch (const std::exception& e) {
+            RCLCPP_WARN(this->get_logger(), 
+                        "[分段提升] B样条轨迹生成失败: %s，fallback到逐段执行", e.what());
+          }
+        }
+      }
+    }
+
+    // 逐段执行IK→joint target规划（如果B样条未启用或失败）
     // 跳过第一段（i=0），因为它是起点，已经在那个位置，不需要移动
     for (size_t i = 1; i < waypoints.size(); ++i)
     {
@@ -1436,6 +2236,19 @@ private:
                   waypoints[i].pose.position.y,
                   waypoints[i].pose.position.z);
 
+      // 执行前状态同步：等待状态更新并强制使用最新状态
+      RCLCPP_INFO(this->get_logger(), 
+                  "[分段提升] 段 %zu/%zu 执行前，等待%.0fms并同步状态...", 
+                  i + 1, waypoints.size(), state_sync_wait_ * 1000);
+      std::this_thread::sleep_for(std::chrono::milliseconds(
+        static_cast<int>(state_sync_wait_ * 1000)));
+      
+      // 强制用最新状态作为 start_state（MoveIt C++ 常用做法）
+      {
+        std::lock_guard<std::mutex> lock(moveit_mutex_);
+        move_group_interface_->setStartStateToCurrentState();
+      }
+
       if (!plan_execute_ik_joint_target(waypoints[i]))
       {
         RCLCPP_WARN(this->get_logger(), 
@@ -1444,9 +2257,17 @@ private:
       }
       
       // 等待状态稳定（每段执行后都等待，确保状态同步）
+      // ✅ 修复：使用状态稳定判断函数，而不是简单的sleep
       RCLCPP_INFO(this->get_logger(), 
-                  "[分段提升] 段 %zu/%zu 执行成功，等待150ms确保状态稳定...", i + 1, waypoints.size());
-      std::this_thread::sleep_for(std::chrono::milliseconds(150));
+                  "[分段提升] 段 %zu/%zu 执行成功，等待状态稳定...", 
+                  i + 1, waypoints.size());
+      if (!waitForStateStable(segment_execution_wait_, 5, 0.002))
+      {
+        // 如果状态稳定判断超时，至少等待最小时间
+        RCLCPP_WARN(this->get_logger(), 
+                    "[分段提升] 状态稳定判断超时，使用最小等待时间");
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+      }
     }
 
     RCLCPP_INFO(this->get_logger(), "[分段提升] 所有段执行成功");
@@ -1471,6 +2292,12 @@ private:
                 pose_in_planning.pose.position.y,
                 pose_in_planning.pose.position.z,
                 pose_in_planning.header.frame_id.c_str());
+
+    // 规划前状态同步：等待状态更新并强制使用最新状态
+    // 这是 MoveIt C++ 常用做法，避免 start_state 落后
+    std::this_thread::sleep_for(std::chrono::milliseconds(
+      static_cast<int>(state_sync_wait_ * 1000)));
+    move_group_interface_->setStartStateToCurrentState();
 
     // 尝试多次IK求解（使用不同的seed）
     auto state = move_group_interface_->getCurrentState();
@@ -1500,8 +2327,8 @@ private:
         RCLCPP_INFO(this->get_logger(), "[IK→Joint] IK尝试 #%d (使用当前状态作为seed)", attempt + 1);
       }
 
-      // IK求解（0.1s timeout）
-      if (state->setFromIK(jmg, pose_in_planning.pose, eef_link_, 0.1))
+      // IK求解（使用配置的timeout）
+      if (state->setFromIK(jmg, pose_in_planning.pose, eef_link_, ik_timeout_))
       {
         state->copyJointGroupPositions(jmg, joint_values);
         ik_found = true;
@@ -1524,8 +2351,78 @@ private:
       return false;
     }
 
-    // 使用joint target进行规划
+    // 如果启用多项式插值，优先使用多项式插值生成轨迹
+    if (use_polynomial_interpolation_)
+    {
+      RCLCPP_INFO(this->get_logger(), "[IK→Joint] 使用多项式插值生成轨迹");
+      
+      // 获取当前关节值（已在锁内，直接调用）
+      std::vector<double> start_joints = move_group_interface_->getCurrentJointValues();
+      
+      // 使用多项式插值生成并执行轨迹
+      // 注意：当前函数已在锁内，直接实现多项式插值逻辑（避免重复加锁）
+      try {
+        const auto* jmg = state->getJointModelGroup("arm_group");
+        std::vector<std::string> joint_names = jmg->getActiveJointModelNames();
+        
+        trajectory_msgs::msg::JointTrajectory trajectory;
+        bool use_quintic = (polynomial_type_ == "quintic");
+        
+        if (use_quintic)
+        {
+          std::vector<double> start_vel(joint_names.size(), 0.0);
+          std::vector<double> end_vel(joint_names.size(), 0.0);
+          std::vector<double> start_acc(joint_names.size(), 0.0);
+          std::vector<double> end_acc(joint_names.size(), 0.0);
+          
+          trajectory = trajectory_planner_.generateQuinticPolynomialTrajectory(
+            start_joints, joint_values, start_vel, end_vel, 
+            start_acc, end_acc, polynomial_duration_, joint_names, polynomial_dt_);
+        }
+        else
+        {
+          std::vector<double> start_vel(joint_names.size(), 0.0);
+          std::vector<double> end_vel(joint_names.size(), 0.0);
+          
+          trajectory = trajectory_planner_.generateCubicPolynomialTrajectory(
+            start_joints, joint_values, start_vel, end_vel, 
+            polynomial_duration_, joint_names, polynomial_dt_);
+        }
+        
+        // 创建MoveIt Plan对象并执行
+        moveit::planning_interface::MoveGroupInterface::Plan plan;
+        plan.trajectory_.joint_trajectory = trajectory;
+        plan.trajectory_.joint_trajectory.header.stamp = this->get_clock()->now();
+        plan.trajectory_.joint_trajectory.header.frame_id = planning_frame_;
+        
+        // 执行前同步状态
+        move_group_interface_->setStartStateToCurrentState();
+        
+        moveit::core::MoveItErrorCode result = move_group_interface_->execute(plan);
+        if (result == moveit::core::MoveItErrorCode::SUCCESS)
+        {
+          RCLCPP_INFO(this->get_logger(), "[IK→Joint] 多项式插值轨迹执行成功");
+          return true;
+        }
+        else
+        {
+          RCLCPP_WARN(this->get_logger(), 
+                      "[IK→Joint] 多项式插值轨迹执行失败，fallback到标准规划，错误代码: %d", 
+                      result.val);
+          // 继续执行标准规划
+        }
+      } catch (const std::exception& e) {
+        RCLCPP_WARN(this->get_logger(), 
+                    "[IK→Joint] 多项式插值生成失败: %s，fallback到标准规划", e.what());
+        // 继续执行标准规划
+      }
+    }
+
+    // 标准MoveIt规划（如果多项式插值未启用或失败）
+    // 修复：IK成功后、调用plan之前强制刷新start_state，避免使用旧状态
+    // IK求解可能花费了一些时间，状态可能已经更新，必须使用最新状态
     move_group_interface_->setStartStateToCurrentState();
+    
     move_group_interface_->clearPoseTargets();
     move_group_interface_->clearPathConstraints();
     move_group_interface_->setJointValueTarget(joint_values);
@@ -1536,6 +2433,12 @@ private:
     if (result == moveit::core::MoveItErrorCode::SUCCESS)
     {
       RCLCPP_INFO(this->get_logger(), "[IK→Joint] Joint target规划成功");
+      
+      // 执行前再次同步状态（规划后状态可能已更新）
+      // 这是 MoveIt 的常见做法：规划后、执行前再次确认状态，避免"Invalid Trajectory"错误
+      std::this_thread::sleep_for(std::chrono::milliseconds(50));
+      move_group_interface_->setStartStateToCurrentState();
+      
       result = move_group_interface_->execute(plan);
       if (result == moveit::core::MoveItErrorCode::SUCCESS)
       {
@@ -1565,21 +2468,207 @@ private:
     return plan_execute_ik_joint_target_impl(target_pose, max_ik_attempts);
   }
 
+  // 使用关节空间多项式插值执行轨迹（示例函数）
+  // 可以用于平滑的关节空间运动
+  // 注意：是否启用由配置文件中的 use_polynomial_interpolation_ 参数控制
+  bool execute_polynomial_joint_trajectory(
+    const std::vector<double>& start_joints,
+    const std::vector<double>& end_joints)
+  {
+    if (!use_polynomial_interpolation_)
+    {
+      RCLCPP_DEBUG(this->get_logger(), "多项式插值未启用，跳过");
+      return false;
+    }
+
+    std::lock_guard<std::mutex> lock(moveit_mutex_);
+    
+    try {
+      // 获取关节名称
+      auto state = move_group_interface_->getCurrentState();
+      const auto* jmg = state->getJointModelGroup("arm_group");
+      if (!jmg)
+      {
+        RCLCPP_WARN(this->get_logger(), "无法获取arm_group关节模型组");
+        return false;
+      }
+      
+      std::vector<std::string> joint_names = jmg->getActiveJointModelNames();
+      
+      // 验证关节数量
+      if (start_joints.size() != end_joints.size() || 
+          start_joints.size() != joint_names.size())
+      {
+        RCLCPP_WARN(this->get_logger(), "关节数量不匹配");
+        return false;
+      }
+      
+      trajectory_msgs::msg::JointTrajectory trajectory;
+      bool use_quintic = (polynomial_type_ == "quintic");
+      
+      if (use_quintic)
+      {
+        // 使用五次多项式（需要速度和加速度约束）
+        std::vector<double> start_vel(joint_names.size(), 0.0);
+        std::vector<double> end_vel(joint_names.size(), 0.0);
+        std::vector<double> start_acc(joint_names.size(), 0.0);
+        std::vector<double> end_acc(joint_names.size(), 0.0);
+        
+        trajectory = trajectory_planner_.generateQuinticPolynomialTrajectory(
+          start_joints, end_joints, start_vel, end_vel, 
+          start_acc, end_acc, polynomial_duration_, joint_names, polynomial_dt_);
+        
+        RCLCPP_INFO(this->get_logger(), "生成五次多项式轨迹，持续时间: %.2f秒，时间步长: %.3f秒", 
+                   polynomial_duration_, polynomial_dt_);
+      }
+      else
+      {
+        // 使用三次多项式（只需要速度约束，默认为0）
+        std::vector<double> start_vel(joint_names.size(), 0.0);
+        std::vector<double> end_vel(joint_names.size(), 0.0);
+        
+        trajectory = trajectory_planner_.generateCubicPolynomialTrajectory(
+          start_joints, end_joints, start_vel, end_vel, 
+          polynomial_duration_, joint_names, polynomial_dt_);
+        
+        RCLCPP_INFO(this->get_logger(), "生成三次多项式轨迹，持续时间: %.2f秒，时间步长: %.3f秒", 
+                   polynomial_duration_, polynomial_dt_);
+      }
+      
+      // 执行轨迹：将trajectory_msgs转换为moveit_msgs::RobotTrajectory
+      RCLCPP_INFO(this->get_logger(), "轨迹已生成，包含 %zu 个点", trajectory.points.size());
+      
+      // 创建MoveIt Plan对象
+      moveit::planning_interface::MoveGroupInterface::Plan plan;
+      plan.trajectory_.joint_trajectory = trajectory;
+      plan.trajectory_.joint_trajectory.header.stamp = this->get_clock()->now();
+      plan.trajectory_.joint_trajectory.header.frame_id = planning_frame_;
+      
+      // 执行前同步状态
+      move_group_interface_->setStartStateToCurrentState();
+      
+      // 执行轨迹
+      moveit::core::MoveItErrorCode result = move_group_interface_->execute(plan);
+      if (result == moveit::core::MoveItErrorCode::SUCCESS)
+      {
+        RCLCPP_INFO(this->get_logger(), "多项式插值轨迹执行成功");
+        return true;
+      }
+      else
+      {
+        RCLCPP_WARN(this->get_logger(), "多项式插值轨迹执行失败，错误代码: %d", result.val);
+        return false;
+      }
+    }
+    catch (const std::exception& e)
+    {
+      RCLCPP_ERROR(this->get_logger(), "多项式轨迹生成失败: %s", e.what());
+      return false;
+    }
+  }
+
+  // 使用B样条关节空间轨迹执行（需要多个控制点）
+  // control_points: 控制点序列，每个控制点是一个关节角度向量
+  // 至少需要 degree+1 个控制点
+  bool execute_bspline_joint_trajectory(
+    const std::vector<std::vector<double>>& control_points)
+  {
+    if (!use_bspline_)
+    {
+      RCLCPP_DEBUG(this->get_logger(), "B样条未启用，跳过");
+      return false;
+    }
+
+    std::lock_guard<std::mutex> lock(moveit_mutex_);
+    
+    try {
+      // 检查控制点数量
+      if (control_points.size() < static_cast<size_t>(bspline_degree_ + 1))
+      {
+        RCLCPP_WARN(this->get_logger(), 
+                    "B样条需要至少 %d 个控制点，但只有 %zu 个", 
+                    bspline_degree_ + 1, control_points.size());
+        return false;
+      }
+
+      // 获取关节名称
+      auto state = move_group_interface_->getCurrentState();
+      const auto* jmg = state->getJointModelGroup("arm_group");
+      if (!jmg)
+      {
+        RCLCPP_WARN(this->get_logger(), "无法获取arm_group关节模型组");
+        return false;
+      }
+      
+      std::vector<std::string> joint_names = jmg->getActiveJointModelNames();
+      
+      // 验证所有控制点的关节数量
+      size_t num_joints = joint_names.size();
+      for (size_t i = 0; i < control_points.size(); ++i)
+      {
+        if (control_points[i].size() != num_joints)
+        {
+          RCLCPP_WARN(this->get_logger(), 
+                      "控制点 #%zu 的关节数量 (%zu) 与期望值 (%zu) 不匹配", 
+                      i, control_points[i].size(), num_joints);
+          return false;
+        }
+      }
+      
+      // 生成B样条轨迹
+      trajectory_msgs::msg::JointTrajectory trajectory = 
+          trajectory_planner_.generateBSplineJointTrajectory(
+            control_points, bspline_degree_, bspline_duration_, 
+            joint_names, bspline_dt_);
+      
+      RCLCPP_INFO(this->get_logger(), 
+                  "生成B样条关节轨迹（阶数=%d），包含 %zu 个点，持续时间: %.2f秒", 
+                  bspline_degree_, trajectory.points.size(), bspline_duration_);
+      
+      // 创建MoveIt Plan对象并执行
+      moveit::planning_interface::MoveGroupInterface::Plan plan;
+      plan.trajectory_.joint_trajectory = trajectory;
+      plan.trajectory_.joint_trajectory.header.stamp = this->get_clock()->now();
+      plan.trajectory_.joint_trajectory.header.frame_id = planning_frame_;
+      
+      // 执行前同步状态
+      move_group_interface_->setStartStateToCurrentState();
+      
+      // 执行轨迹
+      moveit::core::MoveItErrorCode result = move_group_interface_->execute(plan);
+      if (result == moveit::core::MoveItErrorCode::SUCCESS)
+      {
+        RCLCPP_INFO(this->get_logger(), "B样条关节轨迹执行成功");
+        return true;
+      }
+      else
+      {
+        RCLCPP_WARN(this->get_logger(), "B样条关节轨迹执行失败，错误代码: %d", result.val);
+        return false;
+      }
+    }
+    catch (const std::exception& e)
+    {
+      RCLCPP_ERROR(this->get_logger(), "B样条轨迹生成失败: %s", e.what());
+      return false;
+    }
+  }
+
   // 点对点运动（重构：优先使用IK→joint target，这是4DOF机械臂的主路径）
   // 对4DOF机械臂：默认走 IK→joint（OMPL的Pose/Position目标约束采样器可能无法构建可采样的goal region）
   // 对6DOF机械臂：可以优先 pose/position
+  // 改进：将TF转换和计算移到锁外，减少持锁时间
   bool plan_execute_pose_target(const geometry_msgs::msg::PoseStamped& target_pose)
   {
-    std::lock_guard<std::mutex> lock(moveit_mutex_);
-
-    // 转换到planning frame（使用通用函数）
+    // ========== 锁外操作：TF转换和计算 ==========
+    // 转换到planning frame（使用通用函数，不需要锁）
     geometry_msgs::msg::PoseStamped pose_in_planning = target_pose;
     if (!transform_pose_to_planning(pose_in_planning))
     {
       return false;
     }
 
-    // 输出关键信息用于诊断
+    // 输出关键信息用于诊断（不需要锁）
     RCLCPP_INFO(this->get_logger(), 
                 "PlanningFrame=%s, EEF=%s", 
                 planning_frame_.c_str(), eef_link_.c_str());
@@ -1589,99 +2678,21 @@ private:
                 pose_in_planning.pose.position.y, 
                 pose_in_planning.pose.position.z,
                 pose_in_planning.header.frame_id.c_str());
-
-    // ========== 主路径：IK→joint target（4DOF机械臂的推荐路径）==========
-    // 对4DOF机械臂，OMPL的Pose/Position目标约束采样器可能无法构建可采样的goal region
-    // 因此优先使用IK求解得到关节值，然后使用joint target进行规划
-    // 注意：使用内部实现版本，因为当前函数已经持有锁
-    RCLCPP_INFO(this->get_logger(), 
-                "[主路径] 尝试IK→joint target（4DOF机械臂推荐路径）");
-    if (plan_execute_ik_joint_target_impl(pose_in_planning))
-    {
-      RCLCPP_INFO(this->get_logger(), 
-                  "点对点运动成功（使用IK→joint target主路径）");
-      return true;
-    }
-    RCLCPP_WARN(this->get_logger(), 
-                "[主路径] IK→joint target失败，进入fallback策略");
-
-    // ========== Fallback 1：位置目标（弱化，降低 planning time 避免浪费时间）==========
-    // 注意：对于4DOF，PositionTarget 通常会在 OMPL goal sampler 失败
-    // 但保留作为快速尝试，使用很短的 planning time 避免卡住
-    RCLCPP_INFO(this->get_logger(), 
-                "[Fallback 1] 尝试位置目标（快速尝试，planning time=2s）: (%.3f, %.3f, %.3f)",
-                pose_in_planning.pose.position.x,
-                pose_in_planning.pose.position.y,
-                pose_in_planning.pose.position.z);
     
-    // 临时降低 planning time，避免在 OMPL 里浪费太多时间
-    // 使用成员变量而不是 getPlanningTime()（MoveIt2 某些版本没有此方法）
-    move_group_interface_->setPlanningTime(2.0);  // 只给2秒，快速失败
-    
-    move_group_interface_->setStartStateToCurrentState();
-    move_group_interface_->clearPoseTargets();
-    move_group_interface_->clearPathConstraints();
-    move_group_interface_->setPositionTarget(
-        pose_in_planning.pose.position.x,
-        pose_in_planning.pose.position.y,
-        pose_in_planning.pose.position.z,
-        eef_link_);
-    // 设置宽松的姿态容差（允许任意姿态）
-    move_group_interface_->setGoalOrientationTolerance(3.14);
-    
-    moveit::planning_interface::MoveGroupInterface::Plan plan;
-    moveit::core::MoveItErrorCode result = move_group_interface_->plan(plan);
-    
-    // 恢复原来的 planning time
-    move_group_interface_->setPlanningTime(default_planning_time_);
-    
-    if (result == moveit::core::MoveItErrorCode::SUCCESS)
-    {
-      result = move_group_interface_->execute(plan);
-      if (result == moveit::core::MoveItErrorCode::SUCCESS)
-      {
-        RCLCPP_INFO(this->get_logger(), 
-                    "点对点运动成功（使用位置目标fallback）");
-        move_group_interface_->setGoalOrientationTolerance(0.5);
-        return true;
-      }
-      else
-      {
-        RCLCPP_WARN(this->get_logger(), 
-                    "[Fallback 1] 位置目标规划成功但执行失败");
-      }
-    }
-    else
-    {
-      RCLCPP_WARN(this->get_logger(), 
-                  "[Fallback 1] 位置目标规划失败（预期，4DOF OMPL sampler 问题）");
-    }
-    
-    // position target 尝试之后，马上恢复常规容差，避免污染后续
-    move_group_interface_->setGoalOrientationTolerance(0.5);
-
-    // ========== Fallback 2：姿态候选循环 ==========
-    // 防御性设置：确保姿态目标分支使用正确的容差
-    move_group_interface_->setGoalOrientationTolerance(0.5);
-    // 保存原始orientation
+    // 准备orientation候选列表（锁外计算，减少持锁时间）
     geometry_msgs::msg::Quaternion original_orientation = pose_in_planning.pose.orientation;
-    
-    // 准备orientation候选列表（按优先级排序）
     std::vector<geometry_msgs::msg::Quaternion> orientation_candidates;
     
     // 候选1: 当前末端执行器orientation（如果可用且不是默认值）
-    if (move_group_interface_)
-    {
-      try {
-        auto current_pose = move_group_interface_->getCurrentPose();
-        if (!is_default_orientation(current_pose.pose.orientation))
-        {
-          orientation_candidates.push_back(current_pose.pose.orientation);
-          RCLCPP_INFO(this->get_logger(), "准备尝试orientation候选: 当前末端执行器orientation");
-        }
-      } catch (const std::exception& e) {
-        // 忽略错误
+    try {
+      auto current_pose = getCurrentPoseSafe();
+      if (!is_default_orientation(current_pose.pose.orientation))
+      {
+        orientation_candidates.push_back(current_pose.pose.orientation);
+        RCLCPP_INFO(this->get_logger(), "准备尝试orientation候选: 当前末端执行器orientation");
       }
+    } catch (const std::exception& e) {
+      // 忽略错误
     }
     
     // 候选2: 原始orientation（如果它不是默认值）
@@ -1739,10 +2750,88 @@ private:
     }
     
     RCLCPP_INFO(this->get_logger(), "准备尝试 %zu 个orientation候选", orientation_candidates.size());
+
+    // ========== 锁内操作：MoveIt接口调用 ==========
+    std::lock_guard<std::mutex> lock(moveit_mutex_);
+
+    // ========== 主路径：IK→joint target（4DOF机械臂的推荐路径）==========
+    // 对4DOF机械臂，OMPL的Pose/Position目标约束采样器可能无法构建可采样的goal region
+    // 因此优先使用IK求解得到关节值，然后使用joint target进行规划
+    // 注意：使用内部实现版本，因为当前函数已经持有锁
+    RCLCPP_INFO(this->get_logger(), 
+                "[主路径] 尝试IK→joint target（4DOF机械臂推荐路径）");
+    if (plan_execute_ik_joint_target_impl(pose_in_planning))
+    {
+      RCLCPP_INFO(this->get_logger(), 
+                  "点对点运动成功（使用IK→joint target主路径）");
+      return true;
+    }
+    RCLCPP_WARN(this->get_logger(), 
+                "[主路径] IK→joint target失败，进入fallback策略");
+
+    // ========== Fallback 1：位置目标（弱化，降低 planning time 避免浪费时间）==========
+    // 注意：对于4DOF，PositionTarget 通常会在 OMPL goal sampler 失败
+    // 但保留作为快速尝试，使用很短的 planning time 避免卡住
+    RCLCPP_INFO(this->get_logger(), 
+                "[Fallback 1] 尝试位置目标（快速尝试，planning time=2s）: (%.3f, %.3f, %.3f)",
+                pose_in_planning.pose.position.x,
+                pose_in_planning.pose.position.y,
+                pose_in_planning.pose.position.z);
     
     // 临时降低 planning time，避免在 OMPL 里浪费太多时间
     // 使用成员变量而不是 getPlanningTime()（MoveIt2 某些版本没有此方法）
-    move_group_interface_->setPlanningTime(2.0);  // 只给2秒，快速失败
+    move_group_interface_->setPlanningTime(fallback_planning_time_);  // 使用配置的fallback规划时间
+    
+    move_group_interface_->setStartStateToCurrentState();
+    move_group_interface_->clearPoseTargets();
+    move_group_interface_->clearPathConstraints();
+    move_group_interface_->setPositionTarget(
+        pose_in_planning.pose.position.x,
+        pose_in_planning.pose.position.y,
+        pose_in_planning.pose.position.z,
+        eef_link_);
+    // 设置宽松的姿态容差（允许任意姿态）
+    move_group_interface_->setGoalOrientationTolerance(3.14);
+    
+    moveit::planning_interface::MoveGroupInterface::Plan plan;
+    moveit::core::MoveItErrorCode result = move_group_interface_->plan(plan);
+    
+    // 恢复原来的 planning time
+    move_group_interface_->setPlanningTime(default_planning_time_);
+    
+    if (result == moveit::core::MoveItErrorCode::SUCCESS)
+    {
+      result = move_group_interface_->execute(plan);
+      if (result == moveit::core::MoveItErrorCode::SUCCESS)
+      {
+        RCLCPP_INFO(this->get_logger(), 
+                    "点对点运动成功（使用位置目标fallback）");
+        move_group_interface_->setGoalOrientationTolerance(0.5);
+        return true;
+      }
+      else
+      {
+        RCLCPP_WARN(this->get_logger(), 
+                    "[Fallback 1] 位置目标规划成功但执行失败");
+      }
+    }
+    else
+    {
+      RCLCPP_WARN(this->get_logger(), 
+                  "[Fallback 1] 位置目标规划失败（预期，4DOF OMPL sampler 问题）");
+    }
+    
+    // position target 尝试之后，马上恢复常规容差，避免污染后续
+    move_group_interface_->setGoalOrientationTolerance(0.5);
+
+    // ========== Fallback 2：姿态候选循环 ==========
+    // 防御性设置：确保姿态目标分支使用正确的容差
+    move_group_interface_->setGoalOrientationTolerance(0.5);
+    // 注意：orientation_candidates已在锁外计算完成
+    
+    // 临时降低 planning time，避免在 OMPL 里浪费太多时间
+    // 使用成员变量而不是 getPlanningTime()（MoveIt2 某些版本没有此方法）
+    move_group_interface_->setPlanningTime(fallback_planning_time_);  // 使用配置的fallback规划时间
     
     // 尝试每个orientation候选（只做完整姿态目标）
     for (size_t i = 0; i < orientation_candidates.size(); ++i)
@@ -1758,10 +2847,12 @@ private:
                   pose_in_planning.pose.orientation.w);
       
       // IK检查：在规划前先验证位姿是否可达（只在姿态目标分支做）
+      // 注意：已在锁内，使用无锁版本避免重复加锁
       RCLCPP_INFO(this->get_logger(),
                   "对orientation候选 #%zu 进行IK检查...",
                   i + 1);
-      if (!check_ik_only(pose_in_planning)) {
+      auto state_for_ik = move_group_interface_->getCurrentState();
+      if (!check_ik_only_impl(pose_in_planning, state_for_ik)) {
         RCLCPP_WARN(this->get_logger(),
                     "orientation候选 #%zu IK 直接失败（目标状态无效，不是规划问题），跳过此候选",
                     i + 1);
@@ -1878,8 +2969,24 @@ private:
       RCLCPP_INFO(this->get_logger(), "收到 shutdown 信号，停止处理抓取任务");
       return false;
     }
+    
+    // 检查急停状态
+    if (emergency_stop_)
+    {
+      RCLCPP_WARN(this->get_logger(), "系统处于急停状态，停止抓取任务");
+      publish_state("急停:任务已停止");
+      return false;
+    }
 
-    publish_state("received");
+    publish_state("已接收");
+
+    // 清理残留的碰撞对象（避免同名冲突）
+    const std::string cable_world_id = cable_name_ + "_world";
+    const std::string cable_attached_id = cable_name_ + "_attached";
+    scene_detach_and_remove(cable_world_id, eef_link_);
+    scene_detach_and_remove(cable_attached_id, eef_link_);
+    // 也清理旧命名（向后兼容）
+    scene_detach_and_remove(cable_name_, eef_link_);
 
     // 0. 检查当前位置是否在工作空间内（仅打印警告，不强制移动）
     // 注意：当前姿态是URDF/TF认可的合法姿态，不应在抓取任务中将其当作错误处理
@@ -1887,7 +2994,7 @@ private:
     if (move_group_interface_)
     {
       try {
-        auto current_pose = move_group_interface_->getCurrentPose();
+        auto current_pose = getCurrentPoseSafe();
         double current_x = current_pose.pose.position.x;
         double current_y = current_pose.pose.position.y;
         double current_z = current_pose.pose.position.z;
@@ -1906,9 +3013,9 @@ private:
                     current_pose.pose.orientation.y,
                     current_pose.pose.orientation.z,
                     current_pose.pose.orientation.w);
-        
+
         // 获取当前关节值用于对比
-        auto current_joints = move_group_interface_->getCurrentJointValues();
+        auto current_joints = getCurrentJointValuesSafe();
         RCLCPP_INFO(this->get_logger(), 
                     "当前关节值: [%.3f, %.3f, %.3f, %.3f]",
                     current_joints.size() > 0 ? current_joints[0] : 0.0,
@@ -1941,10 +3048,10 @@ private:
     }
 
     // 1. 打开夹爪
-    publish_state("gripper:opening");
+    publish_state("夹爪:打开中");
     if (!open_gripper())
     {
-      publish_state("error:open_gripper");
+      publish_state("错误:打开夹爪失败");
       return false;
     }
 
@@ -1967,15 +3074,21 @@ private:
     geometry_msgs::msg::PoseStamped cable_pose_planning = cable_pose;
     if (!transform_pose_to_planning(cable_pose_planning))
     {
-      publish_state("error:transform_cable");
+      publish_state("错误:缆绳位姿转换失败");
       return false;
     }
 
     // 3. 移动到预抓取点
-    publish_state("planning:pregrasp");
+    if (emergency_stop_) {
+      RCLCPP_WARN(this->get_logger(), "急停触发，停止预抓取");
+      publish_state("急停:任务已停止");
+      return false;
+    }
+    
+    publish_state("规划:预抓取");
     if (!plan_execute_pose_target(pregrasp_pose))
     {
-      publish_state("error:pregrasp");
+      publish_state("错误:预抓取失败");
       return false;
     }
 
@@ -1983,16 +3096,23 @@ private:
     // 使用 cable_pose_planning（已经在 planning frame 中）
     if (add_collision_object_)
     {
-      if (!scene_add_cable_object(cable_pose_planning, cable_name_))
+      const std::string cable_world_id = cable_name_ + "_world";
+      if (!scene_add_cable_object(cable_pose_planning, cable_world_id))
       {
-        publish_state("error:add_object");
+        publish_state("错误:添加物体失败");
         return false;
       }
     }
-    publish_state("executing:pregrasp");
+    publish_state("执行:预抓取");
+    
+    if (emergency_stop_) {
+      RCLCPP_WARN(this->get_logger(), "急停触发，停止下压");
+      publish_state("急停:任务已停止");
+      return false;
+    }
 
     // 5. 直线下压（现在waypoints已经在planning_frame_中）
-    publish_state("executing:descend");
+    publish_state("执行:下压");
     std::vector<geometry_msgs::msg::Pose> waypoints;
     waypoints.push_back(pregrasp_pose.pose);
     waypoints.push_back(grasp_pose.pose);
@@ -2075,24 +3195,36 @@ private:
 
     if (!descend_success)
     {
-      publish_state("error:descend");
+      publish_state("错误:下压失败");
       return false;
     }
 
     // 6. 闭合夹爪
-    publish_state("gripper:closing");
+    if (emergency_stop_) {
+      RCLCPP_WARN(this->get_logger(), "急停触发，停止夹爪闭合");
+      publish_state("急停:任务已停止");
+      return false;
+    }
+    
+    publish_state("夹爪:闭合中");
     if (!close_gripper())
     {
-      publish_state("error:close_gripper");
+      publish_state("错误:闭合夹爪失败");
       return false;
     }
 
     // 7. 保持时间
-    publish_state("gripper:holding");
+    publish_state("夹爪:保持中");
     std::this_thread::sleep_for(std::chrono::milliseconds(gripper_hold_time_ms_));
 
     // 8. 轻微抬起确认
-    publish_state("executing:lift");
+    if (emergency_stop_) {
+      RCLCPP_WARN(this->get_logger(), "急停触发，停止抬起");
+      publish_state("急停:任务已停止");
+      return false;
+    }
+    
+    publish_state("执行:抬起");
     geometry_msgs::msg::PoseStamped lift_pose = grasp_pose;  // grasp_pose已经在planning_frame_中
     lift_pose.pose.position.z += lift_distance_;
     // lift_pose已经在planning_frame_中，因为它是从grasp_pose复制的
@@ -2208,21 +3340,27 @@ private:
     // TODO: 可以添加夹爪反馈宽度检查
 
     // 10. 附着物体（传入cable_pose_planning以包含完整几何信息）
-    publish_state("scene:attach");
+    publish_state("场景:附着");
     // 使用 cable_pose_planning（已经在 planning frame 中）
-    if (!scene_attach(cable_name_, eef_link_, cable_pose_planning))
+    // 注意：cable_world_id 和 cable_attached_id 已在函数开始处声明
+    // attach 前先 remove world object
+    planning_scene_interface_->removeCollisionObjects({cable_world_id});
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    // attach 新的 attached_id（注意不是 world_id）
+    if (!scene_attach(cable_attached_id, eef_link_, cable_pose_planning))
     {
       RCLCPP_WARN(this->get_logger(), "附着物体失败");
     }
 
-    // 11. 完成
-    publish_state("completed");
+    // 11. 完成抓取
+    publish_state("完成");
     RCLCPP_INFO(this->get_logger(), "缆绳抓取完成");
     return true;
   }
 
   // 成员变量
   rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr cable_pose_sub_;
+  rclcpp::Subscription<std_msgs::msg::String>::SharedPtr emergency_stop_sub_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr state_publisher_;
   std::shared_ptr<moveit::planning_interface::MoveGroupInterface> move_group_interface_;
   std::shared_ptr<moveit::planning_interface::MoveGroupInterface> gripper_group_interface_;
@@ -2245,7 +3383,11 @@ private:
 
   std::vector<std::thread> worker_threads_;
   std::atomic<bool> stop_workers_{false};
+  std::atomic<bool> emergency_stop_{false};  // 急停标志
   size_t num_worker_threads_{1};
+  
+  // TF转换fallback计数（用于检测系统时钟/TF延迟问题）
+  std::atomic<size_t> tf_fallback_count_{0};
 
   // 参数
   std::string cable_name_;
@@ -2256,6 +3398,25 @@ private:
   double cable_center_offset_z_{0.0};  // cable_pose到圆柱中心的Z偏移（默认0.0表示cable_pose是中心）
   
   double default_planning_time_{15.0};  // 默认规划时间，用于临时切换后恢复
+  int num_planning_attempts_{30};
+  double max_velocity_scaling_{0.9};
+  double max_acceleration_scaling_{0.9};
+  double goal_position_tolerance_{0.01};
+  double goal_orientation_tolerance_{0.5};
+  double fallback_planning_time_{2.0};
+  double ik_timeout_{0.1};
+  double state_check_timeout_{1.0};
+  double state_check_interval_{0.1};
+  double robot_state_publisher_wait_{2.0};
+  double executor_startup_wait_{0.5};
+  double segment_execution_wait_{0.5};  // 从0.1s增加到0.5s，避免状态未稳定
+  double state_sync_wait_{0.1};
+  double control_frequency_{10.0};
+  double read_frequency_{10.0};
+  double main_loop_frequency_{10.0};
+  double control_period_{0.1};  // 1.0 / control_frequency_
+  double read_period_{0.1};     // 1.0 / read_frequency_
+  double main_loop_period_{0.1}; // 1.0 / main_loop_frequency_
 
   bool is_4dof_{false};  // 是否为4DOF机械臂（通过arm_group关节数量检测）
 
@@ -2272,9 +3433,56 @@ private:
   double gripper_close_width_;
   double gripper_close_extra_;
   int gripper_hold_time_ms_;
+  double gripper_angle_min_{1.01};
+  double gripper_angle_max_{-1.01};
+  double gripper_width_min_{0.0};
 
   bool add_collision_object_;
   std::vector<std::string> allow_touch_links_;
+
+  // 工作空间参数
+  double workspace_base_height_{0.141};
+  double workspace_link2_length_{0.264};
+  double workspace_link3_length_{0.143};
+  double workspace_link4_to_eef_{0.187};
+  double workspace_reach_radius_margin_{1.2};
+  double workspace_max_height_offset_{0.9};
+  double workspace_min_height_offset_{-0.3};
+  double workspace_safe_x_min_{0.20};
+  double workspace_safe_x_max_{0.35};
+  double workspace_safe_y_min_{-0.15};
+  double workspace_safe_y_max_{0.15};
+  double workspace_safe_z_min_{0.25};
+  double workspace_safe_z_max_{0.35};
+  double workspace_medium_x_min_{0.15};
+  double workspace_medium_x_max_{0.45};
+  double workspace_medium_y_min_{-0.20};
+  double workspace_medium_y_max_{0.20};
+  double workspace_medium_z_min_{0.20};
+  double workspace_medium_z_max_{0.40};
+
+  // 容差参数
+  double orientation_epsilon_{1e-6};
+
+  // 轨迹规划器
+  m5_grasp::TrajectoryPlanner trajectory_planner_;
+
+  // 轨迹规划参数
+  bool use_linear_interpolation_{false};
+  double linear_velocity_{0.1};
+  double linear_min_duration_{1.0};
+  double linear_step_scale_{0.5};
+  double cartesian_timeout_{3.0};
+  double cartesian_descend_threshold_{0.95};
+  double cartesian_lift_threshold_{0.90};
+  bool use_polynomial_interpolation_{false};
+  std::string polynomial_type_{"cubic"};
+  double polynomial_duration_{2.0};
+  double polynomial_dt_{0.01};
+  bool use_bspline_{false};
+  int bspline_degree_{3};
+  double bspline_duration_{3.0};
+  double bspline_dt_{0.01};
 };
 
 int main(int argc, char * argv[])
@@ -2293,7 +3501,9 @@ int main(int argc, char * argv[])
       RCLCPP_INFO(rclcpp::get_logger("main"), "Executor已启动");
       
       // 等待一小段时间让executor开始运行
-      std::this_thread::sleep_for(std::chrono::milliseconds(500));
+      double executor_wait = node->get_parameter("grasp.executor_startup_wait").as_double();
+      std::this_thread::sleep_for(std::chrono::milliseconds(
+        static_cast<int>(executor_wait * 1000)));
       
       RCLCPP_INFO(rclcpp::get_logger("main"), "初始化MoveIt接口...");
       node->init_moveit();
@@ -2301,9 +3511,13 @@ int main(int argc, char * argv[])
       
       RCLCPP_INFO(rclcpp::get_logger("main"), "m5_grasp节点已完全启动，等待消息...");
 
+      // 使用配置的main循环频率
+      double main_loop_period = 1.0 / node->get_parameter("grasp.main_loop_frequency").as_double();
+      int main_loop_period_ms = static_cast<int>(main_loop_period * 1000);
+      
       while (rclcpp::ok())
       {
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        std::this_thread::sleep_for(std::chrono::milliseconds(main_loop_period_ms));
       }
     }
 
