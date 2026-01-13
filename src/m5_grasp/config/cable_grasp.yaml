@@ -2,8 +2,8 @@
   ros__parameters:
     cable:
       name: "cable_1"
-      diameter: 0.008          # m  缆绳直径（8mm）
-      length: 0.20             # m  用于碰撞近似的长度（可以只取局部一段）
+      diameter: 0.050          # m  缆绳直径（47mm）
+      length: 1.0             # m  用于碰撞近似的长度（可以只取局部一段）
       frame_id: "world"        # 缆绳pose所在坐标系（如果你的视觉输出不同就填视觉frame）
       shape: "cylinder"        # cylinder 或 capsule（如果你实现）
       center_offset_z: 0.0     # m  cable_pose到圆柱中心的Z偏移（默认0.0表示cable_pose是中心，如需从底部推中心可设为length*0.5）
@@ -25,6 +25,32 @@
       goal_position_tolerance: 0.01  # m  目标位置容差
       goal_orientation_tolerance: 0.5  # rad  目标姿态容差
       fallback_planning_time: 2.0  # s  fallback策略的规划时间
+      
+      # yaw调整参数（用于xyz+yaw抓取模式）
+      yaw_offset: 0.0  # rad  yaw偏移量，用于微调夹爪方向
+      yaw_flip: false  # bool  是否翻转yaw 180度（遇到方向反了时使用）
+      grasp_yaw_add: 0.0  # rad  线缆切向→夹持方向偏移：yaw=0度时，orientation的Yaw分量=0度，期望joint 4=90度
+      orientation_yaw_offset: -1.5708  # rad  orientation的Yaw分量偏移（-90度）：用于调整Yaw=0度时joint 4的角度，使得joint 4=-90度
+      z_clearance: 0.002  # m  抓取高度安全余量（默认2mm），避免下压过猛
+      
+      # yaw合法性检查参数
+      yaw_validation_enabled: true  # 是否启用yaw合法性检查（检查yaw在特定z高度下是否IK可解）
+      yaw_tolerance: 0.0873  # rad  yaw搜索容差（默认±5°，约0.0873 rad）
+      yaw_search_step: 0.0175  # rad  yaw搜索步长（默认1°，约0.0175 rad）
+      
+      # Joint4-yaw映射优化参数
+      joint4_yaw_search_enabled: true  # 是否启用Joint4-yaw迭代搜索（当Joint4与期望yaw差异>30度时）
+      joint4_yaw_search_range: 3.1416  # rad  Joint4-yaw搜索范围（默认±180度，约3.1416 rad）
+      joint4_yaw_search_step: 0.0873  # rad  Joint4-yaw搜索步长（默认5度，约0.0873 rad）
+      
+      # 状态回滚参数
+      enable_recovery: true  # 是否启用执行失败后的状态回滚
+      recovery_timeout: 5.0  # s  回滚操作的超时时间
+      
+      # TCP偏移补偿参数（LinkGG到夹爪中心的偏移，在EEF frame中）
+      tcp_offset_x: 0.0  # m  TCP偏移X（LinkGG→夹爪中心）
+      tcp_offset_y: -0.024  # m  TCP偏移Y（LinkGG→夹爪中心）
+      tcp_offset_z: -0.0086  # m  TCP偏移Z（LinkGG→夹爪中心）
       
       # IK和状态检查参数
       ik_timeout: 0.1          # s  IK求解超时时间
@@ -50,9 +76,17 @@
       linear_step_scale: 0.5          # 线性插补时步长缩放因子（相对于eef_step）
       
       # 笛卡尔路径规划参数
-      cartesian_timeout: 3.0          # s  笛卡尔路径计算超时时间
+      cartesian_timeout: 3.0          # s  笛卡尔路径计算默认超时时间（向后兼容）
+      cartesian_timeout_descend: 5.0  # s  下压专用超时时间（默认5.0秒，下压需要更长时间）
+      cartesian_timeout_lift: 3.0     # s  抬起专用超时时间（默认3.0秒）
       cartesian_descend_threshold: 0.95  # descend（下压）路径成功率阈值
       cartesian_lift_threshold: 0.90     # lift（抬起）路径成功率阈值
+      cartesian_retry_on_timeout: true  # 超时后是否重试（减少waypoints后重试）
+      
+      # 自适应分段参数
+      adaptive_segments: true         # 是否启用自适应分段（根据距离动态调整）
+      min_segments: 2                 # 最小分段数（默认2，生成3个waypoints）
+      max_segments: 4                 # 最大分段数（默认4，生成5个waypoints）
       
       # 关节空间多项式插值配置
       use_polynomial_interpolation: true  # 是否启用多项式插值轨迹规划

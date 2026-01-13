@@ -175,6 +175,13 @@ def generate_launch_description():
         ],
     )
     
+    # 包含 RViz launch（用于可视化规划）
+    rviz_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(m5_bringup_dir, "launch", "moveit_rviz.launch.py")
+        )
+    )
+    
     return LaunchDescription([
         static_transform_launch,
         rsp_launch,
@@ -183,4 +190,5 @@ def generate_launch_description():
         spawn_controllers_launch,
         joint_state_publisher_node,
         m5_grasp,
+        rviz_launch,
     ])

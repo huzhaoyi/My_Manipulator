@@ -23,6 +23,9 @@
   <depend>control_msgs</depend>
   <depend>shape_msgs</depend>
   <depend>trajectory_msgs</depend>
+  <depend>m5_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>visualization_msgs</depend>
 
   <exec_depend>moveit_ros_move_group</exec_depend>
   <exec_depend>moveit_kinematics</exec_depend>

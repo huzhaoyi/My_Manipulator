@@ -765,54 +765,89 @@
                 <div id="tab-cable" class="tab-content">
                     <div class="control-box">
                         <h3>缆绳抓取</h3>
-                <div class="input-group">
-                    <label>缆绳位置 X (m):</label>
-                    <input type="number" id="cable-x" step="0.001" value="0.25" placeholder="0.25">
-                </div>
-                <div class="input-row">
-                    <div class="input-group">
-                        <label>缆绳位置 Y (m):</label>
-                        <input type="number" id="cable-y" step="0.001" value="0.0" placeholder="0.0">
-                    </div>
-                    <div class="input-group">
-                        <label>缆绳位置 Z (m):</label>
-                        <input type="number" id="cable-z" step="0.001" value="0.20" placeholder="0.20">
-                    </div>
-                </div>
-                
-                <div class="toggle-advanced" onclick="toggleCableAdvanced()">
-                    <span id="toggle-cable-text">显示高级选项 (Orientation)</span>
-                </div>
-                
-                <div class="advanced-controls" id="cable-advanced-controls">
-                    <div class="input-row">
                         <div class="input-group">
-                            <label>Orientation QX:</label>
-                            <input type="number" id="cable-qx" step="0.001" value="0.0" placeholder="0.0">
+                            <label>缆绳位置 X (m):</label>
+                            <input type="number" id="cable-x" step="0.001" value="0.25" placeholder="0.25">
                         </div>
-                        <div class="input-group">
-                            <label>Orientation QY:</label>
-                            <input type="number" id="cable-qy" step="0.001" value="0.0" placeholder="0.0">
+                        <div class="input-row">
+                            <div class="input-group">
+                                <label>缆绳位置 Y (m):</label>
+                                <input type="number" id="cable-y" step="0.001" value="0.0" placeholder="0.0">
+                            </div>
+                            <div class="input-group">
+                                <label>缆绳位置 Z (m):</label>
+                                <input type="number" id="cable-z" step="0.001" value="0.20" placeholder="0.20">
+                            </div>
                         </div>
+                        
+                        <div class="toggle-advanced" onclick="toggleCableAdvanced()">
+                            <span id="toggle-cable-text">显示高级选项 (Orientation)</span>
+                        </div>
+                        
+                        <div class="advanced-controls" id="cable-advanced-controls">
+                            <div class="input-row">
+                                <div class="input-group">
+                                    <label>Orientation QX:</label>
+                                    <input type="number" id="cable-qx" step="0.001" value="0.0" placeholder="0.0">
+                                </div>
+                                <div class="input-group">
+                                    <label>Orientation QY:</label>
+                                    <input type="number" id="cable-qy" step="0.001" value="0.0" placeholder="0.0">
+                                </div>
+                            </div>
+                            <div class="input-row">
+                                <div class="input-group">
+                                    <label>Orientation QZ:</label>
+                                    <input type="number" id="cable-qz" step="0.001" value="0.0" placeholder="0.0">
+                                </div>
+                                <div class="input-group">
+                                    <label>Orientation QW:</label>
+                                    <input type="number" id="cable-qw" step="0.001" value="1.0" placeholder="1.0">
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="button-group">
+                            <button class="btn-primary" onclick="publishCablePose()">开始抓取</button>
+                            <button class="btn-secondary" onclick="resetCablePose()">重置</button>
+                        </div>
+                        
+                        <div class="message-box" id="cable-message"></div>
                     </div>
-                    <div class="input-row">
-                        <div class="input-group">
-                            <label>Orientation QZ:</label>
-                            <input type="number" id="cable-qz" step="0.001" value="0.0" placeholder="0.0">
+                    
+                    <!-- 新增：带yaw的缆绳抓取输入 -->
+                    <div class="control-box">
+                        <h3>缆绳抓取（xyz + yaw）</h3>
+                        <div class="input-container">
+                            <div class="input-row">
+                                <div class="input-group">
+                                    <label>X (m):</label>
+                                    <input type="number" id="cable-yaw-x" step="0.001" value="0.30" placeholder="0.30">
+                                </div>
+                                <div class="input-group">
+                                    <label>Y (m):</label>
+                                    <input type="number" id="cable-yaw-y" step="0.001" value="0.00" placeholder="0.00">
+                                </div>
+                                <div class="input-group">
+                                    <label>Z (m):</label>
+                                    <input type="number" id="cable-yaw-z" step="0.001" value="0.30" placeholder="0.30">
+                                </div>
+                            </div>
+                            <div class="input-row">
+                                <div class="input-group">
+                                    <label>Yaw (度):</label>
+                                    <input type="number" id="cable-yaw-angle" step="0.1" value="0.0" placeholder="0.0">
+                                    <small>线缆切向方向（绕y轴旋转）</small>
+                                </div>
+                            </div>
                         </div>
-                        <div class="input-group">
-                            <label>Orientation QW:</label>
-                            <input type="number" id="cable-qw" step="0.001" value="1.0" placeholder="1.0">
+                        
+                        <div class="button-group">
+                            <button class="btn-primary" onclick="publishCablePoseWithYaw()">发布xyz+yaw</button>
+                            <button class="btn-secondary" onclick="resetCablePoseWithYaw()">重置</button>
                         </div>
-                    </div>
-                </div>
-                
-                <div class="button-group">
-                    <button class="btn-primary" onclick="publishCablePose()">开始抓取</button>
-                    <button class="btn-secondary" onclick="resetCablePose()">重置</button>
-                </div>
-                
-                <div class="message-box" id="cable-message"></div>
+                        
+                        <div class="message-box" id="cable-yaw-message"></div>
                     </div>
                 </div>
             </div>
@@ -2073,6 +2108,82 @@
             document.getElementById('cable-qz').value = '0.0';
             document.getElementById('cable-qw').value = '1.0';
             showCableMessage('', 'success');
+        }
+        
+        function publishCablePoseWithYaw() {
+            const x = parseFloat(document.getElementById('cable-yaw-x').value);
+            const y = parseFloat(document.getElementById('cable-yaw-y').value);
+            const z = parseFloat(document.getElementById('cable-yaw-z').value);
+            const yawDeg = parseFloat(document.getElementById('cable-yaw-angle').value);
+            
+            if (isNaN(x) || isNaN(y) || isNaN(z) || isNaN(yawDeg)) {
+                showCableYawMessage('请输入有效的坐标值和yaw角度', 'error');
+                return;
+            }
+            
+            // 将yaw从度转换为弧度
+            const yawRad = yawDeg * Math.PI / 180.0;
+            
+            const data = {
+                x: x,
+                y: y,
+                z: z,
+                yaw: yawRad
+            };
+            
+            // 添加调试日志
+            console.log('[网页调试] 发送xyz+yaw数据:', data);
+            
+            fetch('/api/publish_cable_pose_with_yaw', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(data)
+            })
+            .then(response => {
+                console.log('[网页调试] 收到响应状态:', response.status, response.statusText);
+                return response.json();
+            })
+            .then(result => {
+                console.log('[网页调试] 收到响应数据:', result);
+                if (result.success) {
+                    showCableYawMessage(result.message, 'success');
+                } else {
+                    showCableYawMessage(result.message || '发布失败', 'error');
+                }
+            })
+            .catch(error => {
+                console.error('[网页调试] 请求错误:', error);
+                showCableYawMessage('网络错误: ' + error.message, 'error');
+            });
+        }
+        
+        function resetCablePoseWithYaw() {
+            document.getElementById('cable-yaw-x').value = '0.30';
+            document.getElementById('cable-yaw-y').value = '0.00';
+            document.getElementById('cable-yaw-z').value = '0.30';
+            document.getElementById('cable-yaw-angle').value = '0.0';
+            showCableYawMessage('', 'success');
+        }
+        
+        function showCableYawMessage(message, type) {
+            const messageBox = document.getElementById('cable-yaw-message');
+            if (!message) {
+                messageBox.style.display = 'none';
+                return;
+            }
+            
+            messageBox.textContent = message;
+            messageBox.className = 'message-box message-' + type;
+            messageBox.style.display = 'block';
+            
+            // 3秒后自动隐藏成功消息
+            if (type === 'success') {
+                setTimeout(() => {
+                    messageBox.style.display = 'none';
+                }, 3000);
+            }
         }
         
         function showCableMessage(message, type) {

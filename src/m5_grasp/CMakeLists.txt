@@ -11,6 +11,9 @@ find_package(moveit_msgs REQUIRED)
 find_package(control_msgs REQUIRED)
 find_package(shape_msgs REQUIRED)
 find_package(trajectory_msgs REQUIRED)
+find_package(m5_msgs REQUIRED)
+find_package(nav_msgs REQUIRED)
+find_package(visualization_msgs REQUIRED)
 
 # 创建轨迹规划库
 add_library(trajectory_planner_lib
@@ -38,6 +41,9 @@ ament_target_dependencies(m5_grasp_node
   control_msgs
   shape_msgs
   trajectory_msgs
+  m5_msgs
+  nav_msgs
+  visualization_msgs
 )
 target_link_libraries(m5_grasp_node
   trajectory_planner_lib

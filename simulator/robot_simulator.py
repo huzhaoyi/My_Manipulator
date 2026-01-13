@@ -28,9 +28,16 @@ try:
     from std_msgs.msg import String
     from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
     from builtin_interfaces.msg import Duration
+    try:
+        from m5_msgs.msg import CablePoseWithYaw
+        M5_MSGS_AVAILABLE = True
+    except ImportError:
+        M5_MSGS_AVAILABLE = False
+        print("警告: m5_msgs未安装，xyz+yaw抓取功能将不可用")
     ROS2_AVAILABLE = True
 except ImportError:
     ROS2_AVAILABLE = False
+    M5_MSGS_AVAILABLE = False
     print("警告: ROS2未安装，坐标下发功能将不可用")
 
 class RobotSimulator:
@@ -82,6 +89,7 @@ class RobotSimulator:
         self.ros2_node = None
         self.pose_publisher = None
         self.cable_pose_publisher = None  # 缆绳位置发布器
+        self.cable_pose_with_yaw_publisher = None  # 带yaw的缆绳位置发布器
         self.emergency_stop_publisher = None  # 急停发布器
         self.joint_state_subscriber = None
         self.arm_trajectory_publisher = None
@@ -100,6 +108,11 @@ class RobotSimulator:
                 print(f"✓ 发布器已创建: /target_pose")
                 self.cable_pose_publisher = self.ros2_node.create_publisher(PoseStamped, '/cable_pose', 10)
                 print(f"✓ 发布器已创建: /cable_pose")
+                if M5_MSGS_AVAILABLE:
+                    self.cable_pose_with_yaw_publisher = self.ros2_node.create_publisher(CablePoseWithYaw, '/cable_pose_with_yaw', 10)
+                    print(f"✓ 发布器已创建: /cable_pose_with_yaw")
+                else:
+                    print("⚠ 发布器未创建: /cable_pose_with_yaw (m5_msgs不可用)")
                 self.emergency_stop_publisher = self.ros2_node.create_publisher(String, '/emergency_stop', 10)
                 print(f"✓ 急停发布器已创建: /emergency_stop (队列大小: 10)")
                 
@@ -520,6 +533,77 @@ class RobotSimulator:
                 "message": error_msg
             }
     
+    def publish_cable_pose_with_yaw(self, x, y, z, yaw):
+        """
+        发布带yaw的缆绳位置到 /cable_pose_with_yaw 话题
+        
+        Args:
+            x, y, z: 缆绳位置（必需）
+            yaw: 绕y轴的旋转角度（弧度），表示线缆切向方向
+        
+        Returns:
+            dict: 包含成功状态和消息的字典
+        """
+        if not ROS2_AVAILABLE:
+            error_msg = f"ROS2未初始化 (ROS2_AVAILABLE={ROS2_AVAILABLE})"
+            print(f"[缆绳抓取xyz+yaw] {error_msg}")
+            return {
+                "success": False,
+                "message": error_msg + "。请确保ROS2环境已正确设置。"
+            }
+        
+        if not M5_MSGS_AVAILABLE:
+            error_msg = f"m5_msgs未安装 (M5_MSGS_AVAILABLE={M5_MSGS_AVAILABLE})"
+            print(f"[缆绳抓取xyz+yaw] {error_msg}")
+            return {
+                "success": False,
+                "message": error_msg + "。请先构建m5_msgs包：cd src && colcon build --packages-select m5_msgs"
+            }
+        
+        if self.cable_pose_with_yaw_publisher is None:
+            error_msg = "发布器未初始化"
+            print(f"[缆绳抓取xyz+yaw] {error_msg}")
+            return {
+                "success": False,
+                "message": error_msg + "。请检查ROS2节点是否正常启动。"
+            }
+        
+        try:
+            msg = CablePoseWithYaw()
+            msg.header.stamp = self.ros2_node.get_clock().now().to_msg()
+            msg.header.frame_id = 'world_link'
+            
+            msg.position.x = float(x)
+            msg.position.y = float(y)
+            msg.position.z = float(z)
+            msg.yaw = float(yaw)
+            
+            print(f"[缆绳抓取xyz+yaw] 准备发布消息: frame_id={msg.header.frame_id}, position=({x:.3f}, {y:.3f}, {z:.3f}), yaw={yaw:.3f} rad ({yaw*180.0/math.pi:.1f} deg)")
+            
+            if not rclpy.ok():
+                raise RuntimeError("ROS2上下文无效")
+            if self.cable_pose_with_yaw_publisher is None:
+                raise RuntimeError("缆绳位置（带yaw）发布器未初始化")
+            
+            self.cable_pose_with_yaw_publisher.publish(msg)
+            print(f"[缆绳抓取xyz+yaw] 消息已发布到 /cable_pose_with_yaw 话题 (frame_id={msg.header.frame_id})")
+            
+            log_msg = f'已发布缆绳位置（xyz+yaw）: ({x:.3f}, {y:.3f}, {z:.3f}), yaw={yaw*180.0/math.pi:.1f}°'
+            print(f"[缆绳抓取xyz+yaw] {log_msg}")
+            
+            return {
+                "success": True,
+                "message": log_msg
+            }
+        except Exception as e:
+            print(f"[缆绳抓取xyz+yaw] 发布失败: {e}")
+            import traceback
+            traceback.print_exc()
+            return {
+                "success": False,
+                "message": f"发布缆绳位置（xyz+yaw）时出错: {str(e)}"
+            }
+    
     def publish_emergency_stop(self):
         """
         发布急停消息到 /emergency_stop 话题
@@ -868,6 +952,31 @@ class RobotSimulator:
                             data.get('qz', 0.0), data.get('qw', 1.0)
                         )
                         print(f"[Web服务器] 缆绳位置发布结果: {result}")
+                        
+                        self.send_response(200)
+                        self.send_header('Content-type', 'application/json')
+                        self.send_header('Access-Control-Allow-Origin', '*')
+                        self.end_headers()
+                        self.wfile.write(json.dumps(result).encode())
+                    except Exception as e:
+                        self.send_response(400)
+                        self.send_header('Content-type', 'application/json')
+                        self.send_header('Access-Control-Allow-Origin', '*')
+                        self.end_headers()
+                        error_msg = {"error": str(e)}
+                        self.wfile.write(json.dumps(error_msg).encode())
+                elif self.path == '/api/publish_cable_pose_with_yaw':
+                    content_length = int(self.headers['Content-Length'])
+                    post_data = self.rfile.read(content_length)
+                    
+                    try:
+                        data = json.loads(post_data.decode('utf-8'))
+                        print(f"[Web服务器] 收到缆绳位置（xyz+yaw）发布请求: {data}")
+                        result = self.simulator.publish_cable_pose_with_yaw(
+                            data.get('x'), data.get('y'), data.get('z'),
+                            data.get('yaw')
+                        )
+                        print(f"[Web服务器] 缆绳位置（xyz+yaw）发布结果: {result}")
                         
                         self.send_response(200)
                         self.send_header('Content-type', 'application/json')
