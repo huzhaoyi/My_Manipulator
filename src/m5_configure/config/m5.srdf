@@ -30,6 +30,10 @@
         <joint name="JointGL" value="0"/>
         <joint name="JointGR" value="0"/>
     </group_state>
+    <group_state name="closed" group="gripper_group">
+        <joint name="JointGL" value="-1.01"/>
+        <joint name="JointGR" value="1.01"/>
+    </group_state>
     <group_state name="folede" group="arm_group">
         <joint name="Joint1" value="0"/>
         <joint name="Joint2" value="-1"/>

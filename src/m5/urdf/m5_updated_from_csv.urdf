@@ -92,7 +92,7 @@
     <parent link="base_link" />
     <child link="Link1" />
     <axis xyz="0 0 1" />
-    <limit lower="-3.14" upper="3.14" effort="100" velocity="1" />
+    <limit lower="-6.20" upper="6.20" effort="100" velocity="1" />
   </joint>
   <link name="Link2">
     <inertial>
@@ -121,7 +121,7 @@
     <parent link="Link1" />
     <child link="Link2" />
     <axis xyz="1 0 0" />
-    <limit lower="-1.57" upper="0" effort="100" velocity="1" />
+    <limit lower="-2.97" upper="0" effort="100" velocity="1" />
   </joint>
   <link name="Link3">
     <inertial>
@@ -150,7 +150,7 @@
     <parent link="Link2" />
     <child link="Link3" />
     <axis xyz="1 0 0" />
-    <limit lower="-1.57" upper="0" effort="100" velocity="1" />
+    <limit lower="-2.97" upper="0" effort="100" velocity="1" />
   </joint>
   <link name="Link4">
     <inertial>
@@ -179,7 +179,7 @@
     <parent link="Link3" />
     <child link="Link4" />
     <axis xyz="0 0 1" />
-    <limit lower="-3.14" upper="3.14" effort="100" velocity="1" />
+    <limit lower="-6.20" upper="6.20" effort="100" velocity="1" />
   </joint>
   <link name="LinkGG">
     <inertial>

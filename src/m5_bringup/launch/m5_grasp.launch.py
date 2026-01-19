@@ -1,6 +1,6 @@
 from launch import LaunchDescription
-from launch.actions import IncludeLaunchDescription, GroupAction
-from launch_ros.actions import Node, SetRemap
+from launch.actions import IncludeLaunchDescription
+from launch_ros.actions import Node
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from ament_index_python.packages import get_package_share_directory
 from moveit_configs_utils import MoveItConfigsBuilder
@@ -94,10 +94,13 @@ def generate_launch_description():
                 }
     
     # 构建 move_group 参数列表
+    # 注意：启用MTC的execute_task_solution capability，用于执行MTC规划的任务
     move_group_configuration = {
         "publish_robot_description_semantic": True,
         "allow_trajectory_execution": True,
-        "capabilities": "",
+        # 启用MTC的ExecuteTaskSolutionCapability插件
+        # 这个capability提供/execute_task_solution action server
+        "capabilities": "move_group/ExecuteTaskSolutionCapability",
         "disable_capabilities": "",
         "publish_planning_scene": True,
         "publish_geometry_updates": True,
@@ -132,34 +135,28 @@ def generate_launch_description():
     )
     
     # 包含 spawn_controllers launch
-    # 通过GroupAction和SetRemap，让joint_state_broadcaster发布到/joint_states_raw
-    # 这样m5_joint_state_publisher可以订阅/joint_states_raw，发布到/joint_states，避免循环
-    spawn_controllers_launch = GroupAction(
-        actions=[
-            SetRemap(src='/joint_states', dst='/joint_states_raw'),  # remap joint_state_broadcaster的输出
-            IncludeLaunchDescription(
-                PythonLaunchDescriptionSource(
-                    os.path.join(m5_bringup_dir, "launch", "spawn_controllers.launch.py")
-                )
-            )
-        ]
+    # 修复：移除 SetRemap，让 joint_state_broadcaster 直接发布到 /joint_states
+    # 这是 MoveIt/ros2_control 的标准用法，避免双发布源导致的时间戳不一致问题
+    spawn_controllers_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(m5_bringup_dir, "launch", "spawn_controllers.launch.py")
+        )
     )
     
-    # 创建 joint_state_publisher_node
-    # 订阅 joint_state_broadcaster 发布的 /joint_states_raw（包含所有6个关节）
-    # 重新排序后发布到 /joint_states，供 MoveIt 使用
-    # 这样避免了循环：joint_state_broadcaster -> /joint_states_raw -> m5_joint_state_publisher -> /joint_states -> MoveIt
-    joint_state_publisher_node = Node(
-        package="m5_control",
-        executable="joint_state_publisher_node",
-        name="m5_joint_state_publisher",
-        output="screen",
-        parameters=[
-            {"republish": True},
-            {"source_topic": "/joint_states_raw"},  # 订阅 joint_state_broadcaster 的原始输出（已remap到/joint_states_raw）
-            {"output_topic": "/joint_states"},  # 发布到 /joint_states，供 MoveIt 使用
-        ],
-    )
+    # 修复：移除 joint_state_publisher_node 重发布节点
+    # 原因：双 /joint_states 发布源会导致 MoveIt 的 current_state_monitor 时间戳检查失败
+    # 如果确实需要调整关节顺序，应该在 URDF/SRDF 或 ros2_control 配置中修复
+    # joint_state_publisher_node = Node(
+    #     package="m5_control",
+    #     executable="joint_state_publisher_node",
+    #     name="m5_joint_state_publisher",
+    #     output="screen",
+    #     parameters=[
+    #         {"republish": True},
+    #         {"source_topic": "/joint_states_raw"},
+    #         {"output_topic": "/joint_states"},
+    #     ],
+    # )
     
     # 创建 m5_grasp 节点，加载配置文件
     m5_grasp = Node(
@@ -173,14 +170,21 @@ def generate_launch_description():
             moveit_config.robot_description_kinematics,
             os.path.join(m5_grasp_dir, "config", "cable_grasp.yaml"),  # 加载缆绳抓取配置
         ],
+        arguments=[
+            '--ros-args',
+            '--log-level', 'm5_grasp:=debug',
+            '--log-level', 'moveit_task_constructor:=debug',
+            '--log-level', 'moveit_task_constructor.core:=debug',
+        ],
     )
     
     # 包含 RViz launch（用于可视化规划）
-    rviz_launch = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            os.path.join(m5_bringup_dir, "launch", "moveit_rviz.launch.py")
-        )
-    )
+    # 暂时禁用RViz以加快启动速度
+    # rviz_launch = IncludeLaunchDescription(
+    #     PythonLaunchDescriptionSource(
+    #         os.path.join(m5_bringup_dir, "launch", "moveit_rviz.launch.py")
+    #     )
+    # )
     
     return LaunchDescription([
         static_transform_launch,
@@ -188,7 +192,7 @@ def generate_launch_description():
         ros2_control_node,
         move_group_node,
         spawn_controllers_launch,
-        joint_state_publisher_node,
+        # joint_state_publisher_node,  # 已移除：避免双 /joint_states 发布源导致时间戳不一致
         m5_grasp,
-        rviz_launch,
+        # rviz_launch,  # 暂时禁用RViz
     ])

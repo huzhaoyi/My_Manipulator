@@ -670,12 +670,17 @@
                     <div class="tab active" onclick="switchTab('pose', this)">坐标下发</div>
                     <div class="tab" onclick="switchTab('joint', this)">关节角度控制</div>
                     <div class="tab" onclick="switchTab('cable', this)">缆绳抓取</div>
+                    <div class="tab" onclick="switchTab('place', this)">放置功能</div>
+                    <div class="tab" onclick="switchTab('pickplace', this)">Pick-and-Place</div>
                 </div>
                 
                 <!-- 坐标下发标签页 -->
                 <div id="tab-pose" class="tab-content active">
                     <div class="control-box">
                         <h3>坐标下发</h3>
+                        <p style="font-size: 11px; color: #888; margin-bottom: 10px;">
+                            4DOF工作空间: 水平距离0.08~0.55m, 高度0.15~0.80m
+                        </p>
                 <div class="input-group">
                     <label>位置 X (m):</label>
                     <input type="number" id="pose-x" step="0.001" value="0.25" placeholder="0.25">
@@ -687,7 +692,7 @@
                     </div>
                     <div class="input-group">
                         <label>位置 Z (m):</label>
-                        <input type="number" id="pose-z" step="0.001" value="0.35" placeholder="0.35">
+                        <input type="number" id="pose-z" step="0.001" value="0.30" placeholder="0.30">
                     </div>
                 </div>
                 
@@ -732,20 +737,20 @@
                     <div class="control-box">
                         <h3>关节角度控制</h3>
                 <div class="input-group">
-                    <label>Joint 1 (度):</label>
-                    <input type="number" id="joint1-input" step="0.1" value="0.0" placeholder="0.0" min="-180" max="180">
+                    <label>Joint 1 (度): [-355°, 355°]</label>
+                    <input type="number" id="joint1-input" step="0.1" value="0.0" placeholder="0.0" min="-355" max="355">
                 </div>
                 <div class="input-group">
-                    <label>Joint 2 (度):</label>
-                    <input type="number" id="joint2-input" step="0.1" value="0.0" placeholder="0.0" min="-90" max="0">
+                    <label>Joint 2 (度): [-170°, 0°]</label>
+                    <input type="number" id="joint2-input" step="0.1" value="0.0" placeholder="0.0" min="-170" max="0">
                 </div>
                 <div class="input-group">
-                    <label>Joint 3 (度):</label>
-                    <input type="number" id="joint3-input" step="0.1" value="0.0" placeholder="0.0" min="-90" max="0">
+                    <label>Joint 3 (度): [-170°, 0°]</label>
+                    <input type="number" id="joint3-input" step="0.1" value="0.0" placeholder="0.0" min="-170" max="0">
                 </div>
                 <div class="input-group">
-                    <label>Joint 4 (度):</label>
-                    <input type="number" id="joint4-input" step="0.1" value="0.0" placeholder="0.0" min="-180" max="180">
+                    <label>Joint 4 (度): [-355°, 355°]</label>
+                    <input type="number" id="joint4-input" step="0.1" value="0.0" placeholder="0.0" min="-355" max="355">
                 </div>
                 <div class="input-group">
                     <label>夹爪 Axis 5 (度):</label>
@@ -765,6 +770,9 @@
                 <div id="tab-cable" class="tab-content">
                     <div class="control-box">
                         <h3>缆绳抓取</h3>
+                        <p style="font-size: 11px; color: #888; margin-bottom: 10px;">
+                            4DOF工作空间: 水平距离0.08~0.55m, 高度0.15~0.80m
+                        </p>
                         <div class="input-group">
                             <label>缆绳位置 X (m):</label>
                             <input type="number" id="cable-x" step="0.001" value="0.25" placeholder="0.25">
@@ -776,7 +784,7 @@
                             </div>
                             <div class="input-group">
                                 <label>缆绳位置 Z (m):</label>
-                                <input type="number" id="cable-z" step="0.001" value="0.20" placeholder="0.20">
+                                <input type="number" id="cable-z" step="0.001" value="0.25" placeholder="0.25">
                             </div>
                         </div>
                         
@@ -818,11 +826,14 @@
                     <!-- 新增：带yaw的缆绳抓取输入 -->
                     <div class="control-box">
                         <h3>缆绳抓取（xyz + yaw）</h3>
+                        <p style="font-size: 11px; color: #888; margin-bottom: 10px;">
+                            4DOF工作空间: 水平距离0.08~0.55m, 高度0.15~0.80m
+                        </p>
                         <div class="input-container">
                             <div class="input-row">
                                 <div class="input-group">
                                     <label>X (m):</label>
-                                    <input type="number" id="cable-yaw-x" step="0.001" value="0.30" placeholder="0.30">
+                                    <input type="number" id="cable-yaw-x" step="0.001" value="0.25" placeholder="0.25">
                                 </div>
                                 <div class="input-group">
                                     <label>Y (m):</label>
@@ -830,14 +841,14 @@
                                 </div>
                                 <div class="input-group">
                                     <label>Z (m):</label>
-                                    <input type="number" id="cable-yaw-z" step="0.001" value="0.30" placeholder="0.30">
+                                    <input type="number" id="cable-yaw-z" step="0.001" value="0.25" placeholder="0.25">
                                 </div>
                             </div>
                             <div class="input-row">
                                 <div class="input-group">
                                     <label>Yaw (度):</label>
                                     <input type="number" id="cable-yaw-angle" step="0.1" value="0.0" placeholder="0.0">
-                                    <small>线缆切向方向（绕y轴旋转）</small>
+                                    <small>线缆切向方向（绕Z轴旋转）</small>
                                 </div>
                             </div>
                         </div>
@@ -850,6 +861,101 @@
                         <div class="message-box" id="cable-yaw-message"></div>
                     </div>
                 </div>
+                
+                <!-- 放置功能标签页 -->
+                <div id="tab-place" class="tab-content">
+                    <div class="control-box">
+                        <h3>放置位置（xyz + yaw）</h3>
+                        <div class="input-row">
+                            <div class="input-group">
+                                <label>X (m):</label>
+                                <input type="number" id="place-yaw-x" step="0.001" value="0.20" placeholder="0.20">
+                            </div>
+                            <div class="input-group">
+                                <label>Y (m):</label>
+                                <input type="number" id="place-yaw-y" step="0.001" value="0.00" placeholder="0.00">
+                            </div>
+                            <div class="input-group">
+                                <label>Z (m):</label>
+                                <input type="number" id="place-yaw-z" step="0.001" value="0.30" placeholder="0.30">
+                            </div>
+                        </div>
+                        <div class="input-row">
+                            <div class="input-group">
+                                <label>Yaw (度):</label>
+                                <input type="number" id="place-yaw-angle" step="0.1" value="0.0" placeholder="0.0">
+                                <small>放置方向（绕y轴旋转）</small>
+                            </div>
+                        </div>
+                        
+                        <div class="button-group">
+                            <button class="btn-primary" onclick="publishPlacePoseWithYaw()">开始放置</button>
+                            <button class="btn-secondary" onclick="resetPlacePoseWithYaw()">重置</button>
+                        </div>
+                        
+                        <div class="message-box" id="place-yaw-message"></div>
+                    </div>
+                </div>
+                
+                <!-- Pick-and-Place组合标签页 -->
+                <div id="tab-pickplace" class="tab-content">
+                    <div class="control-box">
+                        <h3>Pick-and-Place组合任务</h3>
+                        <p style="font-size: 11px; color: #888; margin-bottom: 10px;">
+                            4DOF工作空间: 水平距离0.08~0.55m, 高度0.15~0.80m
+                        </p>
+                        <h4 style="color: #a0b8c8; margin-top: 15px; margin-bottom: 10px; font-size: 14px;">抓取位置</h4>
+                        <div class="input-row">
+                            <div class="input-group">
+                                <label>抓取 X (m):</label>
+                                <input type="number" id="pickplace-grasp-x" step="0.001" value="0.25" placeholder="0.25">
+                            </div>
+                            <div class="input-group">
+                                <label>抓取 Y (m):</label>
+                                <input type="number" id="pickplace-grasp-y" step="0.001" value="0.00" placeholder="0.00">
+                            </div>
+                            <div class="input-group">
+                                <label>抓取 Z (m):</label>
+                                <input type="number" id="pickplace-grasp-z" step="0.001" value="0.25" placeholder="0.25">
+                            </div>
+                        </div>
+                        <div class="input-row">
+                            <div class="input-group">
+                                <label>抓取 Yaw (度):</label>
+                                <input type="number" id="pickplace-grasp-yaw" step="0.1" value="0.0" placeholder="0.0">
+                            </div>
+                        </div>
+                        
+                        <h4 style="color: #a0b8c8; margin-top: 15px; margin-bottom: 10px; font-size: 14px;">放置位置</h4>
+                        <div class="input-row">
+                            <div class="input-group">
+                                <label>放置 X (m):</label>
+                                <input type="number" id="pickplace-place-x" step="0.001" value="0.20" placeholder="0.20">
+                            </div>
+                            <div class="input-group">
+                                <label>放置 Y (m):</label>
+                                <input type="number" id="pickplace-place-y" step="0.001" value="0.15" placeholder="0.15">
+                            </div>
+                            <div class="input-group">
+                                <label>放置 Z (m):</label>
+                                <input type="number" id="pickplace-place-z" step="0.001" value="0.30" placeholder="0.30">
+                            </div>
+                        </div>
+                        <div class="input-row">
+                            <div class="input-group">
+                                <label>放置 Yaw (度):</label>
+                                <input type="number" id="pickplace-place-yaw" step="0.1" value="0.0" placeholder="0.0">
+                            </div>
+                        </div>
+                        
+                        <div class="button-group">
+                            <button class="btn-primary" onclick="publishPickAndPlace()">执行Pick-and-Place</button>
+                            <button class="btn-secondary" onclick="resetPickAndPlace()">重置</button>
+                        </div>
+                        
+                        <div class="message-box" id="pickplace-message"></div>
+                    </div>
+                </div>
             </div>
             
             <div class="info-box">
@@ -857,9 +963,11 @@
                 • 接收机械臂JSON反馈 (UDP端口7001)<br>
                 • 发送坐标到 /target_pose 话题<br>
                 • 发送缆绳位置到 /cable_pose 话题（抓取）<br>
+                • 发送放置位置到 /cable_place_pose 话题（放置）<br>
+                • Pick-and-Place组合任务<br>
                 • 直接控制5个自由度（关节角度）<br>
                 • 实时显示规划/执行状态<br>
-                • 实时显示抓取状态<br>
+                • 实时显示抓取/放置状态（MTC）<br>
                 • 自动加载STL模型
             </div>
         </div>
@@ -955,92 +1063,98 @@
             // 添加坐标轴（在场景中心，更明显）
             // 注意：坐标轴需要与机械臂模型使用相同的坐标系转换
             // ROS/URDF坐标系：X前，Y左，Z上
-            // Three.js坐标系：X右，Y上，Z前
-            // 转换后：ROS的X（前）→ Three.js的Z（前），ROS的Y（左）→ Three.js的-X（右的相反），ROS的Z（上）→ Three.js的Y（上）
+            // 根据实际渲染效果修正坐标轴方向：
+            // - 机械臂向前伸出（ROS +X）对应画面中的Three.js +X方向（向右偏前）
+            // - ROS +Z（上）对应Three.js +Y（上）
+            // - ROS +Y（左）对应Three.js -Z方向
+            // 
+            // 机械臂模型应用了旋转：rotation.x=-90°, rotation.z=-90°
+            // 坐标轴需要应用相同的旋转才能对齐
             const axesSize = 0.8;
             const axesGroup = new THREE.Group();
             
-            // ROS X轴（红色）- 前（在Three.js中对应Z轴正方向）
-            // 正方向：Z轴正方向
+            // 创建一个临时组来承载坐标轴，然后应用与机械臂相同的旋转
+            const axesInnerGroup = new THREE.Group();
+            
+            // ROS X轴（红色）- 前（在ROS坐标系中沿X正方向）
             const xAxisPosGeometry = new THREE.BufferGeometry().setFromPoints([
-                new THREE.Vector3(0, 0, 0),
-                new THREE.Vector3(0, 0, axesSize)
-            ]);
-            const xAxisPosMaterial = new THREE.LineBasicMaterial({ color: 0xff4444, linewidth: 3 });
-            const xAxisPos = new THREE.Line(xAxisPosGeometry, xAxisPosMaterial);
-            axesGroup.add(xAxisPos);
-            
-            // X轴负方向：Z轴负方向
-            const xAxisNegGeometry = new THREE.BufferGeometry().setFromPoints([
-                new THREE.Vector3(0, 0, 0),
-                new THREE.Vector3(0, 0, -axesSize)
-            ]);
-            const xAxisNegMaterial = new THREE.LineBasicMaterial({ color: 0x884444, linewidth: 2, opacity: 0.6, transparent: true });
-            const xAxisNeg = new THREE.Line(xAxisNegGeometry, xAxisNegMaterial);
-            axesGroup.add(xAxisNeg);
-            
-            // ROS Y轴（绿色）- 左（在Three.js中对应-X轴方向，即X轴负方向）
-            // 正方向：-X轴方向
-            const yAxisPosGeometry = new THREE.BufferGeometry().setFromPoints([
-                new THREE.Vector3(0, 0, 0),
-                new THREE.Vector3(-axesSize, 0, 0)
-            ]);
-            const yAxisPosMaterial = new THREE.LineBasicMaterial({ color: 0x44ff44, linewidth: 3 });
-            const yAxisPos = new THREE.Line(yAxisPosGeometry, yAxisPosMaterial);
-            axesGroup.add(yAxisPos);
-            
-            // Y轴负方向：X轴正方向
-            const yAxisNegGeometry = new THREE.BufferGeometry().setFromPoints([
                 new THREE.Vector3(0, 0, 0),
                 new THREE.Vector3(axesSize, 0, 0)
             ]);
+            const xAxisPosMaterial = new THREE.LineBasicMaterial({ color: 0xff4444, linewidth: 3 });
+            const xAxisPos = new THREE.Line(xAxisPosGeometry, xAxisPosMaterial);
+            axesInnerGroup.add(xAxisPos);
+            
+            // X轴负方向
+            const xAxisNegGeometry = new THREE.BufferGeometry().setFromPoints([
+                new THREE.Vector3(0, 0, 0),
+                new THREE.Vector3(-axesSize, 0, 0)
+            ]);
+            const xAxisNegMaterial = new THREE.LineBasicMaterial({ color: 0x884444, linewidth: 2, opacity: 0.6, transparent: true });
+            const xAxisNeg = new THREE.Line(xAxisNegGeometry, xAxisNegMaterial);
+            axesInnerGroup.add(xAxisNeg);
+            
+            // ROS Y轴（绿色）- 左：在Three.js中沿-Z方向（Y正方向对应Three.js -Z）
+            const yAxisPosGeometry = new THREE.BufferGeometry().setFromPoints([
+                new THREE.Vector3(0, 0, 0),
+                new THREE.Vector3(0, 0, -axesSize)
+            ]);
+            const yAxisPosMaterial = new THREE.LineBasicMaterial({ color: 0x44ff44, linewidth: 3 });
+            const yAxisPos = new THREE.Line(yAxisPosGeometry, yAxisPosMaterial);
+            axesInnerGroup.add(yAxisPos);
+            
+            // Y轴负方向
+            const yAxisNegGeometry = new THREE.BufferGeometry().setFromPoints([
+                new THREE.Vector3(0, 0, 0),
+                new THREE.Vector3(0, 0, axesSize)
+            ]);
             const yAxisNegMaterial = new THREE.LineBasicMaterial({ color: 0x448844, linewidth: 2, opacity: 0.6, transparent: true });
             const yAxisNeg = new THREE.Line(yAxisNegGeometry, yAxisNegMaterial);
-            axesGroup.add(yAxisNeg);
+            axesInnerGroup.add(yAxisNeg);
             
-            // ROS Z轴（蓝色）- 上（在Three.js中对应Y轴正方向）
-            // 正方向：Y轴正方向
+            // ROS Z轴（蓝色）- 上：在Three.js中沿Y方向（因为ROS Z对应Three.js Y）
             const zAxisPosGeometry = new THREE.BufferGeometry().setFromPoints([
                 new THREE.Vector3(0, 0, 0),
                 new THREE.Vector3(0, axesSize, 0)
             ]);
             const zAxisPosMaterial = new THREE.LineBasicMaterial({ color: 0x4444ff, linewidth: 3 });
             const zAxisPos = new THREE.Line(zAxisPosGeometry, zAxisPosMaterial);
-            axesGroup.add(zAxisPos);
+            axesInnerGroup.add(zAxisPos);
             
-            // Z轴负方向：Y轴负方向
+            // Z轴负方向
             const zAxisNegGeometry = new THREE.BufferGeometry().setFromPoints([
                 new THREE.Vector3(0, 0, 0),
                 new THREE.Vector3(0, -axesSize, 0)
             ]);
             const zAxisNegMaterial = new THREE.LineBasicMaterial({ color: 0x444488, linewidth: 2, opacity: 0.6, transparent: true });
             const zAxisNeg = new THREE.Line(zAxisNegGeometry, zAxisNegMaterial);
-            axesGroup.add(zAxisNeg);
+            axesInnerGroup.add(zAxisNeg);
             
-            // 添加坐标轴箭头（使用ArrowHelper，更可靠）
-            const arrowLength = 0.15;  // 箭头长度
-            const arrowRadius = 0.03;  // 箭头半径
+            // 添加坐标轴箭头
+            const arrowLength = 0.15;
+            const arrowRadius = 0.03;
             
-            // ROS X轴箭头（前方向，Three.js的Z轴正方向）
-            // 箭头是坐标线的延长线：起点在坐标线末端(0,0,axesSize)，指向Z轴正方向
-            const xArrowDir = new THREE.Vector3(0, 0, 1).normalize(); // Z轴正方向
-            const xArrowOrigin = new THREE.Vector3(0, 0, axesSize); // 起点在坐标线末端
+            // ROS X轴箭头（红色）
+            const xArrowDir = new THREE.Vector3(1, 0, 0).normalize();
+            const xArrowOrigin = new THREE.Vector3(axesSize, 0, 0);
             const xArrow = new THREE.ArrowHelper(xArrowDir, xArrowOrigin, arrowLength, 0xff4444, arrowLength * 0.6, arrowRadius);
-            axesGroup.add(xArrow);
+            axesInnerGroup.add(xArrow);
             
-            // ROS Y轴箭头（左方向，Three.js的-X轴方向）
-            // 箭头是坐标线的延长线：起点在坐标线末端(-axesSize,0,0)，指向-X轴方向
-            const yArrowDir = new THREE.Vector3(-1, 0, 0).normalize(); // -X轴方向
-            const yArrowOrigin = new THREE.Vector3(-axesSize, 0, 0); // 起点在坐标线末端
+            // ROS Y轴箭头（绿色）- 沿Three.js -Z方向
+            const yArrowDir = new THREE.Vector3(0, 0, -1).normalize();
+            const yArrowOrigin = new THREE.Vector3(0, 0, -axesSize);
             const yArrow = new THREE.ArrowHelper(yArrowDir, yArrowOrigin, arrowLength, 0x44ff44, arrowLength * 0.6, arrowRadius);
-            axesGroup.add(yArrow);
+            axesInnerGroup.add(yArrow);
             
-            // ROS Z轴箭头（上方向，Three.js的Y轴正方向）
-            // 箭头是坐标线的延长线：起点在坐标线末端(0,axesSize,0)，指向Y轴正方向
-            const zArrowDir = new THREE.Vector3(0, 1, 0).normalize(); // Y轴正方向
-            const zArrowOrigin = new THREE.Vector3(0, axesSize, 0); // 起点在坐标线末端
+            // ROS Z轴箭头（蓝色）- 沿Three.js Y方向
+            const zArrowDir = new THREE.Vector3(0, 1, 0).normalize();
+            const zArrowOrigin = new THREE.Vector3(0, axesSize, 0);
             const zArrow = new THREE.ArrowHelper(zArrowDir, zArrowOrigin, arrowLength, 0x4444ff, arrowLength * 0.6, arrowRadius);
-            axesGroup.add(zArrow);
+            axesInnerGroup.add(zArrow);
+            
+            // 不使用机械臂的旋转，直接将坐标轴添加到组中
+            // 下面会根据实际观测重新定义坐标轴方向
+            axesGroup.add(axesInnerGroup);
             
             // 添加坐标轴标签（X、Y、Z文字，对应ROS/URDF坐标系）
             function createAxisLabel(text, color) {
@@ -1072,35 +1186,39 @@
                 return sprite;
             }
             
-            // X轴正方向标签（+X，在箭头末端）
+            // 标签直接添加到axesInnerGroup中，使用ROS坐标系的位置
+            // 它们会随着axesInnerGroup一起旋转，自动对齐
+            const labelOffset = axesSize + arrowLength + 0.1;
+            
+            // +X标签：ROS X轴正方向
             const xPosLabel = createAxisLabel('+X', '#ff4444');
-            xPosLabel.position.set(0, 0, axesSize + arrowLength + 0.1);
-            axesGroup.add(xPosLabel);
+            xPosLabel.position.set(labelOffset, 0, 0);
+            axesInnerGroup.add(xPosLabel);
             
-            // X轴负方向标签（-X，在负方向坐标线末端）
+            // -X标签：ROS X轴负方向
             const xNegLabel = createAxisLabel('-X', '#884444');
-            xNegLabel.position.set(0, 0, -axesSize - 0.1);
-            axesGroup.add(xNegLabel);
+            xNegLabel.position.set(-axesSize - 0.1, 0, 0);
+            axesInnerGroup.add(xNegLabel);
             
-            // Y轴正方向标签（+Y，在箭头末端）
+            // +Y标签：ROS Y轴正方向（对应Three.js -Z方向）
             const yPosLabel = createAxisLabel('+Y', '#44ff44');
-            yPosLabel.position.set(-axesSize - arrowLength - 0.1, 0, 0);
-            axesGroup.add(yPosLabel);
+            yPosLabel.position.set(0, 0, -labelOffset);
+            axesInnerGroup.add(yPosLabel);
             
-            // Y轴负方向标签（-Y，在负方向坐标线末端）
+            // -Y标签：ROS Y轴负方向
             const yNegLabel = createAxisLabel('-Y', '#448844');
-            yNegLabel.position.set(axesSize + 0.1, 0, 0);
-            axesGroup.add(yNegLabel);
+            yNegLabel.position.set(0, 0, axesSize + 0.1);
+            axesInnerGroup.add(yNegLabel);
             
-            // Z轴正方向标签（+Z，在箭头末端）
+            // +Z标签：ROS Z轴正方向（对应Three.js Y方向，向上）
             const zPosLabel = createAxisLabel('+Z', '#4444ff');
-            zPosLabel.position.set(0, axesSize + arrowLength + 0.1, 0);
-            axesGroup.add(zPosLabel);
+            zPosLabel.position.set(0, labelOffset, 0);
+            axesInnerGroup.add(zPosLabel);
             
-            // Z轴负方向标签（-Z，在负方向坐标线末端）
+            // -Z标签：ROS Z轴负方向
             const zNegLabel = createAxisLabel('-Z', '#444488');
             zNegLabel.position.set(0, -axesSize - 0.1, 0);
-            axesGroup.add(zNegLabel);
+            axesInnerGroup.add(zNegLabel);
             
             axesGroup.position.set(0, 0, 0); // 确保在原点中心
             scene.add(axesGroup);
@@ -1567,7 +1685,7 @@
         function updateURDFRobot() {
             // 根据URDF的joint信息更新每个link的旋转
             // 参考m5_planning.cpp中的处理方式
-            // Joint2和Joint3的范围是-1.57到0（-90°到0°），0度时应该是垂直向上
+            // Joint2和Joint3的范围是-2.97到0（-170°到0°），0度时应该是垂直向上
             // 注意：URDF中的axis定义的是旋转轴方向，正角度表示绕该轴正方向旋转
             
             function setRotationByAxis(group, axis, angleRad, initialRpy, linkName) {
@@ -1619,7 +1737,7 @@
             }
             
             // Joint2: Link1 -> Link2, axis (1, 0, 0), 绕X轴旋转
-            // 范围：-90°到0°，0°时垂直向上
+            // 范围：-170°到0°，0°时垂直向上
             // 注意：如果STL模型初始方向不对，可能需要调整
             const joint2 = jointMap['Link2'];
             if (joint2 && linkGroups['Link2']) {
@@ -1632,7 +1750,7 @@
             }
             
             // Joint3: Link2 -> Link3, axis (1, 0, 0), 绕X轴旋转
-            // 范围：-90°到0°，0°时垂直向上
+            // 范围：-170°到0°，0°时垂直向上
             const joint3 = jointMap['Link3'];
             if (joint3 && linkGroups['Link3']) {
                 const initialRpy = joint3.initialRpy || (joint3.origin ? joint3.origin.rpy : [0, 0, 0]);
@@ -1803,29 +1921,44 @@
             const graspStateMap = {
                 'idle': '空闲',
                 '已接收': '已接收',
+                '规划中:抓取': 'MTC规划中',
+                '规划成功:执行中': 'MTC执行中',
                 '规划:预抓取': '规划预抓取',
                 '执行:预抓取': '执行预抓取',
                 '执行:下压': '执行下压',
+                '夹爪:打开中': '夹爪打开中',
                 '夹爪:闭合中': '夹爪闭合中',
                 '夹爪:保持中': '夹爪保持中',
+                '夹爪:释放中': '夹爪释放中',
                 '执行:抬起': '执行抬起',
                 '场景:附着': '附着物体',
                 '完成': '完成',
                 '__unknown__': '未知',
                 '__timeout__': '超时',
+                // MTC相关状态
+                '规划中:放置': 'MTC规划中（放置）',
+                '已接收放置任务': '已接收放置任务',
                 // 错误状态
                 '错误:未就绪': '错误:未就绪',
                 '错误:异常': '错误:异常',
+                '错误:规划异常': '错误:规划异常',
+                '错误:规划失败': '错误:规划失败',
+                '错误:执行异常': '错误:执行异常',
+                '错误:执行失败': '错误:执行失败',
                 '错误:打开夹爪失败': '错误:打开夹爪失败',
                 '错误:预抓取位姿转换失败': '错误:预抓取位姿转换失败',
                 '错误:抓取位姿转换失败': '错误:抓取位姿转换失败',
                 '错误:缆绳位姿转换失败': '错误:缆绳位姿转换失败',
+                '错误:放置位姿转换失败': '错误:放置位姿转换失败',
                 '错误:预抓取失败': '错误:预抓取失败',
                 '错误:添加物体失败': '错误:添加物体失败',
                 '错误:下压失败': '错误:下压失败',
                 '错误:闭合夹爪失败': '错误:闭合夹爪失败',
+                '错误:抓取失败': '错误:抓取失败',
+                '错误:放置失败': '错误:放置失败',
                 // 急停状态
                 '急停:已停止': '急停:已停止',
+                '急停:已重置': '急停:已重置',
                 '急停:任务已取消': '急停:任务已取消',
                 '急停:任务已停止': '急停:任务已停止',
                 // 兼容旧状态（如果还有）
@@ -1868,9 +2001,9 @@
                     graspStateColor = '#e57373';
                 } else if (graspState === '已接收' || graspState === 'received') {
                     graspStateColor = '#64b5f6';
-                } else if (graspState.startsWith('规划:') || graspState.startsWith('planning:')) {
+                } else if (graspState.startsWith('规划中:') || graspState.startsWith('规划:') || graspState.startsWith('planning:')) {
                     graspStateColor = '#ffb74d';
-                } else if (graspState.startsWith('执行:') || graspState.startsWith('executing:')) {
+                } else if (graspState.startsWith('规划成功:') || graspState.startsWith('执行:') || graspState.startsWith('executing:')) {
                     graspStateColor = '#81c784';
                 } else if (graspState.startsWith('夹爪:') || graspState.startsWith('gripper:')) {
                     graspStateColor = '#ba68c8';
@@ -1878,6 +2011,8 @@
                     graspStateColor = '#4caf50';
                 } else if (graspState === '完成' || graspState === 'completed') {
                     graspStateColor = '#4caf50';
+                } else if (graspState.startsWith('已接收放置任务')) {
+                    graspStateColor = '#64b5f6';
                 }
                 
                 // 如果有详情，显示详情
@@ -2027,7 +2162,7 @@
         function resetPose() {
             document.getElementById('pose-x').value = '0.25';
             document.getElementById('pose-y').value = '0.0';
-            document.getElementById('pose-z').value = '0.35';
+            document.getElementById('pose-z').value = '0.30';
             document.getElementById('pose-qx').value = '0.0';
             document.getElementById('pose-qy').value = '0.0';
             document.getElementById('pose-qz').value = '0.0';
@@ -2102,7 +2237,7 @@
         function resetCablePose() {
             document.getElementById('cable-x').value = '0.25';
             document.getElementById('cable-y').value = '0.0';
-            document.getElementById('cable-z').value = '0.20';
+            document.getElementById('cable-z').value = '0.25';
             document.getElementById('cable-qx').value = '0.0';
             document.getElementById('cable-qy').value = '0.0';
             document.getElementById('cable-qz').value = '0.0';
@@ -2160,9 +2295,9 @@
         }
         
         function resetCablePoseWithYaw() {
-            document.getElementById('cable-yaw-x').value = '0.30';
+            document.getElementById('cable-yaw-x').value = '0.25';
             document.getElementById('cable-yaw-y').value = '0.00';
-            document.getElementById('cable-yaw-z').value = '0.30';
+            document.getElementById('cable-yaw-z').value = '0.25';
             document.getElementById('cable-yaw-angle').value = '0.0';
             showCableYawMessage('', 'success');
         }
@@ -2183,6 +2318,173 @@
                 setTimeout(() => {
                     messageBox.style.display = 'none';
                 }, 3000);
+            }
+        }
+        
+        // ========== 放置功能（Place）相关函数 ==========
+        function publishPlacePoseWithYaw() {
+            const x = parseFloat(document.getElementById('place-yaw-x').value);
+            const y = parseFloat(document.getElementById('place-yaw-y').value);
+            const z = parseFloat(document.getElementById('place-yaw-z').value);
+            const yawDeg = parseFloat(document.getElementById('place-yaw-angle').value);
+            
+            if (isNaN(x) || isNaN(y) || isNaN(z) || isNaN(yawDeg)) {
+                showPlaceYawMessage('请输入有效的坐标值和yaw角度', 'error');
+                return;
+            }
+            
+            // 将yaw从度转换为弧度
+            const yawRad = yawDeg * Math.PI / 180.0;
+            
+            const data = {
+                x: x,
+                y: y,
+                z: z,
+                yaw: yawRad
+            };
+            
+            console.log('[网页调试] 发送放置位置数据:', data);
+            
+            fetch('/api/publish_place_pose_with_yaw', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(data)
+            })
+            .then(response => response.json())
+            .then(result => {
+                console.log('[网页调试] 放置响应:', result);
+                if (result.success) {
+                    showPlaceYawMessage(result.message, 'success');
+                } else {
+                    showPlaceYawMessage(result.message || '发布失败', 'error');
+                }
+            })
+            .catch(error => {
+                console.error('[网页调试] 放置请求错误:', error);
+                showPlaceYawMessage('网络错误: ' + error.message, 'error');
+            });
+        }
+        
+        function resetPlacePoseWithYaw() {
+            document.getElementById('place-yaw-x').value = '0.20';
+            document.getElementById('place-yaw-y').value = '0.00';
+            document.getElementById('place-yaw-z').value = '0.30';
+            document.getElementById('place-yaw-angle').value = '0.0';
+            showPlaceYawMessage('', 'success');
+        }
+        
+        function showPlaceYawMessage(message, type) {
+            const messageBox = document.getElementById('place-yaw-message');
+            if (!message) {
+                messageBox.style.display = 'none';
+                return;
+            }
+            
+            messageBox.textContent = message;
+            messageBox.className = 'message-box message-' + type;
+            messageBox.style.display = 'block';
+            
+            if (type === 'success') {
+                setTimeout(() => {
+                    messageBox.style.display = 'none';
+                }, 3000);
+            }
+        }
+        
+        // ========== Pick-and-Place组合任务相关函数 ==========
+        function publishPickAndPlace() {
+            // 获取抓取位置
+            const graspX = parseFloat(document.getElementById('pickplace-grasp-x').value);
+            const graspY = parseFloat(document.getElementById('pickplace-grasp-y').value);
+            const graspZ = parseFloat(document.getElementById('pickplace-grasp-z').value);
+            const graspYawDeg = parseFloat(document.getElementById('pickplace-grasp-yaw').value);
+            
+            // 获取放置位置
+            const placeX = parseFloat(document.getElementById('pickplace-place-x').value);
+            const placeY = parseFloat(document.getElementById('pickplace-place-y').value);
+            const placeZ = parseFloat(document.getElementById('pickplace-place-z').value);
+            const placeYawDeg = parseFloat(document.getElementById('pickplace-place-yaw').value);
+            
+            // 验证输入
+            if (isNaN(graspX) || isNaN(graspY) || isNaN(graspZ) || isNaN(graspYawDeg)) {
+                showPickPlaceMessage('请输入有效的抓取坐标值和yaw角度', 'error');
+                return;
+            }
+            if (isNaN(placeX) || isNaN(placeY) || isNaN(placeZ) || isNaN(placeYawDeg)) {
+                showPickPlaceMessage('请输入有效的放置坐标值和yaw角度', 'error');
+                return;
+            }
+            
+            // 将yaw从度转换为弧度
+            const graspYawRad = graspYawDeg * Math.PI / 180.0;
+            const placeYawRad = placeYawDeg * Math.PI / 180.0;
+            
+            const data = {
+                grasp_x: graspX,
+                grasp_y: graspY,
+                grasp_z: graspZ,
+                grasp_yaw: graspYawRad,
+                place_x: placeX,
+                place_y: placeY,
+                place_z: placeZ,
+                place_yaw: placeYawRad
+            };
+            
+            console.log('[网页调试] 发送Pick-and-Place数据:', data);
+            
+            fetch('/api/publish_pick_and_place', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(data)
+            })
+            .then(response => response.json())
+            .then(result => {
+                console.log('[网页调试] Pick-and-Place响应:', result);
+                if (result.success) {
+                    showPickPlaceMessage(result.message, 'success');
+                } else {
+                    showPickPlaceMessage(result.message || '发布失败', 'error');
+                }
+            })
+            .catch(error => {
+                console.error('[网页调试] Pick-and-Place请求错误:', error);
+                showPickPlaceMessage('网络错误: ' + error.message, 'error');
+            });
+        }
+        
+        function resetPickAndPlace() {
+            // 重置抓取位置
+            document.getElementById('pickplace-grasp-x').value = '0.25';
+            document.getElementById('pickplace-grasp-y').value = '0.00';
+            document.getElementById('pickplace-grasp-z').value = '0.25';
+            document.getElementById('pickplace-grasp-yaw').value = '0.0';
+            // 重置放置位置
+            document.getElementById('pickplace-place-x').value = '0.20';
+            document.getElementById('pickplace-place-y').value = '0.15';
+            document.getElementById('pickplace-place-z').value = '0.30';
+            document.getElementById('pickplace-place-yaw').value = '0.0';
+            showPickPlaceMessage('', 'success');
+        }
+        
+        function showPickPlaceMessage(message, type) {
+            const messageBox = document.getElementById('pickplace-message');
+            if (!message) {
+                messageBox.style.display = 'none';
+                return;
+            }
+            
+            messageBox.textContent = message;
+            messageBox.className = 'message-box message-' + type;
+            messageBox.style.display = 'block';
+            
+            if (type === 'success') {
+                setTimeout(() => {
+                    messageBox.style.display = 'none';
+                }, 5000);  // Pick-and-Place消息显示5秒
             }
         }
         

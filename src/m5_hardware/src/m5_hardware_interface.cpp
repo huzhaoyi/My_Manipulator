@@ -536,13 +536,14 @@ bool M5HardwareInterface::send_command(const std::vector<double> & joint_positio
       
       // 验证映射：当 joint_gl_pos = -1.01 时，应该得到 axis5 = -1100.0°
       // 当 joint_gl_pos = 1.01 时，应该得到 axis5 = 0.0°
-      // 添加调试日志（仅在关键值附近打印）
-      if (std::abs(joint_gl_pos + 1.01) < 0.01 || std::abs(joint_gl_pos - 1.01) < 0.01)
+      // 添加调试日志（打印夹爪变化）
+      static double last_axis5_sent = 0.0;
+      if (std::abs(axis5_value - last_axis5_sent) > 10.0)  // 变化超过10度才打印
       {
-        RCLCPP_DEBUG(rclcpp::get_logger("M5HardwareInterface"),
-          "[夹爪映射] JointGL=%.4f rad (%.2f°) -> axis5=%.2f° (期望: %.2f°)",
-          joint_gl_pos, joint_gl_pos * 180.0 / M_PI, axis5_value,
-          (joint_gl_pos < 0 ? -1100.0 : 0.0));
+        RCLCPP_INFO(rclcpp::get_logger("M5HardwareInterface"),
+          "[夹爪发送] JointGL=%.3f rad (%.1f°) -> axis5=%.1f° (上次: %.1f°)",
+          joint_gl_pos, joint_gl_pos * 180.0 / M_PI, axis5_value, last_axis5_sent);
+        last_axis5_sent = axis5_value;
       }
       
       axis_values[4] = axis5_value;  // axis5是第5个元素（索引4）
@@ -829,7 +830,7 @@ void M5HardwareInterface::communication_thread()
   auto last_reconnect_attempt = std::chrono::steady_clock::now();
   auto last_command_time = std::chrono::steady_clock::now();
   const auto reconnect_interval = std::chrono::seconds(2);  // 2秒后尝试重连
-  const auto command_interval = std::chrono::milliseconds(100);  // 10Hz，每100ms发送一次
+  const auto command_interval = std::chrono::milliseconds(20);  // 50Hz，每20ms发送一次（提高响应速度）
 
   while (!stop_thread_)
   {
@@ -877,15 +878,29 @@ void M5HardwareInterface::communication_thread()
       {
         std::lock_guard<std::mutex> lock(data_mutex_);
         
-        // 日志输出已禁用以减少资源占用
-        // static int send_count = 0;
-        // send_count++;
-        // RCLCPP_INFO_COLOR(rclcpp::get_logger("M5HardwareInterface"), COLOR_CYAN,
-        //   "[命令发送 #" << send_count << "] J1=" << std::fixed << std::setprecision(2) 
-        //   << (hw_commands_.size() > 0 ? hw_commands_[0] * 180.0 / M_PI : 0)
-        //   << "° J2=" << (hw_commands_.size() > 1 ? hw_commands_[1] * 180.0 / M_PI : 0)
-        //   << "° J3=" << (hw_commands_.size() > 2 ? hw_commands_[2] * 180.0 / M_PI : 0)
-        //   << "° J4=" << (hw_commands_.size() > 3 ? hw_commands_[3] * 180.0 / M_PI : 0) << "°");
+        // 打印发送的命令（包括夹爪）用于调试
+        static int send_count = 0;
+        send_count++;
+        if (send_count <= 20 || send_count % 50 == 0)  // 前20次和每50次打印
+        {
+          // 找到JointGL的索引
+          double joint_gl_val = 0.0;
+          for (size_t i = 0; i < info_.joints.size(); ++i)
+          {
+            if (info_.joints[i].name == "JointGL" && i < hw_commands_.size())
+            {
+              joint_gl_val = hw_commands_[i];
+              break;
+            }
+          }
+          RCLCPP_INFO_COLOR(rclcpp::get_logger("M5HardwareInterface"), COLOR_CYAN,
+            "[命令发送 #" << send_count << "] J1=" << std::fixed << std::setprecision(1) 
+            << (hw_commands_.size() > 0 ? hw_commands_[0] * 180.0 / M_PI : 0)
+            << "° J2=" << (hw_commands_.size() > 1 ? hw_commands_[1] * 180.0 / M_PI : 0)
+            << "° J3=" << (hw_commands_.size() > 2 ? hw_commands_[2] * 180.0 / M_PI : 0)
+            << "° J4=" << (hw_commands_.size() > 3 ? hw_commands_[3] * 180.0 / M_PI : 0) 
+            << "° GL=" << joint_gl_val * 180.0 / M_PI << "°");
+        }
         
         if (send_command(hw_commands_))
         {

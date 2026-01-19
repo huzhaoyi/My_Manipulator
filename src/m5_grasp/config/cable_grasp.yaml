@@ -3,7 +3,7 @@
     cable:
       name: "cable_1"
       diameter: 0.050          # m  缆绳直径（47mm）
-      length: 1.0             # m  用于碰撞近似的长度（可以只取局部一段）
+      length: 0.020             # m  用于碰撞近似的长度（可以只取局部一段）
       frame_id: "world"        # 缆绳pose所在坐标系（如果你的视觉输出不同就填视觉frame）
       shape: "cylinder"        # cylinder 或 capsule（如果你实现）
       center_offset_z: 0.0     # m  cable_pose到圆柱中心的Z偏移（默认0.0表示cable_pose是中心，如需从底部推中心可设为length*0.5）
@@ -39,9 +39,33 @@
       yaw_search_step: 0.0175  # rad  yaw搜索步长（默认1°，约0.0175 rad）
       
       # Joint4-yaw映射优化参数
-      joint4_yaw_search_enabled: true  # 是否启用Joint4-yaw迭代搜索（当Joint4与期望yaw差异>30度时）
+      joint4_yaw_search_enabled: false  # 禁用Joint4-yaw搜索（Joint4 ≠ 末端yaw，不应进行对比）
       joint4_yaw_search_range: 3.1416  # rad  Joint4-yaw搜索范围（默认±180度，约3.1416 rad）
       joint4_yaw_search_step: 0.0873  # rad  Joint4-yaw搜索步长（默认5度，约0.0873 rad）
+      
+      # yaw候选搜索参数（用于仅xyz输入）
+      yaw_candidate_search_enabled: true  # 是否启用yaw候选搜索
+      yaw_candidate_center: 0.0  # rad  候选搜索中心yaw（仅xyz输入时使用）
+      yaw_candidate_range: 3.1416  # rad  搜索范围（±180°）
+      yaw_candidate_step: 0.2618  # rad  搜索步长（15°，约0.2618 rad）
+      
+      # 地面安全参数
+      ground_height: 0.0  # m  地面高度（如果为0，则根据基座位置自动计算）
+      ground_offset_below_base: -0.05  # m  地面在基座下方的偏移（-5cm，基座下方5cm）
+      camera_error_margin: 0.005  # m  相机标定误差余量（5mm）
+      min_ground_clearance: 0.010  # m  最小离地安全距离（10mm）
+      add_ground_plane: false  # 是否添加地面碰撞对象
+      
+      # 下压距离限制
+      max_cartesian_descend_distance: 0.15  # m  单次笛卡尔下压最大距离（15cm）
+      
+      # 全零状态预运动参数（避免从奇异点附近规划）
+      auto_move_to_ready: true  # 是否自动移动到预备位置
+      ready_joint1: 0.0         # rad  预备位置Joint1
+      ready_joint2: -0.5        # rad  预备位置Joint2（约-30度）
+      ready_joint3: -0.5        # rad  预备位置Joint3（约-30度）
+      ready_joint4: 0.0         # rad  预备位置Joint4
+      near_zero_threshold: 0.1  # rad  全零状态判断阈值
       
       # 状态回滚参数
       enable_recovery: true  # 是否启用执行失败后的状态回滚
@@ -67,6 +91,20 @@
       control_frequency: 20.0          # Hz  机械臂控制频率（发送命令频率）
       read_frequency: 20.0             # Hz  机械臂状态读取频率
       main_loop_frequency: 20.0        # Hz  main循环频率
+
+    place:
+      approach_offset_z: 0.10  # m  预放置点：目标上方10cm
+      descend_distance: 0.08   # m  下压距离（用于放置）
+      retreat_distance: 0.06   # m  后退距离（放置后向上移动）
+      max_pos_error: 0.01      # m  放置允许位置误差
+      
+      # MoveIt规划参数（继承grasp的参数，可单独配置）
+      planning_time: 15.0      # s  默认规划时间
+      num_planning_attempts: 30 # 规划尝试次数
+      max_velocity_scaling: 0.9  # 最大速度缩放因子
+      max_acceleration_scaling: 0.9  # 最大加速度缩放因子
+      goal_position_tolerance: 0.01  # m  目标位置容差
+      goal_orientation_tolerance: 0.5  # rad  目标姿态容差
 
     trajectory:
       # 笛卡尔空间直线插补配置

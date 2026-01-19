@@ -1,10 +1,36 @@
 arm_group:
+  # ============================================================
+  # 4DOF机械臂 (Yaw + 平面2R + Wrist) IK配置
+  # ============================================================
+  # 机械臂结构（厂家最新限制 2026-01-19）：
+  #   Joint1: Yaw [-6.20, 6.20] rad = [-355°, 355°] - 绕世界Z轴旋转
+  #   Joint2: 肩  [-2.97, 0]    rad = [-170°, 0°]   - 绕X轴，只能向下弯
+  #   Joint3: 肘  [-2.97, 0]    rad = [-170°, 0°]   - 绕X轴，只能向下弯
+  #   Joint4: Wrist [-6.20, 6.20] rad = [-355°, 355°] - 绕Z轴旋转
+  #
+  # 运动学特点：
+  #   - Joint2/3在同一平面内工作，限位单向，无法"从另一侧兜过去"
+  #   - 4DOF只能控制末端位置(x,y,z)+1个姿态自由度
+  #   - 必须使用position_only_ik，否则大多数目标姿态无解
+  # ============================================================
+  
   kinematics_solver: trac_ik_kinematics_plugin/TRAC_IKKinematicsPlugin
   kinematics_solver_search_resolution: 0.005
-  kinematics_solver_timeout: 10.0  # 增加到10000ms，给TRAC-IK更多时间找到解（从5.0增加到10.0）
-  position_only_ik: true  # 4DOF机械臂只需要位置IK，不需要姿态
-  epsilon: 0.2  # IK求解精度，进一步放宽以提高成功率（从0.1增加到0.2，约20cm容差，用于测试）
-  solve_type: Distance  # TRAC-IK求解类型：Distance（距离优化，可能找到更好的解）或Speed（快速，返回第一个解）
+  kinematics_solver_timeout: 10.0
+  
+  # 【关键】4DOF机械臂只能求解位置，不能同时满足完整的6DOF姿态约束
+  position_only_ik: true
+  
+  # IK求解精度（米）- 对于4DOF可以适当放宽
+  epsilon: 0.01
+  
+  # TRAC-IK求解策略：
+  #   Speed    - 返回第一个找到的解（快速）
+  #   Distance - 优化关节距离（可能找到更自然的姿态）
+  #   Manip1   - 优化操作性（避免奇异点）
+  #   Manip2   - 优化操作性（另一种度量）
+  # 对于受限的4DOF，推荐Distance，有助于找到更平滑的解
+  solve_type: Distance
 
 # gripper_group does not need a kinematics solver as it's not a kinematic chain
 # It only contains two independent joints (JointGL and JointGR)

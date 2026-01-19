@@ -9,6 +9,12 @@ request_adapters: "default_planner_request_adapters/AddTimeOptimalParameterizati
 
 start_state_max_bounds_error: 0.1
 
+# Workspace bounds (提高OMPL采样效率，避免"planning volume was not specified"警告)
+# 这些值应该覆盖你的机械臂工作空间
+default_workspace_bounds: 2.0  # 默认工作空间边界（米），如果未指定则使用此值
+workspace_min: [-1.0, -1.0, -0.5]  # 最小工作空间边界 [x, y, z] (米)
+workspace_max: [1.0, 1.0, 1.5]     # 最大工作空间边界 [x, y, z] (米)
+
 planner_configs:
   SBL:
     type: geometric::SBL
@@ -41,8 +47,8 @@ planner_configs:
     goal_bias: 0.05  # When close to goal select goal, with this probability? default: 0.05
   RRTConnect:
     type: geometric::RRTConnect
-    range: 0.15  # Max motion added to tree. 增加到0.15以提高规划效率和目标状态采样成功率
-    goal_bias: 0.15  # 增加向目标采样的概率（从0.1增加到0.15），提高目标状态采样成功率
+    range: 0.20  # Max motion added to tree. 增加到0.20以提高规划效率和目标状态采样成功率
+    goal_bias: 0.30  # 增加向目标采样的概率（从0.25增加到0.30），提高目标状态采样成功率
   RRTstar:
     type: geometric::RRTstar
     range: 0.0  # Max motion added to tree. ==> maxDistance_ default: 0.0, if 0.0, set on setup()
@@ -133,6 +139,23 @@ planner_configs:
     dense_delta_fraction: 0.001  # delta fraction for interface detection. default: 0.001
     max_failures: 5000  # maximum consecutive failure limit. default: 5000
 arm_group:
+  # 4DOF机械臂配置说明（厂家最新限制 2026-01-19）：
+  # - Joint1: Yaw (绕Z轴) - 决定工作平面方向，限位[-6.20, 6.20] rad = [-355°, 355°]
+  # - Joint2/3: 平面2R (绕X轴) - 在固定半平面内伸/折，限位[-2.97, 0] rad = [-170°, 0°]
+  # - Joint4: Wrist (绕Z轴) - 末端旋转，限位[-6.20, 6.20] rad = [-355°, 355°]
+  # 由于Joint2/3的单向限位，机械臂无法"从另一侧兜过去"
+  
+  # 投影评估器：帮助OMPL更好地理解4DOF的构型空间
+  # 使用所有4个关节作为投影坐标
+  projection_evaluator: joints(Joint1,Joint2,Joint3,Joint4)
+  
+  # 减小有效路径段长度，确保在受限关节空间中检查更多点
+  # 对于有严格关节限位的机械臂，这有助于避免穿越不可达区域
+  longest_valid_segment_fraction: 0.01
+  
+  # 默认规划器 - RRTConnect对这种结构效果较好
+  default_planner_config: RRTConnect
+  
   planner_configs:
     - SBL
     - EST

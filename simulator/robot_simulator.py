@@ -111,8 +111,14 @@ class RobotSimulator:
                 if M5_MSGS_AVAILABLE:
                     self.cable_pose_with_yaw_publisher = self.ros2_node.create_publisher(CablePoseWithYaw, '/cable_pose_with_yaw', 10)
                     print(f"✓ 发布器已创建: /cable_pose_with_yaw")
+                    self.place_pose_publisher = self.ros2_node.create_publisher(PoseStamped, '/cable_place_pose', 10)
+                    print(f"✓ 发布器已创建: /cable_place_pose")
+                    self.place_pose_with_yaw_publisher = self.ros2_node.create_publisher(CablePoseWithYaw, '/cable_place_pose_with_yaw', 10)
+                    print(f"✓ 发布器已创建: /cable_place_pose_with_yaw")
                 else:
                     print("⚠ 发布器未创建: /cable_pose_with_yaw (m5_msgs不可用)")
+                    self.place_pose_publisher = None
+                    self.place_pose_with_yaw_publisher = None
                 self.emergency_stop_publisher = self.ros2_node.create_publisher(String, '/emergency_stop', 10)
                 print(f"✓ 急停发布器已创建: /emergency_stop (队列大小: 10)")
                 
@@ -158,6 +164,8 @@ class RobotSimulator:
                 
                 print("✓ ROS2节点已初始化")
                 print("  - 发布话题: /target_pose, /cable_pose")
+                if M5_MSGS_AVAILABLE:
+                    print("  - 发布话题: /cable_pose_with_yaw, /cable_place_pose, /cable_place_pose_with_yaw")
                 print("  - 发布话题: /arm_group_controller/joint_trajectory")
                 print("  - 发布话题: /gripper_group_controller/joint_trajectory")
                 print("  - 订阅话题: /joint_states, /robot_state, /grasp_state")
@@ -165,6 +173,10 @@ class RobotSimulator:
                 print(f"警告: ROS2初始化失败: {e}")
                 self.ros2_node = None
                 self.pose_publisher = None
+                self.cable_pose_publisher = None
+                self.cable_pose_with_yaw_publisher = None
+                self.place_pose_publisher = None
+                self.place_pose_with_yaw_publisher = None
                 self.joint_state_subscriber = None
                 self.arm_trajectory_publisher = None
                 self.gripper_trajectory_publisher = None
@@ -604,6 +616,166 @@ class RobotSimulator:
                 "message": f"发布缆绳位置（xyz+yaw）时出错: {str(e)}"
             }
     
+    def publish_place_pose(self, x, y, z, qx=0.0, qy=0.0, qz=0.0, qw=1.0):
+        """
+        发布放置位置到 /cable_place_pose 话题
+        
+        Args:
+            x, y, z: 放置位置（必需）
+            qx, qy, qz, qw: 放置orientation四元数（可选，默认为单位四元数）
+        
+        Returns:
+            dict: 包含成功状态和消息的字典
+        """
+        if not ROS2_AVAILABLE or self.place_pose_publisher is None:
+            return {
+                "success": False,
+                "message": "ROS2未初始化，无法发布放置位置"
+            }
+        
+        try:
+            msg = PoseStamped()
+            msg.header.stamp = self.ros2_node.get_clock().now().to_msg()
+            msg.header.frame_id = 'world_link'
+            
+            msg.pose.position.x = float(x)
+            msg.pose.position.y = float(y)
+            msg.pose.position.z = float(z)
+            
+            msg.pose.orientation.x = float(qx)
+            msg.pose.orientation.y = float(qy)
+            msg.pose.orientation.z = float(qz)
+            msg.pose.orientation.w = float(qw)
+            
+            self.place_pose_publisher.publish(msg)
+            log_msg = f'已发布放置位置: ({x:.3f}, {y:.3f}, {z:.3f})'
+            print(f"[放置] {log_msg}")
+            
+            return {
+                "success": True,
+                "message": log_msg
+            }
+        except Exception as e:
+            error_msg = f"发布放置位置失败: {e}"
+            print(f"[放置错误] {error_msg}")
+            return {
+                "success": False,
+                "message": error_msg
+            }
+    
+    def publish_place_pose_with_yaw(self, x, y, z, yaw):
+        """
+        发布带yaw的放置位置到 /cable_place_pose_with_yaw 话题
+        
+        Args:
+            x, y, z: 放置位置（必需）
+            yaw: 绕y轴的旋转角度（弧度），表示放置方向
+        
+        Returns:
+            dict: 包含成功状态和消息的字典
+        """
+        if not ROS2_AVAILABLE:
+            return {
+                "success": False,
+                "message": "ROS2未初始化"
+            }
+        
+        if not M5_MSGS_AVAILABLE:
+            return {
+                "success": False,
+                "message": "m5_msgs未安装"
+            }
+        
+        if self.place_pose_with_yaw_publisher is None:
+            return {
+                "success": False,
+                "message": "发布器未初始化"
+            }
+        
+        try:
+            msg = CablePoseWithYaw()
+            msg.header.stamp = self.ros2_node.get_clock().now().to_msg()
+            msg.header.frame_id = 'world_link'
+            
+            msg.position.x = float(x)
+            msg.position.y = float(y)
+            msg.position.z = float(z)
+            msg.yaw = float(yaw)
+            
+            self.place_pose_with_yaw_publisher.publish(msg)
+            log_msg = f'已发布放置位置（xyz+yaw）: ({x:.3f}, {y:.3f}, {z:.3f}), yaw={yaw*180.0/math.pi:.1f}°'
+            print(f"[放置xyz+yaw] {log_msg}")
+            
+            return {
+                "success": True,
+                "message": log_msg
+            }
+        except Exception as e:
+            print(f"[放置xyz+yaw] 发布失败: {e}")
+            return {
+                "success": False,
+                "message": f"发布放置位置（xyz+yaw）时出错: {str(e)}"
+            }
+    
+    def publish_pick_and_place(self, grasp_x, grasp_y, grasp_z, grasp_yaw, place_x, place_y, place_z, place_yaw):
+        """
+        发布Pick-and-Place组合任务
+        
+        Args:
+            grasp_x, grasp_y, grasp_z: 抓取位置
+            grasp_yaw: 抓取yaw（弧度）
+            place_x, place_y, place_z: 放置位置
+            place_yaw: 放置yaw（弧度）
+        
+        Returns:
+            dict: 包含成功状态和消息的字典
+        """
+        if not ROS2_AVAILABLE or not M5_MSGS_AVAILABLE:
+            return {
+                "success": False,
+                "message": "ROS2或m5_msgs未初始化"
+            }
+        
+        try:
+            # 先发布抓取位置
+            grasp_msg = CablePoseWithYaw()
+            grasp_msg.header.stamp = self.ros2_node.get_clock().now().to_msg()
+            grasp_msg.header.frame_id = 'world_link'
+            grasp_msg.position.x = float(grasp_x)
+            grasp_msg.position.y = float(grasp_y)
+            grasp_msg.position.z = float(grasp_z)
+            grasp_msg.yaw = float(grasp_yaw)
+            
+            self.cable_pose_with_yaw_publisher.publish(grasp_msg)
+            print(f"[Pick-and-Place] 已发布抓取位置: ({grasp_x:.3f}, {grasp_y:.3f}, {grasp_z:.3f}), yaw={grasp_yaw*180.0/math.pi:.1f}°")
+            
+            # 等待一小段时间，让抓取任务开始
+            time.sleep(0.5)
+            
+            # 再发布放置位置
+            place_msg = CablePoseWithYaw()
+            place_msg.header.stamp = self.ros2_node.get_clock().now().to_msg()
+            place_msg.header.frame_id = 'world_link'
+            place_msg.position.x = float(place_x)
+            place_msg.position.y = float(place_y)
+            place_msg.position.z = float(place_z)
+            place_msg.yaw = float(place_yaw)
+            
+            self.place_pose_with_yaw_publisher.publish(place_msg)
+            print(f"[Pick-and-Place] 已发布放置位置: ({place_x:.3f}, {place_y:.3f}, {place_z:.3f}), yaw={place_yaw*180.0/math.pi:.1f}°")
+            
+            log_msg = f'已发布Pick-and-Place任务: 抓取({grasp_x:.3f}, {grasp_y:.3f}, {grasp_z:.3f}) -> 放置({place_x:.3f}, {place_y:.3f}, {place_z:.3f})'
+            return {
+                "success": True,
+                "message": log_msg
+            }
+        except Exception as e:
+            print(f"[Pick-and-Place] 发布失败: {e}")
+            return {
+                "success": False,
+                "message": f"发布Pick-and-Place任务时出错: {str(e)}"
+            }
+    
     def publish_emergency_stop(self):
         """
         发布急停消息到 /emergency_stop 话题
@@ -990,6 +1162,95 @@ class RobotSimulator:
                         self.end_headers()
                         error_msg = {"error": str(e)}
                         self.wfile.write(json.dumps(error_msg).encode())
+                elif self.path == '/api/publish_place_pose':
+                    content_length = int(self.headers['Content-Length'])
+                    post_data = self.rfile.read(content_length)
+                    
+                    try:
+                        data = json.loads(post_data.decode('utf-8'))
+                        x = data.get('x')
+                        y = data.get('y')
+                        z = data.get('z')
+                        qx = data.get('qx', 0.0)
+                        qy = data.get('qy', 0.0)
+                        qz = data.get('qz', 0.0)
+                        qw = data.get('qw', 1.0)
+                        
+                        result = self.simulator.publish_place_pose(x, y, z, qx, qy, qz, qw)
+                        
+                        self.send_response(200)
+                        self.send_header('Content-type', 'application/json')
+                        self.send_header('Access-Control-Allow-Origin', '*')
+                        self.end_headers()
+                        self.wfile.write(json.dumps(result).encode())
+                    except Exception as e:
+                        self.send_response(500)
+                        self.send_header('Content-type', 'application/json')
+                        self.send_header('Access-Control-Allow-Origin', '*')
+                        self.end_headers()
+                        self.wfile.write(json.dumps({"success": False, "message": str(e)}).encode())
+                
+                elif self.path == '/api/publish_place_pose_with_yaw':
+                    content_length = int(self.headers['Content-Length'])
+                    post_data = self.rfile.read(content_length)
+                    
+                    try:
+                        data = json.loads(post_data.decode('utf-8'))
+                        x = data.get('x')
+                        y = data.get('y')
+                        z = data.get('z')
+                        yaw_deg = data.get('yaw', 0.0)  # 度
+                        yaw_rad = math.radians(yaw_deg)  # 转换为弧度
+                        
+                        result = self.simulator.publish_place_pose_with_yaw(x, y, z, yaw_rad)
+                        
+                        self.send_response(200)
+                        self.send_header('Content-type', 'application/json')
+                        self.send_header('Access-Control-Allow-Origin', '*')
+                        self.end_headers()
+                        self.wfile.write(json.dumps(result).encode())
+                    except Exception as e:
+                        self.send_response(500)
+                        self.send_header('Content-type', 'application/json')
+                        self.send_header('Access-Control-Allow-Origin', '*')
+                        self.end_headers()
+                        self.wfile.write(json.dumps({"success": False, "message": str(e)}).encode())
+                
+                elif self.path == '/api/publish_pick_and_place':
+                    content_length = int(self.headers['Content-Length'])
+                    post_data = self.rfile.read(content_length)
+                    
+                    try:
+                        data = json.loads(post_data.decode('utf-8'))
+                        grasp_x = data.get('grasp_x')
+                        grasp_y = data.get('grasp_y')
+                        grasp_z = data.get('grasp_z')
+                        grasp_yaw_deg = data.get('grasp_yaw', 0.0)  # 度
+                        grasp_yaw_rad = math.radians(grasp_yaw_deg)  # 转换为弧度
+                        
+                        place_x = data.get('place_x')
+                        place_y = data.get('place_y')
+                        place_z = data.get('place_z')
+                        place_yaw_deg = data.get('place_yaw', 0.0)  # 度
+                        place_yaw_rad = math.radians(place_yaw_deg)  # 转换为弧度
+                        
+                        result = self.simulator.publish_pick_and_place(
+                            grasp_x, grasp_y, grasp_z, grasp_yaw_rad,
+                            place_x, place_y, place_z, place_yaw_rad
+                        )
+                        
+                        self.send_response(200)
+                        self.send_header('Content-type', 'application/json')
+                        self.send_header('Access-Control-Allow-Origin', '*')
+                        self.end_headers()
+                        self.wfile.write(json.dumps(result).encode())
+                    except Exception as e:
+                        self.send_response(500)
+                        self.send_header('Content-type', 'application/json')
+                        self.send_header('Access-Control-Allow-Origin', '*')
+                        self.end_headers()
+                        self.wfile.write(json.dumps({"success": False, "message": str(e)}).encode())
+                
                 elif self.path == '/api/emergency_stop':
                     # 急停接口
                     try:

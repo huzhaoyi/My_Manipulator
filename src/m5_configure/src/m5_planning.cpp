@@ -452,10 +452,10 @@ private:
     // 注意：这是精确计算，考虑所有URDF偏移
     if (joint_values.size() >= 4)
     {
-      double j1 = joint_values[0];  // Joint1: 绕Z轴旋转
-      double j2 = joint_values[1];  // Joint2: 绕X轴旋转（-1.57到0）
-      double j3 = joint_values[2];  // Joint3: 绕X轴旋转（-1.57到0）
-      double j4 = joint_values[3];  // Joint4: 绕Z轴旋转
+      double j1 = joint_values[0];  // Joint1: 绕Z轴旋转（-6.20到6.20 rad，即±355°）
+      double j2 = joint_values[1];  // Joint2: 绕X轴旋转（-2.97到0 rad，即-170°到0°）
+      double j3 = joint_values[2];  // Joint3: 绕X轴旋转（-2.97到0 rad，即-170°到0°）
+      double j4 = joint_values[3];  // Joint4: 绕Z轴旋转（-6.20到6.20 rad，即±355°）
       
       // URDF参数（从URDF提取，精确值）
       const double base_height = 0.141;  // Joint1在base_link上的高度

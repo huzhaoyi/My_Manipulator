@@ -8,6 +8,7 @@
 #include <atomic>
 #include <vector>
 #include <sstream>
+#include <iostream>
 #include <cmath>
 #include <cstdlib>
 #include <rclcpp/rclcpp.hpp>
@@ -15,7 +16,9 @@
 #include <moveit/move_group_interface/move_group_interface.h>
 #include <moveit/planning_scene_interface/planning_scene_interface.h>
 #include <geometry_msgs/msg/pose_stamped.hpp>
+#include <geometry_msgs/msg/twist_stamped.hpp>
 #include <std_msgs/msg/string.hpp>
+#include <sensor_msgs/msg/joint_state.hpp>
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_listener.h>
 #include <tf2/time.h>
@@ -42,14 +45,38 @@
 #include <visualization_msgs/msg/marker.hpp>
 #include <nav_msgs/msg/path.hpp>
 
+// MoveIt Task Constructor includes
+#include <moveit/task_constructor/task.h>
+#include <moveit/task_constructor/stages/current_state.h>
+#include <moveit/task_constructor/stages/fixed_state.h>  // FixedState stage，避免时间戳检查
+#include <moveit/task_constructor/stages/modify_planning_scene.h>
+#include <moveit/task_constructor/stages/connect.h>
+#include <moveit/task_constructor/stages/generate_grasp_pose.h>
+#include <moveit/task_constructor/stages/generate_place_pose.h>
+#include <moveit/task_constructor/stages/simple_grasp.h>
+#include <moveit/task_constructor/stages/pick.h>  // Place类也在pick.h中定义
+#include <moveit/task_constructor/stages/move_relative.h>
+#include <moveit/task_constructor/stages/move_to.h>
+#include <moveit/task_constructor/solvers/pipeline_planner.h>
+#include <moveit/task_constructor/solvers/cartesian_path.h>
+#include <moveit/planning_pipeline/planning_pipeline.h>
+#include <moveit_task_constructor_msgs/action/execute_task_solution.hpp>
+#include <moveit_task_constructor_msgs/msg/solution.hpp>
+
+// MTC namespace alias
+namespace mtc = moveit::task_constructor;
+
 // 任务结构体：存储缆绳位姿和原始yaw（用于障碍物方向计算）
 struct CableGraspTask {
   geometry_msgs::msg::PoseStamped cable_pose;  // 缆绳位姿（包含调整后的orientation，用于夹爪方向）
   double original_yaw;  // 视觉提供的原始yaw（缆绳切向方向），用于障碍物方向计算
+  double joint1_target;  // Joint1目标角度（已废弃，保留兼容性）
+  double joint4_target;  // Joint4目标角度（控制夹爪yaw旋转）
 };
 
 class M5Grasp : public rclcpp::Node
 {
+  
 public:
   M5Grasp() : Node("m5_grasp")
   {
@@ -66,6 +93,16 @@ public:
     cable_pose_with_yaw_sub_ = this->create_subscription<m5_msgs::msg::CablePoseWithYaw>(
         "/cable_pose_with_yaw", 10,
         std::bind(&M5Grasp::cable_pose_with_yaw_callback, this, std::placeholders::_1));
+
+    // 订阅放置位置话题
+    place_pose_sub_ = this->create_subscription<geometry_msgs::msg::PoseStamped>(
+        "/cable_place_pose", 10,
+        std::bind(&M5Grasp::place_pose_callback, this, std::placeholders::_1));
+
+    // 订阅带yaw的放置位置话题
+    place_pose_with_yaw_sub_ = this->create_subscription<m5_msgs::msg::CablePoseWithYaw>(
+        "/cable_place_pose_with_yaw", 10,
+        std::bind(&M5Grasp::place_pose_with_yaw_callback, this, std::placeholders::_1));
 
     // 订阅急停话题
     emergency_stop_sub_ = this->create_subscription<std_msgs::msg::String>(
@@ -102,13 +139,19 @@ public:
     RCLCPP_INFO(this->get_logger(), "订阅话题: /cable_pose_with_yaw");
     RCLCPP_INFO(this->get_logger(), "  消息类型: m5_msgs::msg::CablePoseWithYaw");
     RCLCPP_INFO(this->get_logger(), "  队列大小: 10");
+    RCLCPP_INFO(this->get_logger(), "订阅话题: /cable_place_pose");
+    RCLCPP_INFO(this->get_logger(), "  消息类型: geometry_msgs::msg::PoseStamped");
+    RCLCPP_INFO(this->get_logger(), "  队列大小: 10");
+    RCLCPP_INFO(this->get_logger(), "订阅话题: /cable_place_pose_with_yaw");
+    RCLCPP_INFO(this->get_logger(), "  消息类型: m5_msgs::msg::CablePoseWithYaw");
+    RCLCPP_INFO(this->get_logger(), "  队列大小: 10");
     RCLCPP_INFO(this->get_logger(), "订阅话题: /emergency_stop");
     RCLCPP_INFO(this->get_logger(), "  消息类型: std_msgs::msg::String");
     RCLCPP_INFO(this->get_logger(), "  队列大小: 10");
     RCLCPP_INFO(this->get_logger(), "发布话题: /grasp_state");
     RCLCPP_INFO(this->get_logger(), "  消息类型: std_msgs::msg::String");
     RCLCPP_INFO(this->get_logger(), "  队列大小: 10");
-    RCLCPP_INFO(this->get_logger(), "等待缆绳位置消息...");
+    RCLCPP_INFO(this->get_logger(), "等待缆绳位置/放置位置消息...");
     RCLCPP_INFO(this->get_logger(), "========================================");
     
     // 验证订阅器是否创建成功
@@ -116,6 +159,24 @@ public:
       RCLCPP_INFO(this->get_logger(), "✓ 缆绳位置订阅器创建成功");
     } else {
       RCLCPP_ERROR(this->get_logger(), "✗ 缆绳位置订阅器创建失败！");
+    }
+    
+    if (cable_pose_with_yaw_sub_) {
+      RCLCPP_INFO(this->get_logger(), "✓ 缆绳位置（带yaw）订阅器创建成功");
+    } else {
+      RCLCPP_ERROR(this->get_logger(), "✗ 缆绳位置（带yaw）订阅器创建失败！");
+    }
+    
+    if (place_pose_sub_) {
+      RCLCPP_INFO(this->get_logger(), "✓ 放置位置订阅器创建成功");
+    } else {
+      RCLCPP_ERROR(this->get_logger(), "✗ 放置位置订阅器创建失败！");
+    }
+    
+    if (place_pose_with_yaw_sub_) {
+      RCLCPP_INFO(this->get_logger(), "✓ 放置位置（带yaw）订阅器创建成功");
+    } else {
+      RCLCPP_ERROR(this->get_logger(), "✗ 放置位置（带yaw）订阅器创建失败！");
     }
     
     if (emergency_stop_sub_) {
@@ -198,6 +259,129 @@ public:
       throw;  // 重新抛出异常，让调用者知道初始化失败
     }
 
+    // 关节命名一致性诊断：检查MoveIt模型关节名和joint_states关节名是否一致
+    // 如果不一致，会导致CurrentStateMonitor无法更新状态，出现"Invalid goal state"错误
+    RCLCPP_INFO(this->get_logger(), "=== 关节命名一致性诊断 ===");
+    try {
+      const auto& robot_model = move_group_interface_->getRobotModel();
+      if (robot_model) {
+        // 获取MoveIt模型中的关节名（arm_group）
+        const auto* jmg = robot_model->getJointModelGroup("arm_group");
+        if (jmg) {
+          const auto& model_joint_names = jmg->getActiveJointModelNames();
+          RCLCPP_INFO(this->get_logger(), "[关节命名诊断] MoveIt模型中的arm_group关节名 (%zu个):", model_joint_names.size());
+          for (size_t i = 0; i < model_joint_names.size(); ++i) {
+            RCLCPP_INFO(this->get_logger(), "  [%zu] %s", i, model_joint_names[i].c_str());
+          }
+          
+          // 等待joint_states话题有数据，然后检查关节名
+          RCLCPP_INFO(this->get_logger(), "[关节命名诊断] 等待joint_states话题数据...");
+          std::this_thread::sleep_for(std::chrono::milliseconds(500));
+          
+          // 从/joint_states话题实际读取关节名（关键诊断！）
+          // 创建临时订阅者来读取一次joint_states消息
+          sensor_msgs::msg::JointState::SharedPtr joint_states_msg = nullptr;
+          std::mutex msg_mutex;
+          std::condition_variable msg_cv;
+          bool msg_received = false;
+          
+          auto joint_states_sub = this->create_subscription<sensor_msgs::msg::JointState>(
+              "/joint_states", 10,
+              [&](const sensor_msgs::msg::JointState::SharedPtr msg) {
+                std::lock_guard<std::mutex> lock(msg_mutex);
+                if (!msg_received) {
+                  joint_states_msg = msg;
+                  msg_received = true;
+                  msg_cv.notify_one();
+                }
+              });
+          
+          // 等待收到joint_states消息（最多等待1秒）
+          {
+            std::unique_lock<std::mutex> lock(msg_mutex);
+            if (msg_cv.wait_for(lock, std::chrono::seconds(1), [&] { return msg_received; })) {
+              RCLCPP_INFO(this->get_logger(), "[关节命名诊断] ✓ 成功从/joint_states话题读取关节名 (%zu个):", 
+                         joint_states_msg->name.size());
+              for (size_t i = 0; i < joint_states_msg->name.size(); ++i) {
+                RCLCPP_INFO(this->get_logger(), "  [%zu] %s = %.3f rad", i, 
+                           joint_states_msg->name[i].c_str(), 
+                           i < joint_states_msg->position.size() ? joint_states_msg->position[i] : 0.0);
+              }
+              
+              // 对比MoveIt模型关节名和joint_states关节名
+              // 注意：joint_states可能包含更多关节（如夹爪），只要MoveIt关心的关节都在即可
+              bool names_match = true;
+              std::vector<std::string> missing_joints;
+              
+              for (size_t i = 0; i < model_joint_names.size(); ++i) {
+                // 查找joint_states中是否有对应的关节名
+                bool found = false;
+                for (size_t j = 0; j < joint_states_msg->name.size(); ++j) {
+                  if (joint_states_msg->name[j] == model_joint_names[i]) {
+                    found = true;
+                    break;
+                  }
+                }
+                if (!found) {
+                  missing_joints.push_back(model_joint_names[i]);
+                  names_match = false;
+                }
+              }
+              
+              if (names_match) {
+                RCLCPP_INFO(this->get_logger(), "[关节命名诊断] ✓ MoveIt关心的所有关节都在joint_states中找到");
+                RCLCPP_INFO(this->get_logger(), "[关节命名诊断]   MoveIt模型: %zu个关节, joint_states: %zu个关节（包含额外关节，正常）", 
+                           model_joint_names.size(), joint_states_msg->name.size());
+              } else {
+                RCLCPP_ERROR(this->get_logger(), "[关节命名诊断] ✗ 以下关节在joint_states中未找到:");
+                for (const auto& joint : missing_joints) {
+                  RCLCPP_ERROR(this->get_logger(), "[关节命名诊断]   - %s", joint.c_str());
+                }
+                RCLCPP_ERROR(this->get_logger(), "[关节命名诊断] 这会导致状态更新失败和'Invalid goal state'错误");
+              }
+            } else {
+              RCLCPP_WARN(this->get_logger(), "[关节命名诊断] ⚠️ 1秒内未收到joint_states消息，跳过关节名对比");
+            }
+          }
+          
+          // 尝试获取一次joint_states来检查关节名
+          // 注意：这里只是诊断，不阻塞初始化流程
+          // 修复：使用getCurrentStateSafe()绕过时间戳检查
+          auto test_state = getCurrentStateSafe(1.0);
+          if (test_state) {
+            RCLCPP_INFO(this->get_logger(), "[关节命名诊断] ✓ 成功获取当前状态，关节名应该匹配");
+            // 检查关节值是否有效（如果关节名不匹配，值会是默认值或NaN）
+            std::vector<double> test_joint_values;
+            test_state->copyJointGroupPositions(jmg, test_joint_values);
+            bool all_valid = true;
+            for (size_t i = 0; i < test_joint_values.size(); ++i) {
+              if (std::isnan(test_joint_values[i]) || std::isinf(test_joint_values[i])) {
+                RCLCPP_WARN(this->get_logger(), "[关节命名诊断] ⚠️ 关节 %s 的值无效: %f (可能是关节名不匹配)", 
+                           i < model_joint_names.size() ? model_joint_names[i].c_str() : "unknown",
+                           test_joint_values[i]);
+                all_valid = false;
+              }
+            }
+            if (all_valid) {
+              RCLCPP_INFO(this->get_logger(), "[关节命名诊断] ✓ 所有关节值有效，关节名可能匹配");
+            } else {
+              RCLCPP_WARN(this->get_logger(), "[关节命名诊断] ⚠️ 部分关节值无效，可能存在关节名不匹配问题");
+              RCLCPP_WARN(this->get_logger(), "[关节命名诊断] 建议：检查URDF中的关节名和joint_states话题中的关节名是否一致");
+              RCLCPP_WARN(this->get_logger(), "[关节命名诊断] MoveIt期望: %s (等)", model_joint_names.size() > 0 ? model_joint_names[0].c_str() : "unknown");
+              RCLCPP_WARN(this->get_logger(), "[关节命名诊断] 请运行: ros2 topic echo /joint_states --once 查看实际关节名");
+            }
+          } else {
+            RCLCPP_WARN(this->get_logger(), "[关节命名诊断] ⚠️ 无法获取当前状态（可能joint_states未就绪或关节名不匹配）");
+          }
+        } else {
+          RCLCPP_WARN(this->get_logger(), "[关节命名诊断] ⚠️ 无法获取arm_group，跳过关节名诊断");
+        }
+      }
+    } catch (const std::exception& e) {
+      RCLCPP_WARN(this->get_logger(), "[关节命名诊断] 诊断过程出错: %s", e.what());
+    }
+    RCLCPP_INFO(this->get_logger(), "=== 关节命名一致性诊断完成 ===");
+    
     // 等待 joint_states 流起来（MoveIt 获取 current state 依赖 joint_states）
     RCLCPP_INFO(this->get_logger(), "等待 joint_states 流起来...");
     int max_attempts = static_cast<int>(state_check_timeout_ / state_check_interval_);
@@ -420,6 +604,14 @@ public:
     
     // 初始化路径的frame_id
     eef_path_.header.frame_id = planning_frame_;
+    
+    // 添加地面碰撞对象（如果启用）
+    if (add_ground_plane_)
+    {
+      RCLCPP_INFO(this->get_logger(), "=== 添加地面碰撞对象 ===");
+      scene_add_ground_plane();
+      RCLCPP_INFO(this->get_logger(), "=== 地面碰撞对象添加完成 ===");
+    }
   }
 
   // 启动executor（在对象创建后调用）
@@ -465,6 +657,33 @@ public:
       RCLCPP_INFO(this->get_logger(), "  发布者数量: %zu", pub_count);
     } else {
       RCLCPP_ERROR(this->get_logger(), "✗ 缆绳位置订阅器未创建！");
+    }
+    
+    if (cable_pose_with_yaw_sub_) {
+      size_t pub_count = cable_pose_with_yaw_sub_->get_publisher_count();
+      RCLCPP_INFO(this->get_logger(), "✓ 缆绳位置（带yaw）订阅器已创建");
+      RCLCPP_INFO(this->get_logger(), "  订阅话题: /cable_pose_with_yaw");
+      RCLCPP_INFO(this->get_logger(), "  发布者数量: %zu", pub_count);
+    } else {
+      RCLCPP_ERROR(this->get_logger(), "✗ 缆绳位置（带yaw）订阅器未创建！");
+    }
+    
+    if (place_pose_sub_) {
+      size_t pub_count = place_pose_sub_->get_publisher_count();
+      RCLCPP_INFO(this->get_logger(), "✓ 放置位置订阅器已创建");
+      RCLCPP_INFO(this->get_logger(), "  订阅话题: /cable_place_pose");
+      RCLCPP_INFO(this->get_logger(), "  发布者数量: %zu", pub_count);
+    } else {
+      RCLCPP_ERROR(this->get_logger(), "✗ 放置位置订阅器未创建！");
+    }
+    
+    if (place_pose_with_yaw_sub_) {
+      size_t pub_count = place_pose_with_yaw_sub_->get_publisher_count();
+      RCLCPP_INFO(this->get_logger(), "✓ 放置位置（带yaw）订阅器已创建");
+      RCLCPP_INFO(this->get_logger(), "  订阅话题: /cable_place_pose_with_yaw");
+      RCLCPP_INFO(this->get_logger(), "  发布者数量: %zu", pub_count);
+    } else {
+      RCLCPP_ERROR(this->get_logger(), "✗ 放置位置（带yaw）订阅器未创建！");
     }
     
     if (emergency_stop_sub_) {
@@ -558,13 +777,44 @@ private:
     this->declare_parameter("grasp.joint4_yaw_search_enabled", true);  // 是否启用Joint4-yaw迭代搜索
     this->declare_parameter("grasp.joint4_yaw_search_range", M_PI);  // Joint4-yaw搜索范围（默认±180度）
     this->declare_parameter("grasp.joint4_yaw_search_step", 0.0873);  // Joint4-yaw搜索步长（默认5度）
+    
+    // Joint约束参数（4DOF机器人控制）
+    this->declare_parameter("grasp.joint1_tolerance", 0.1745);  // Joint1容差（默认±10°）
+    this->declare_parameter("grasp.joint4_constraint_enabled", false);  // 是否启用Joint4约束
+    this->declare_parameter("grasp.joint4_offset", 0.0);  // Joint4固定offset（零位标定）
+    this->declare_parameter("grasp.joint4_tolerance", 0.0873);  // Joint4容差（默认±5°）
+    
     this->declare_parameter("grasp.enable_recovery", true);  // 是否启用执行失败后的状态回滚
     this->declare_parameter("grasp.recovery_timeout", 5.0);  // 回滚操作的超时时间
+    
+    // yaw候选搜索参数
+    this->declare_parameter("grasp.yaw_candidate_search_enabled", true);  // 是否启用yaw候选搜索
+    this->declare_parameter("grasp.yaw_candidate_center", 0.0);  // 候选搜索中心yaw（仅xyz输入时使用）
+    this->declare_parameter("grasp.yaw_candidate_range", M_PI);  // 搜索范围（±180°）
+    this->declare_parameter("grasp.yaw_candidate_step", 0.2618);  // 搜索步长（15°）
+    
+    // 地面安全参数
+    this->declare_parameter("grasp.ground_height", 0.0);  // 地面高度
+    this->declare_parameter("grasp.ground_offset_below_base", -0.05);  // 地面在基座下方的偏移（-5cm，基座下方5cm）
+    this->declare_parameter("grasp.camera_error_margin", 0.005);  // 相机标定误差余量（5mm）
+    this->declare_parameter("grasp.min_ground_clearance", 0.010);  // 最小离地安全距离（10mm）
+    this->declare_parameter("grasp.add_ground_plane", true);  // 是否添加地面碰撞对象
+    
+    // 下压距离限制
+    this->declare_parameter("grasp.max_cartesian_descend_distance", 0.15);  // 单次笛卡尔下压最大距离（15cm）
     
     // TCP偏移补偿参数（LinkGG到夹爪中心的偏移）
     this->declare_parameter("grasp.tcp_offset_x", 0.0);  // m  TCP偏移X（LinkGG→夹爪中心）
     this->declare_parameter("grasp.tcp_offset_y", -0.024);  // m  TCP偏移Y（LinkGG→夹爪中心）
     this->declare_parameter("grasp.tcp_offset_z", -0.0086);  // m  TCP偏移Z（LinkGG→夹爪中心）
+    
+    // 全零状态预运动参数
+    this->declare_parameter("grasp.auto_move_to_ready", true);  // 是否自动移动到预备位置
+    this->declare_parameter("grasp.ready_joint1", 0.0);  // rad  预备位置Joint1
+    this->declare_parameter("grasp.ready_joint2", -0.5);  // rad  预备位置Joint2（约-30度）
+    this->declare_parameter("grasp.ready_joint3", -0.5);  // rad  预备位置Joint3（约-30度）
+    this->declare_parameter("grasp.ready_joint4", 0.0);  // rad  预备位置Joint4
+    this->declare_parameter("grasp.near_zero_threshold", 0.1);  // rad  全零状态判断阈值
 
     // Gripper parameters (position control only, no force control)
     this->declare_parameter("gripper.mode", "position");
@@ -580,29 +830,57 @@ private:
     this->declare_parameter("scene.add_collision_object", true);
     this->declare_parameter("scene.allow_touch_links", std::vector<std::string>{"LinkGG", "LinkGL", "LinkGR"});
 
-    // Workspace parameters
-    this->declare_parameter("workspace.base_height", 0.141);
-    this->declare_parameter("workspace.link2_length", 0.264);
-    this->declare_parameter("workspace.link3_length", 0.143);
-    this->declare_parameter("workspace.link4_to_eef", 0.187);
-    this->declare_parameter("workspace.reach_radius_margin", 1.2);
-    this->declare_parameter("workspace.max_height_offset", 0.9);
-    this->declare_parameter("workspace.min_height_offset", -0.3);
-    this->declare_parameter("workspace.safe_x_min", 0.20);
-    this->declare_parameter("workspace.safe_x_max", 0.35);
-    this->declare_parameter("workspace.safe_y_min", -0.15);
-    this->declare_parameter("workspace.safe_y_max", 0.15);
-    this->declare_parameter("workspace.safe_z_min", 0.25);
-    this->declare_parameter("workspace.safe_z_max", 0.35);
-    this->declare_parameter("workspace.medium_x_min", 0.15);
-    this->declare_parameter("workspace.medium_x_max", 0.45);
-    this->declare_parameter("workspace.medium_y_min", -0.20);
-    this->declare_parameter("workspace.medium_y_max", 0.20);
-    this->declare_parameter("workspace.medium_z_min", 0.20);
-    this->declare_parameter("workspace.medium_z_max", 0.40);
+    // Workspace parameters (基于URDF精确计算)
+    // 4DOF机械臂工作空间分析:
+    //   base_link原点 -> Joint1轴: z=0.141m
+    //   Joint1 -> Joint2轴: z=0.0735m (link1高度)
+    //   Joint2 -> Joint3轴: z=0.264m (link2长度)
+    //   Joint3 -> Joint4轴: z=0.143m (link3长度)
+    //   Joint4 -> EEF: z=0.187m (link4+夹爪)
+    //   总高度(全伸展): 0.141 + 0.0735 + 0.264 + 0.143 + 0.187 = 0.8085m
+    //   Joint2轴高度: 0.141 + 0.0735 = 0.2145m
+    //   大臂长度: 0.264m, 小臂+末端: 0.143 + 0.187 = 0.330m
+    //   最大伸展: 0.264 + 0.330 = 0.594m
+    // 
+    // Joint2/3限位: [-2.97, 0] (只能向下弯，厂家新限制-170°~0°)
+    // 工作空间呈"碗状"区域:
+    //   水平半径: 0.08m ~ 0.55m (距base中心)
+    //   高度: 0.15m ~ 0.80m (相对base_link原点)
+    this->declare_parameter("workspace.base_height", 0.2145);  // Joint2轴高度
+    this->declare_parameter("workspace.link2_length", 0.264);  // 大臂
+    this->declare_parameter("workspace.link3_length", 0.143);  // 小臂
+    this->declare_parameter("workspace.link4_to_eef", 0.187);  // 末端
+    this->declare_parameter("workspace.reach_radius_margin", 0.95);  // 最大半径裕度(略保守)
+    this->declare_parameter("workspace.max_height_offset", 0.60);   // 相对Joint2轴的最大高度偏移
+    this->declare_parameter("workspace.min_height_offset", -0.10);  // 相对Joint2轴的最小高度偏移
+    this->declare_parameter("workspace.min_radius", 0.08);  // 最小半径(避免太靠近base)
+    this->declare_parameter("workspace.safe_x_min", 0.15);
+    this->declare_parameter("workspace.safe_x_max", 0.40);
+    this->declare_parameter("workspace.safe_y_min", -0.20);
+    this->declare_parameter("workspace.safe_y_max", 0.20);
+    this->declare_parameter("workspace.safe_z_min", 0.20);
+    this->declare_parameter("workspace.safe_z_max", 0.50);
+    this->declare_parameter("workspace.medium_x_min", 0.10);
+    this->declare_parameter("workspace.medium_x_max", 0.50);
+    this->declare_parameter("workspace.medium_y_min", -0.30);
+    this->declare_parameter("workspace.medium_y_max", 0.30);
+    this->declare_parameter("workspace.medium_z_min", 0.15);
+    this->declare_parameter("workspace.medium_z_max", 0.60);
 
     // Tolerance parameters
     this->declare_parameter("tolerance.orientation_epsilon", 1e-6);
+
+    // Place parameters
+    this->declare_parameter("place.approach_offset_z", 0.10);
+    this->declare_parameter("place.descend_distance", 0.08);
+    this->declare_parameter("place.retreat_distance", 0.06);
+    this->declare_parameter("place.max_pos_error", 0.01);
+    this->declare_parameter("place.planning_time", 15.0);
+    this->declare_parameter("place.num_planning_attempts", 30);
+    this->declare_parameter("place.max_velocity_scaling", 0.9);
+    this->declare_parameter("place.max_acceleration_scaling", 0.9);
+    this->declare_parameter("place.goal_position_tolerance", 0.01);
+    this->declare_parameter("place.goal_orientation_tolerance", 0.5);
 
     // Trajectory planning parameters
     this->declare_parameter("trajectory.use_linear_interpolation", false);
@@ -676,8 +954,31 @@ private:
     joint4_yaw_search_enabled_ = this->get_parameter("grasp.joint4_yaw_search_enabled").as_bool();
     joint4_yaw_search_range_ = this->get_parameter("grasp.joint4_yaw_search_range").as_double();
     joint4_yaw_search_step_ = this->get_parameter("grasp.joint4_yaw_search_step").as_double();
+    
+    // Joint约束参数（4DOF机器人控制）
+    joint1_tolerance_ = this->get_parameter("grasp.joint1_tolerance").as_double();
+    joint4_constraint_enabled_ = this->get_parameter("grasp.joint4_constraint_enabled").as_bool();
+    joint4_offset_ = this->get_parameter("grasp.joint4_offset").as_double();
+    joint4_tolerance_ = this->get_parameter("grasp.joint4_tolerance").as_double();
+    
     enable_recovery_ = this->get_parameter("grasp.enable_recovery").as_bool();
     recovery_timeout_ = this->get_parameter("grasp.recovery_timeout").as_double();
+    
+    // yaw候选搜索参数
+    yaw_candidate_search_enabled_ = this->get_parameter("grasp.yaw_candidate_search_enabled").as_bool();
+    yaw_candidate_center_ = this->get_parameter("grasp.yaw_candidate_center").as_double();
+    yaw_candidate_range_ = this->get_parameter("grasp.yaw_candidate_range").as_double();
+    yaw_candidate_step_ = this->get_parameter("grasp.yaw_candidate_step").as_double();
+    
+    // 地面安全参数
+    ground_height_ = this->get_parameter("grasp.ground_height").as_double();
+    ground_offset_below_base_ = this->get_parameter("grasp.ground_offset_below_base").as_double();
+    camera_error_margin_ = this->get_parameter("grasp.camera_error_margin").as_double();
+    min_ground_clearance_ = this->get_parameter("grasp.min_ground_clearance").as_double();
+    add_ground_plane_ = this->get_parameter("grasp.add_ground_plane").as_bool();
+    
+    // 下压距离限制
+    max_cartesian_descend_distance_ = this->get_parameter("grasp.max_cartesian_descend_distance").as_double();
     
     RCLCPP_INFO(this->get_logger(), "配置参数加载完成:");
     RCLCPP_INFO(this->get_logger(), "  grasp_yaw_add: %.3f rad (%.1f deg)", 
@@ -693,6 +994,18 @@ private:
     RCLCPP_INFO(this->get_logger(), "TCP偏移补偿参数: (%.4f, %.4f, %.4f) m", 
                 tcp_offset_x_, tcp_offset_y_, tcp_offset_z_);
     
+    // 全零状态预运动参数
+    auto_move_to_ready_ = this->get_parameter("grasp.auto_move_to_ready").as_bool();
+    ready_joint1_ = this->get_parameter("grasp.ready_joint1").as_double();
+    ready_joint2_ = this->get_parameter("grasp.ready_joint2").as_double();
+    ready_joint3_ = this->get_parameter("grasp.ready_joint3").as_double();
+    ready_joint4_ = this->get_parameter("grasp.ready_joint4").as_double();
+    near_zero_threshold_ = this->get_parameter("grasp.near_zero_threshold").as_double();
+    
+    RCLCPP_INFO(this->get_logger(), "全零状态预运动: %s, 预备位置: [%.3f, %.3f, %.3f, %.3f] rad",
+                auto_move_to_ready_ ? "启用" : "禁用",
+                ready_joint1_, ready_joint2_, ready_joint3_, ready_joint4_);
+    
     // 计算周期（秒）
     control_period_ = 1.0 / control_frequency_;
     read_period_ = 1.0 / read_frequency_;
@@ -707,6 +1020,18 @@ private:
     gripper_angle_max_ = this->get_parameter("gripper.angle_max").as_double();
     gripper_width_min_ = this->get_parameter("gripper.width_min").as_double();
 
+    // Place parameters
+    place_approach_offset_z_ = this->get_parameter("place.approach_offset_z").as_double();
+    place_descend_distance_ = this->get_parameter("place.descend_distance").as_double();
+    place_retreat_distance_ = this->get_parameter("place.retreat_distance").as_double();
+    place_max_pos_error_ = this->get_parameter("place.max_pos_error").as_double();
+    place_planning_time_ = this->get_parameter("place.planning_time").as_double();
+    place_num_planning_attempts_ = this->get_parameter("place.num_planning_attempts").as_int();
+    place_max_velocity_scaling_ = this->get_parameter("place.max_velocity_scaling").as_double();
+    place_max_acceleration_scaling_ = this->get_parameter("place.max_acceleration_scaling").as_double();
+    place_goal_position_tolerance_ = this->get_parameter("place.goal_position_tolerance").as_double();
+    place_goal_orientation_tolerance_ = this->get_parameter("place.goal_orientation_tolerance").as_double();
+
     add_collision_object_ = this->get_parameter("scene.add_collision_object").as_bool();
     allow_touch_links_ = this->get_parameter("scene.allow_touch_links").as_string_array();
 
@@ -718,6 +1043,7 @@ private:
     workspace_reach_radius_margin_ = this->get_parameter("workspace.reach_radius_margin").as_double();
     workspace_max_height_offset_ = this->get_parameter("workspace.max_height_offset").as_double();
     workspace_min_height_offset_ = this->get_parameter("workspace.min_height_offset").as_double();
+    workspace_min_radius_ = this->get_parameter("workspace.min_radius").as_double();
     workspace_safe_x_min_ = this->get_parameter("workspace.safe_x_min").as_double();
     workspace_safe_x_max_ = this->get_parameter("workspace.safe_x_max").as_double();
     workspace_safe_y_min_ = this->get_parameter("workspace.safe_y_min").as_double();
@@ -953,28 +1279,83 @@ private:
                 cable_pose.header.frame_id.c_str());
 
     // 从orientation反向计算yaw（用于障碍物方向）
-    // 注意：cable_pose_callback没有提供yaw，需要从orientation提取
-    // 如果orientation是向下（roll=π），则yaw可以从orientation的Z分量提取
+    // 注意：cable_pose_callback没有提供yaw，需要从orientation提取或使用候选搜索
     double original_yaw = 0.0;
-    try {
-      tf2::Quaternion q;
-      tf2::fromMsg(cable_pose.pose.orientation, q);
-      // 提取yaw：从向下orientation中提取Z轴旋转
-      // 如果orientation是向下（roll=π），yaw可以通过atan2计算
-      tf2::Matrix3x3 rot_matrix(q);
-      double roll, pitch, yaw;
-      rot_matrix.getRPY(roll, pitch, yaw);
-      original_yaw = yaw;
-      RCLCPP_INFO(this->get_logger(), "[任务入队] 从orientation提取yaw: %.3f rad (%.1f deg)", 
-                  original_yaw, original_yaw * 180.0 / M_PI);
-    } catch (const std::exception& e) {
-      RCLCPP_WARN(this->get_logger(), "[任务入队] 无法从orientation提取yaw，使用默认值0: %s", e.what());
-      original_yaw = 0.0;
+    bool has_valid_yaw = false;
+    
+    // 检查orientation是否是默认值
+    bool is_default_orient = is_default_orientation(cable_pose.pose.orientation);
+    
+    if (!is_default_orient) {
+      // 尝试从orientation提取yaw
+      try {
+        tf2::Quaternion q;
+        tf2::fromMsg(cable_pose.pose.orientation, q);
+        tf2::Matrix3x3 rot_matrix(q);
+        double roll, pitch, yaw;
+        rot_matrix.getRPY(roll, pitch, yaw);
+        original_yaw = yaw;
+        has_valid_yaw = true;
+        RCLCPP_INFO(this->get_logger(), "[任务入队] 从orientation提取yaw: %.3f rad (%.1f deg)", 
+                    original_yaw, original_yaw * 180.0 / M_PI);
+      } catch (const std::exception& e) {
+        RCLCPP_WARN(this->get_logger(), "[任务入队] 无法从orientation提取yaw: %s", e.what());
+      }
     }
+    
+    // 如果没有有效的yaw，使用yaw候选搜索（仅xyz输入情况）
+    if (!has_valid_yaw && yaw_candidate_search_enabled_ && move_group_interface_) {
+      RCLCPP_INFO(this->get_logger(), "[任务入队] 仅xyz输入，使用yaw候选搜索");
+      try {
+        auto current_state = getCurrentStateSafe();
+        if (current_state) {
+          // 使用候选搜索找到最优yaw
+          original_yaw = find_best_yaw_candidate(
+            cable_pose.pose.position.x,
+            cable_pose.pose.position.y,
+            cable_pose.pose.position.z + approach_offset_z_,  // 在预抓取高度搜索
+            yaw_candidate_center_,
+            current_state
+          );
+          has_valid_yaw = true;
+          
+          // 使用搜索到的yaw，但orientation使用fixed（4DOF控制策略）
+          cable_pose.pose.orientation = compute_downward_orientation_fixed();
+          RCLCPP_INFO(this->get_logger(), "[任务入队] yaw候选搜索完成，最优yaw=%.3f rad (%.1f deg)",
+                      original_yaw, original_yaw * 180.0 / M_PI);
+        }
+      } catch (const std::exception& e) {
+        RCLCPP_WARN(this->get_logger(), "[任务入队] yaw候选搜索失败: %s，使用默认yaw=0", e.what());
+        original_yaw = 0.0;
+        cable_pose.pose.orientation = compute_downward_orientation_fixed();
+      }
+    } else if (!has_valid_yaw) {
+      // 如果候选搜索未启用或MoveIt未就绪，使用默认yaw
+      RCLCPP_WARN(this->get_logger(), "[任务入队] 无法获取yaw，使用默认值0");
+      original_yaw = 0.0;
+      cable_pose.pose.orientation = compute_downward_orientation_fixed();
+    }
+    
+    // 4DOF控制：yaw角应该映射到Joint4（控制夹爪旋转），而不是Joint1
+    // Joint1 控制机械臂整体朝向（由IK自动根据目标位置计算）
+    // Joint4 控制夹爪旋转角度（由用户指定的yaw决定）
+    double joint4_target = original_yaw;
+    joint4_target += grasp_yaw_add_;
+    joint4_target += yaw_offset_;
+    if (yaw_flip_) {
+      joint4_target += M_PI;
+    }
+    // 归一化到[-π, π]
+    while (joint4_target > M_PI) joint4_target -= 2.0 * M_PI;
+    while (joint4_target < -M_PI) joint4_target += 2.0 * M_PI;
+    
+    // 更新orientation为fixed（4DOF控制策略）
+    cable_pose.pose.orientation = compute_downward_orientation_fixed();
 
-    RCLCPP_INFO(this->get_logger(), "[任务入队] 准备将任务加入队列: pos=(%.3f, %.3f, %.3f), frame=%s",
+    RCLCPP_INFO(this->get_logger(), "[任务入队] 准备将任务加入队列: pos=(%.3f, %.3f, %.3f), frame=%s, Joint4目标=%.3f rad (%.1f deg)",
                 cable_pose.pose.position.x, cable_pose.pose.position.y, 
-                cable_pose.pose.position.z, cable_pose.header.frame_id.c_str());
+                cable_pose.pose.position.z, cable_pose.header.frame_id.c_str(),
+                joint4_target, joint4_target * 180.0 / M_PI);
     {
       std::lock_guard<std::mutex> lock(queue_mutex_);
       size_t old_size = task_queue_.size();
@@ -984,6 +1365,8 @@ private:
       CableGraspTask task;
       task.cable_pose = cable_pose;
       task.original_yaw = original_yaw;
+      task.joint1_target = 0.0;  // 已废弃，Joint1由IK自动计算
+      task.joint4_target = joint4_target;  // 4DOF控制：Joint4目标值（控制夹爪yaw）
       
       task_queue_.push(task);
       RCLCPP_INFO(this->get_logger(), "[任务入队] 任务已加入队列（清空旧任务: %zu 个，当前队列大小: %zu）",
@@ -1024,37 +1407,39 @@ private:
 
     publish_state("已接收");
 
-    // 提取xyz坐标和yaw角
-    // 统一计算所有yaw偏移，避免在多个地方叠加导致逻辑混乱
-    double yaw_cmd = msg->yaw;
+    // 4DOF机器人控制策略：
+    // - Joint1 控制机械臂整体朝向（由IK自动根据目标位置计算）
+    // - Joint4 控制夹爪旋转角度（由用户指定的yaw决定）
+    // - 末端姿态只锁定roll/pitch（向下），yaw不约束
+    double joint4_target = msg->yaw;
     
     // 1) 线缆切向 → 夹持朝向：yaw=0度（线缆切向）时，夹爪应垂直于线缆
-    //    grasp_yaw_add=90°时，yaw=0度→orientation的Yaw分量=90°→joint 4=90°
-    yaw_cmd += grasp_yaw_add_;
-    RCLCPP_INFO(this->get_logger(), "应用grasp_yaw_add: %.3f rad (%.1f deg)", 
+    //    grasp_yaw_add=90°时，yaw=0度→Joint4=90°
+    joint4_target += grasp_yaw_add_;
+    RCLCPP_INFO(this->get_logger(), "[4DOF控制] 应用grasp_yaw_add: %.3f rad (%.1f deg)", 
                 grasp_yaw_add_, grasp_yaw_add_ * 180.0 / M_PI);
     
     // 2) 应用yaw_offset和yaw_flip调整（保留原有调参逻辑）
-    yaw_cmd += yaw_offset_;
+    joint4_target += yaw_offset_;
     if (yaw_flip_) {
-      yaw_cmd += M_PI;
-      RCLCPP_INFO(this->get_logger(), "应用yaw_flip: yaw += π");
+      joint4_target += M_PI;
+      RCLCPP_INFO(this->get_logger(), "[4DOF控制] 应用yaw_flip: joint4_target += π");
     }
     if (std::abs(yaw_offset_) > 1e-6) {
-      RCLCPP_INFO(this->get_logger(), "应用yaw_offset: %.3f rad (%.1f deg)", 
+      RCLCPP_INFO(this->get_logger(), "[4DOF控制] 应用yaw_offset: %.3f rad (%.1f deg)", 
                   yaw_offset_, yaw_offset_ * 180.0 / M_PI);
     }
     
-    // 3) 注意：不再应用orientation_yaw_offset到yaw_cmd
-    // orientation_yaw_offset应该通过其他方式处理（如果需要零位标定）
-    // 这样绳子的yaw可以直接对应到joint 4的旋转角度
+    // 归一化到[-π, π]
+    while (joint4_target > M_PI) joint4_target -= 2.0 * M_PI;
+    while (joint4_target < -M_PI) joint4_target += 2.0 * M_PI;
     
-    RCLCPP_INFO(this->get_logger(), "最终yaw_cmd: %.3f rad (%.1f deg)", 
-                yaw_cmd, yaw_cmd * 180.0 / M_PI);
+    RCLCPP_INFO(this->get_logger(), "[4DOF控制] 最终Joint4目标值: %.3f rad (%.1f deg)", 
+                joint4_target, joint4_target * 180.0 / M_PI);
     
-    // 计算四元数姿态（roll=0, pitch=0, yaw=最终yaw_cmd）
-    // 注意：compute_downward_orientation_with_yaw内部不再叠加任何offset
-    geometry_msgs::msg::Quaternion orientation = compute_downward_orientation_with_yaw(yaw_cmd);
+    // 末端姿态：只锁定roll/pitch（向下），yaw不约束
+    // 这样MoveIt的IK可以自由选择yaw，通过Joint4控制夹爪方向
+    geometry_msgs::msg::Quaternion orientation = compute_downward_orientation_fixed();
     
     // 构造PoseStamped消息
     geometry_msgs::msg::PoseStamped cable_pose;
@@ -1067,11 +1452,11 @@ private:
       cable_pose.header.stamp = this->now();
     }
 
-    RCLCPP_INFO(this->get_logger(), "处理缆绳位置（带yaw）: x=%.3f y=%.3f z=%.3f yaw=%.3f (frame: %s)",
+    RCLCPP_INFO(this->get_logger(), "[4DOF控制] 处理缆绳位置: x=%.3f y=%.3f z=%.3f, Joint4目标=%.3f rad (%.1f deg) (frame: %s)",
                 cable_pose.pose.position.x,
                 cable_pose.pose.position.y,
                 cable_pose.pose.position.z,
-                yaw_cmd,
+                joint4_target, joint4_target * 180.0 / M_PI,
                 cable_pose.header.frame_id.c_str());
     RCLCPP_INFO(this->get_logger(), "计算得到的orientation: (%.3f, %.3f, %.3f, %.3f)",
                 cable_pose.pose.orientation.x,
@@ -1081,6 +1466,7 @@ private:
     
     // 临时调试：立即进行IK求解，输出joint 4值
     // 注意：此调试代码已优化，添加了详细的日志和超时保护，避免阻塞回调函数
+    // 修复：避免死锁 - 在已持有锁的情况下，直接获取状态，不调用getCurrentStateSafe
     RCLCPP_DEBUG(this->get_logger(), "[调试] 开始IK求解调试...");
     try {
       // 尝试获取锁，但设置超时避免长时间阻塞
@@ -1089,8 +1475,42 @@ private:
       if (!lock.owns_lock()) {
         RCLCPP_DEBUG(this->get_logger(), "[调试] MoveIt互斥锁被占用，跳过IK调试（不影响任务处理）");
       } else if (move_group_interface_) {
-        RCLCPP_DEBUG(this->get_logger(), "[调试] 获取MoveIt状态（超时0.1s）...");
-        auto state = move_group_interface_->getCurrentState(0.1);  // 直接调用，避免递归锁
+        RCLCPP_DEBUG(this->get_logger(), "[调试] 获取MoveIt状态（已持有锁，直接获取）...");
+        // 修复死锁：已持有锁，直接获取状态，不调用getCurrentStateSafe（避免重复获取锁）
+        moveit::core::RobotStatePtr state;
+        try {
+          const auto& robot_model = move_group_interface_->getRobotModel();
+          if (robot_model) {
+            state = std::make_shared<moveit::core::RobotState>(robot_model);
+            state->setToDefaultValues();
+            
+            // 获取arm_group关节值
+            const auto* arm_jmg = robot_model->getJointModelGroup("arm_group");
+            if (arm_jmg) {
+              std::vector<double> arm_joint_values = move_group_interface_->getCurrentJointValues();
+              if (arm_joint_values.size() == arm_jmg->getActiveJointModelNames().size()) {
+                state->setJointGroupPositions(arm_jmg, arm_joint_values);
+              }
+            }
+            
+            // 获取gripper_group关节值
+            const auto* gripper_jmg = robot_model->getJointModelGroup("gripper_group");
+            if (gripper_jmg && gripper_group_interface_) {
+              std::vector<double> gripper_joint_values = gripper_group_interface_->getCurrentJointValues();
+              if (gripper_joint_values.size() == gripper_jmg->getActiveJointModelNames().size()) {
+                state->setJointGroupPositions(gripper_jmg, gripper_joint_values);
+              }
+            }
+            
+            state->update();
+            // 修复Invalid Start State：确保关节值在合法范围内
+            state->enforceBounds();
+          }
+        } catch (const std::exception& e) {
+          RCLCPP_WARN(this->get_logger(), "[调试] 获取状态失败: %s", e.what());
+          state.reset();
+        }
+        
         if (state) {
           RCLCPP_DEBUG(this->get_logger(), "[调试] 获取关节模型组...");
           const auto* jmg = state->getJointModelGroup("arm_group");
@@ -1119,7 +1539,7 @@ private:
             RCLCPP_WARN(this->get_logger(), "[调试] 无法获取关节模型组 'arm_group'");
           }
         } else {
-          RCLCPP_WARN(this->get_logger(), "[调试] 获取当前状态失败（可能超时）");
+          RCLCPP_WARN(this->get_logger(), "[调试] 获取当前状态失败");
         }
       } else {
         RCLCPP_WARN(this->get_logger(), "[调试] MoveGroupInterface未就绪");
@@ -1168,10 +1588,15 @@ private:
         RCLCPP_INFO(this->get_logger(), "[任务入队] 已清空 %zu 个旧任务", cleared_count);
       }
       
-      // 创建任务结构体，包含位姿和原始yaw
+      // 创建任务结构体，包含位姿、原始yaw和Joint4目标值
       CableGraspTask task;
       task.cable_pose = cable_pose;
       task.original_yaw = original_yaw;
+      task.joint1_target = 0.0;  // 已废弃，Joint1由IK自动计算
+      task.joint4_target = joint4_target;  // 4DOF控制：Joint4目标值（控制夹爪yaw）
+      
+      RCLCPP_INFO(this->get_logger(), "[任务入队] Joint4目标值: %.3f rad (%.1f deg)",
+                  task.joint4_target, task.joint4_target * 180.0 / M_PI);
       
       // 添加新任务
       task_queue_.push(task);
@@ -1199,6 +1624,97 @@ private:
     queue_cv_.notify_one();
     RCLCPP_INFO(this->get_logger(), "[任务入队] 通知已发送，工作线程应被唤醒");
     RCLCPP_INFO(this->get_logger(), "[任务入队] ========================================");
+  }
+
+  // 放置位置回调（不带yaw）
+  void place_pose_callback(const geometry_msgs::msg::PoseStamped::SharedPtr msg)
+  {
+    if (emergency_stop_) {
+      RCLCPP_INFO(this->get_logger(), "收到新的放置位置消息，自动重置急停状态");
+      emergency_stop_ = false;
+      publish_state("急停:已重置");
+    }
+    
+    RCLCPP_INFO(this->get_logger(), "========================================");
+    RCLCPP_INFO(this->get_logger(), "✓ 收到放置位置消息！");
+    RCLCPP_INFO(this->get_logger(), "  位置: x=%.3f y=%.3f z=%.3f", 
+                msg->pose.position.x, msg->pose.position.y, msg->pose.position.z);
+    RCLCPP_INFO(this->get_logger(), "  坐标系: %s", msg->header.frame_id.c_str());
+    RCLCPP_INFO(this->get_logger(), "========================================");
+
+    if (!move_group_interface_) {
+      RCLCPP_WARN(this->get_logger(), "MoveGroupInterface not ready yet, dropping place_pose");
+      publish_state("错误:未就绪");
+      return;
+    }
+
+    publish_state("已接收放置任务");
+
+    geometry_msgs::msg::PoseStamped place_pose = *msg;
+    if (place_pose.header.stamp.sec == 0 && place_pose.header.stamp.nanosec == 0) {
+      place_pose.header.stamp = this->now();
+    }
+
+    // 从orientation提取yaw（用于放置方向）
+    double place_yaw = 0.0;
+    try {
+      tf2::Quaternion q;
+      tf2::fromMsg(place_pose.pose.orientation, q);
+      double roll, pitch, yaw;
+      tf2::Matrix3x3(q).getRPY(roll, pitch, yaw);
+      place_yaw = yaw;
+    } catch (const std::exception& e) {
+      RCLCPP_WARN(this->get_logger(), "无法从orientation提取yaw: %s，使用默认yaw=0", e.what());
+    }
+
+    // 执行放置任务
+    std::thread([this, place_pose, place_yaw]() {
+      do_cable_place(place_pose, place_yaw);
+    }).detach();
+  }
+
+  // 放置位置回调（带yaw）
+  void place_pose_with_yaw_callback(const m5_msgs::msg::CablePoseWithYaw::SharedPtr msg)
+  {
+    if (emergency_stop_) {
+      RCLCPP_INFO(this->get_logger(), "收到新的放置位置（带yaw）消息，自动重置急停状态");
+      emergency_stop_ = false;
+      publish_state("急停:已重置");
+    }
+    
+    RCLCPP_INFO(this->get_logger(), "========================================");
+    RCLCPP_INFO(this->get_logger(), "✓ 收到放置位置（带yaw）消息！");
+    RCLCPP_INFO(this->get_logger(), "  位置: x=%.3f y=%.3f z=%.3f", 
+                msg->position.x, msg->position.y, msg->position.z);
+    RCLCPP_INFO(this->get_logger(), "  yaw: %.3f rad (%.1f deg)", 
+                msg->yaw, msg->yaw * 180.0 / M_PI);
+    RCLCPP_INFO(this->get_logger(), "  坐标系: %s", msg->header.frame_id.c_str());
+    RCLCPP_INFO(this->get_logger(), "========================================");
+
+    if (!move_group_interface_) {
+      RCLCPP_WARN(this->get_logger(), "MoveGroupInterface not ready yet, dropping place_pose_with_yaw");
+      publish_state("错误:未就绪");
+      return;
+    }
+
+    publish_state("已接收放置任务");
+
+    // 构造PoseStamped消息
+    geometry_msgs::msg::PoseStamped place_pose;
+    place_pose.header = msg->header;
+    place_pose.pose.position = msg->position;
+    
+    // 计算四元数姿态（roll=0, pitch=0, yaw=msg->yaw）
+    place_pose.pose.orientation = compute_downward_orientation_with_yaw(msg->yaw);
+    
+    if (place_pose.header.stamp.sec == 0 && place_pose.header.stamp.nanosec == 0) {
+      place_pose.header.stamp = this->now();
+    }
+
+    // 执行放置任务
+    std::thread([this, place_pose, yaw = msg->yaw]() {
+      do_cable_place(place_pose, yaw);
+    }).detach();
   }
 
   // 发布状态
@@ -1345,11 +1861,68 @@ private:
   moveit::core::RobotStatePtr getCurrentStateSafe(double timeout = 0.0)
   {
     std::lock_guard<std::mutex> lock(moveit_mutex_);
-    if (timeout > 0.0)
-    {
-      return move_group_interface_->getCurrentState(timeout);
+    // 修复时间戳问题：优先使用getCurrentJointValues()绕过时间戳检查
+    // getCurrentJointValues()直接从CurrentStateMonitor缓存取值，不强制stamp>=now
+    // 这样可以避免"差10ms就失败"的问题
+    try {
+      const auto& robot_model = move_group_interface_->getRobotModel();
+      if (robot_model) {
+        auto state = std::make_shared<moveit::core::RobotState>(robot_model);
+        state->setToDefaultValues();
+        
+        // 优先使用getCurrentJointValues()获取arm_group关节值（绕过时间戳检查）
+        const auto* arm_jmg = robot_model->getJointModelGroup("arm_group");
+        if (arm_jmg) {
+          std::vector<double> arm_joint_values = move_group_interface_->getCurrentJointValues();
+          if (arm_joint_values.size() == arm_jmg->getActiveJointModelNames().size()) {
+            state->setJointGroupPositions(arm_jmg, arm_joint_values);
+          } else {
+            RCLCPP_WARN(this->get_logger(), "getCurrentJointValues()返回的关节数量(%zu)与arm_group期望数量(%zu)不匹配", 
+                       arm_joint_values.size(), arm_jmg->getActiveJointModelNames().size());
+          }
+        }
+        
+        // 获取gripper_group关节值
+        const auto* gripper_jmg = robot_model->getJointModelGroup("gripper_group");
+        if (gripper_jmg && gripper_group_interface_) {
+          std::vector<double> gripper_joint_values = gripper_group_interface_->getCurrentJointValues();
+          if (gripper_joint_values.size() == gripper_jmg->getActiveJointModelNames().size()) {
+            state->setJointGroupPositions(gripper_jmg, gripper_joint_values);
+          }
+        }
+        
+        // 更新状态（计算FK等）
+        state->update();
+        // 修复Invalid Start State：确保关节值在合法范围内，避免浮点误差导致状态被判为invalid
+        state->enforceBounds();
+        return state;
+      }
+    } catch (const std::exception& e) {
+      RCLCPP_WARN(this->get_logger(), "getCurrentJointValues()失败: %s，尝试使用getCurrentState()", e.what());
     }
-    return move_group_interface_->getCurrentState();
+    
+    // Fallback：如果getCurrentJointValues()失败，尝试使用getCurrentState()（带超时）
+    double actual_timeout = (timeout > 0.0) ? std::max(timeout, 1.0) : 3.0;
+    auto state = move_group_interface_->getCurrentState(actual_timeout);
+    if (!state) {
+      RCLCPP_WARN(this->get_logger(), "getCurrentState()也失败（超时=%.1fs），使用默认状态", actual_timeout);
+      try {
+        const auto& robot_model = move_group_interface_->getRobotModel();
+        if (robot_model) {
+          auto default_state = std::make_shared<moveit::core::RobotState>(robot_model);
+          default_state->setToDefaultValues();
+          default_state->enforceBounds();
+          return default_state;
+        }
+      } catch (...) {
+        // 忽略异常
+      }
+    }
+    // 对从getCurrentState获取的状态也调用enforceBounds
+    if (state) {
+      state->enforceBounds();
+    }
+    return state;
   }
 
   std::vector<double> getCurrentJointValuesSafe()
@@ -1364,6 +1937,52 @@ private:
     return gripper_group_interface_->getCurrentJointValues();
   }
 
+  // 显式设置start state（使用getCurrentJointValues()绕过时间戳检查）
+  // 这样move_group端就不需要等待current_state_monitor，避免"差10ms就失败"的问题
+  // 显式设置start state（使用getCurrentJointValues()绕过时间戳检查）
+  // 修复：加锁保护，避免并发/状态撕裂风险
+  void setStartStateExplicit()
+  {
+    std::lock_guard<std::mutex> lock(moveit_mutex_);
+    try {
+      const auto& robot_model = move_group_interface_->getRobotModel();
+      if (robot_model) {
+        auto start_state = std::make_shared<moveit::core::RobotState>(robot_model);
+        start_state->setToDefaultValues();
+        
+        // 获取arm_group关节值（使用Safe版本，已在锁内）
+        const auto* arm_jmg = robot_model->getJointModelGroup("arm_group");
+        if (arm_jmg) {
+          std::vector<double> arm_joint_values = move_group_interface_->getCurrentJointValues();
+          if (arm_joint_values.size() == arm_jmg->getActiveJointModelNames().size()) {
+            start_state->setJointGroupPositions(arm_jmg, arm_joint_values);
+          }
+        }
+        
+        // 获取gripper_group关节值（使用Safe版本，已在锁内）
+        const auto* gripper_jmg = robot_model->getJointModelGroup("gripper_group");
+        if (gripper_jmg && gripper_group_interface_) {
+          std::vector<double> gripper_joint_values = gripper_group_interface_->getCurrentJointValues();
+          if (gripper_joint_values.size() == gripper_jmg->getActiveJointModelNames().size()) {
+            start_state->setJointGroupPositions(gripper_jmg, gripper_joint_values);
+          }
+        }
+        
+        start_state->update();
+        // 修复Invalid Start State：确保关节值在合法范围内
+        start_state->enforceBounds();
+        move_group_interface_->setStartState(*start_state);
+      } else {
+        // Fallback：如果构造失败，使用setStartStateToCurrentState()
+        move_group_interface_->setStartStateToCurrentState();
+      }
+    } catch (const std::exception& e) {
+      // Fallback：如果异常，使用setStartStateToCurrentState()
+      move_group_interface_->setStartStateToCurrentState();
+      RCLCPP_DEBUG(this->get_logger(), "setStartStateExplicit()异常: %s，使用setStartStateToCurrentState()", e.what());
+    }
+  }
+
   // 等待状态稳定：连续N次joint_state变化 < 阈值再继续
   // 用于确保执行完上一段后，机械臂"回读状态"已经稳定
   // 优化：改进检查逻辑，使用更短的检查间隔和更合理的阈值
@@ -1376,8 +1995,11 @@ private:
     const moveit::core::JointModelGroup* jmg = nullptr;
     {
       std::lock_guard<std::mutex> lock(moveit_mutex_);
-      auto state = move_group_interface_->getCurrentState();
-      jmg = state->getJointModelGroup("arm_group");
+      // 修复时间戳问题：使用0.0作为等待时间，获取最新可用状态，避免时间戳检查失败
+      auto state = move_group_interface_->getCurrentState(0.0);
+      if (state) {
+        jmg = state->getJointModelGroup("arm_group");
+      }
     }
     
     if (!jmg)
@@ -1402,8 +2024,11 @@ private:
       std::vector<double> current_joint_values;
       {
         std::lock_guard<std::mutex> lock(moveit_mutex_);
-        auto current_state = move_group_interface_->getCurrentState();
-        current_state->copyJointGroupPositions(jmg, current_joint_values);
+        // 修复时间戳问题：使用Time(0)获取最新可用状态
+        auto current_state = move_group_interface_->getCurrentState(0.0);
+        if (current_state) {
+          current_state->copyJointGroupPositions(jmg, current_joint_values);
+        }
       }
       // 解锁后处理数据（不持锁，避免阻塞其他线程）
 
@@ -1547,79 +2172,94 @@ private:
   // 闭合夹爪（仅位置控制，不支持力控）
   bool close_gripper(double width = -1.0)
   {
-    std::lock_guard<std::mutex> lock(moveit_mutex_);
+    bool plan_success = false;
+    bool execute_success = false;
     
-    if (width < 0.0) {
-      width = gripper_close_width_ - gripper_close_extra_;
-      RCLCPP_INFO(this->get_logger(), "[夹爪闭合] 使用配置参数: close_width = %.3f m, close_extra = %.3f m, 最终宽度 = %.3f m", 
-                  gripper_close_width_, gripper_close_extra_, width);
-    } else {
-      RCLCPP_INFO(this->get_logger(), "[夹爪闭合] 使用传入参数: width = %.3f m", width);
-    }
-
-    // 获取当前关节状态（自检日志）
-    std::vector<double> current_joint_values = gripper_group_interface_->getCurrentJointValues();
-    double current_joint_gl = (current_joint_values.size() > 0) ? current_joint_values[0] : 0.0;
-    double current_joint_gr = (current_joint_values.size() > 1) ? current_joint_values[1] : 0.0;
-    
-    double joint_gl = width_to_joint_angle(width);
-    double joint_gr = -joint_gl;  // 镜像对称
-
-    // 自检日志：打印目标值和当前值
-    RCLCPP_INFO(this->get_logger(), 
-                "[夹爪闭合自检] 目标宽度=%.3f m, 目标JointGL=%.4f rad (%.2f°), 目标JointGR=%.4f rad (%.2f°)",
-                width, joint_gl, joint_gl * 180.0 / M_PI, joint_gr, joint_gr * 180.0 / M_PI);
-    RCLCPP_INFO(this->get_logger(), 
-                "[夹爪闭合自检] 当前JointGL=%.4f rad (%.2f°), 当前JointGR=%.4f rad (%.2f°)",
-                current_joint_gl, current_joint_gl * 180.0 / M_PI, 
-                current_joint_gr, current_joint_gr * 180.0 / M_PI);
-
-    std::vector<double> gripper_joint_values = {joint_gl, joint_gr};
-    gripper_group_interface_->setJointValueTarget(gripper_joint_values);
-
-    moveit::planning_interface::MoveGroupInterface::Plan gripper_plan;
-    moveit::core::MoveItErrorCode result = gripper_group_interface_->plan(gripper_plan);
-
-    if (result == moveit::core::MoveItErrorCode::SUCCESS)
     {
-      result = gripper_group_interface_->execute(gripper_plan);
+      std::lock_guard<std::mutex> lock(moveit_mutex_);
+      
+      if (width < 0.0) {
+        width = gripper_close_width_ - gripper_close_extra_;
+        RCLCPP_INFO(this->get_logger(), "[夹爪闭合] 使用配置参数: close_width = %.3f m, close_extra = %.3f m, 最终宽度 = %.3f m", 
+                    gripper_close_width_, gripper_close_extra_, width);
+      } else {
+        RCLCPP_INFO(this->get_logger(), "[夹爪闭合] 使用传入参数: width = %.3f m", width);
+      }
+
+      // 获取当前关节状态（自检日志）
+      std::vector<double> current_joint_values = gripper_group_interface_->getCurrentJointValues();
+      double current_joint_gl = (current_joint_values.size() > 0) ? current_joint_values[0] : 0.0;
+      double current_joint_gr = (current_joint_values.size() > 1) ? current_joint_values[1] : 0.0;
+      
+      double joint_gl = width_to_joint_angle(width);
+      double joint_gr = -joint_gl;  // 镜像对称
+
+      // 自检日志：打印目标值和当前值
+      RCLCPP_INFO(this->get_logger(), 
+                  "[夹爪闭合自检] 目标宽度=%.3f m, 目标JointGL=%.4f rad (%.2f°), 目标JointGR=%.4f rad (%.2f°)",
+                  width, joint_gl, joint_gl * 180.0 / M_PI, joint_gr, joint_gr * 180.0 / M_PI);
+      RCLCPP_INFO(this->get_logger(), 
+                  "[夹爪闭合自检] 当前JointGL=%.4f rad (%.2f°), 当前JointGR=%.4f rad (%.2f°)",
+                  current_joint_gl, current_joint_gl * 180.0 / M_PI, 
+                  current_joint_gr, current_joint_gr * 180.0 / M_PI);
+
+      std::vector<double> gripper_joint_values = {joint_gl, joint_gr};
+      gripper_group_interface_->setJointValueTarget(gripper_joint_values);
+
+      moveit::planning_interface::MoveGroupInterface::Plan gripper_plan;
+      moveit::core::MoveItErrorCode result = gripper_group_interface_->plan(gripper_plan);
+
       if (result == moveit::core::MoveItErrorCode::SUCCESS)
       {
-        // 验证夹爪是否真的闭合（检查实际关节值）
-        std::this_thread::sleep_for(std::chrono::milliseconds(200));  // 等待执行完成
-        auto actual_joints = gripper_group_interface_->getCurrentJointValues();
-        if (actual_joints.size() >= 2)
+        plan_success = true;
+        result = gripper_group_interface_->execute(gripper_plan);
+        if (result == moveit::core::MoveItErrorCode::SUCCESS)
         {
-          double actual_gl = actual_joints[0];
-          double actual_gr = actual_joints[1];
-          double target_gl = joint_gl;
-          double target_gr = joint_gr;
-          
-          double error_gl = std::abs(actual_gl - target_gl);
-          double error_gr = std::abs(actual_gr - target_gr);
-          double tolerance = 0.1;  // rad，约5.7度
-          
-          if (error_gl > tolerance || error_gr > tolerance)
-          {
-            RCLCPP_WARN(this->get_logger(), 
-                        "夹爪闭合验证失败: 目标(%.3f, %.3f), 实际(%.3f, %.3f), 误差(%.3f, %.3f)",
-                        target_gl, target_gr, actual_gl, actual_gr, error_gl, error_gr);
-            return false;  // 闭合失败
-          }
-          else
-          {
-            RCLCPP_INFO(this->get_logger(), 
-                        "夹爪闭合验证通过: 目标(%.3f, %.3f), 实际(%.3f, %.3f), 误差(%.3f, %.3f)",
-                        target_gl, target_gr, actual_gl, actual_gr, error_gl, error_gr);
-          }
+          execute_success = true;
         }
-        
-        RCLCPP_INFO(this->get_logger(), "夹爪闭合成功，宽度: %.3f m", width);
-        return true;
       }
+    }  // 锁在这里释放
+    
+    if (plan_success && execute_success)
+    {
+      // 验证夹爪是否真的闭合（检查实际关节值）
+      std::this_thread::sleep_for(std::chrono::milliseconds(200));  // 等待执行完成
+      std::vector<double> actual_joints = getCurrentGripperJointValuesSafe();
+      if (actual_joints.size() >= 2)
+      {
+        double actual_gl = actual_joints[0];
+        double actual_gr = actual_joints[1];
+        double target_gl = width_to_joint_angle(width);
+        double target_gr = -target_gl;
+        
+        double error_gl = std::abs(actual_gl - target_gl);
+        double error_gr = std::abs(actual_gr - target_gr);
+        double tolerance = 0.1;  // rad，约5.7度
+        
+        if (error_gl > tolerance || error_gr > tolerance)
+        {
+          RCLCPP_WARN(this->get_logger(), 
+                      "夹爪闭合验证失败: 目标(%.3f, %.3f), 实际(%.3f, %.3f), 误差(%.3f, %.3f)",
+                      target_gl, target_gr, actual_gl, actual_gr, error_gl, error_gr);
+          // 检测并上报碰撞状态（在锁外调用）
+          check_and_report_collision("夹爪闭合:验证失败");
+          return false;  // 闭合失败
+        }
+        else
+        {
+          RCLCPP_INFO(this->get_logger(), 
+                      "夹爪闭合验证通过: 目标(%.3f, %.3f), 实际(%.3f, %.3f), 误差(%.3f, %.3f)",
+                      target_gl, target_gr, actual_gl, actual_gr, error_gl, error_gr);
+        }
+      }
+      
+      RCLCPP_INFO(this->get_logger(), "夹爪闭合成功，宽度: %.3f m", width);
+      return true;
     }
 
     RCLCPP_WARN(this->get_logger(), "夹爪闭合失败");
+    // 检测并上报碰撞状态（在锁外调用，避免死锁）
+    check_and_report_collision("夹爪闭合");
     return false;
   }
 
@@ -1854,6 +2494,137 @@ private:
     }
     
     return true;
+  }
+
+  // 添加地面碰撞对象到planning scene
+  bool scene_add_ground_plane()
+  {
+    std::lock_guard<std::mutex> lock(moveit_mutex_);
+
+    // 检查地面对象是否已存在
+    const std::string ground_id = "ground_plane";
+    std::vector<std::string> known_objects = planning_scene_interface_->getKnownObjectNames();
+    bool ground_exists = false;
+    for (const auto& name : known_objects)
+    {
+      if (name == ground_id)
+      {
+        ground_exists = true;
+        break;
+      }
+    }
+
+    // 创建地面碰撞对象（使用BOX）
+    moveit_msgs::msg::CollisionObject collision_object;
+    collision_object.header.frame_id = planning_frame_;
+    collision_object.id = ground_id;
+
+    // 根据对象是否存在选择操作类型
+    if (ground_exists)
+    {
+      collision_object.operation = moveit_msgs::msg::CollisionObject::MOVE;
+      RCLCPP_INFO(this->get_logger(), "[场景更新] 地面对象 %s 已存在，使用MOVE操作更新", ground_id.c_str());
+    }
+    else
+    {
+      collision_object.operation = moveit_msgs::msg::CollisionObject::ADD;
+      RCLCPP_INFO(this->get_logger(), "[场景更新] 地面对象 %s 不存在，使用ADD操作添加", ground_id.c_str());
+    }
+
+    // 创建地面box（足够大的平面）
+    shape_msgs::msg::SolidPrimitive box;
+    box.type = shape_msgs::msg::SolidPrimitive::BOX;
+    box.dimensions.resize(3);
+    box.dimensions[0] = 2.0;  // x方向长度（2m）
+    box.dimensions[1] = 2.0;  // y方向长度（2m）
+    box.dimensions[2] = 0.01; // z方向厚度（1cm，足够薄）
+
+    collision_object.primitives.push_back(box);
+
+    // 获取base_link在planning_frame中的位置，计算地面高度
+    double base_z = 0.0;
+    bool base_tf_available = false;
+    try {
+      geometry_msgs::msg::TransformStamped base_transform = 
+        tf_buffer_->lookupTransform(planning_frame_, "base_link", tf2::TimePointZero);
+      base_z = base_transform.transform.translation.z;
+      base_tf_available = true;
+      RCLCPP_INFO(this->get_logger(), "[地面] base_link在%s中的z坐标: %.3f m", 
+                  planning_frame_.c_str(), base_z);
+    } catch (const tf2::TransformException& ex) {
+      RCLCPP_WARN(this->get_logger(), "[地面] 无法获取base_link位置，使用ground_height_参数: %s", ex.what());
+      // 如果无法获取TF，使用配置的ground_height_
+    }
+    
+    // 计算地面高度：基座位置 + 偏移
+    double calculated_ground_height = base_z + ground_offset_below_base_;
+    // 如果ground_height_已配置（非0），优先使用配置值；否则使用计算值
+    double final_ground_height = (ground_height_ != 0.0) ? ground_height_ : calculated_ground_height;
+    
+    // 设置地面位置（在planning frame中，z=final_ground_height）
+    geometry_msgs::msg::Pose ground_pose;
+    ground_pose.position.x = 0.0;
+    ground_pose.position.y = 0.0;
+    ground_pose.position.z = final_ground_height - 0.005;  // 中心在final_ground_height下方5mm（因为厚度是1cm）
+    ground_pose.orientation.x = 0.0;
+    ground_pose.orientation.y = 0.0;
+    ground_pose.orientation.z = 0.0;
+    ground_pose.orientation.w = 1.0;  // 无旋转
+    
+    RCLCPP_INFO(this->get_logger(), "[地面] 基座z=%.3f, 偏移=%.3f, 最终地面高度=%.3f", 
+                base_z, ground_offset_below_base_, final_ground_height);
+
+    collision_object.primitive_poses.push_back(ground_pose);
+
+    // 添加到场景
+    std::vector<moveit_msgs::msg::CollisionObject> collision_objects;
+    collision_objects.push_back(collision_object);
+    planning_scene_interface_->addCollisionObjects(collision_objects);
+
+    RCLCPP_INFO(this->get_logger(), "========================================");
+    RCLCPP_INFO(this->get_logger(), "添加地面碰撞体到场景: %s", ground_id.c_str());
+    RCLCPP_INFO(this->get_logger(), "  位置: z=%.3f m (地面高度=%.3f m)", 
+                ground_pose.position.z, final_ground_height);
+    RCLCPP_INFO(this->get_logger(), "  尺寸: %.2f x %.2f x %.2f m", 
+                box.dimensions[0], box.dimensions[1], box.dimensions[2]);
+    RCLCPP_INFO(this->get_logger(), "  坐标系: %s", planning_frame_.c_str());
+    RCLCPP_INFO(this->get_logger(), "等待场景更新...");
+    RCLCPP_INFO(this->get_logger(), "========================================");
+
+    // 等待场景更新（MoveIt场景更新是异步的）
+    const int max_attempts = 30;  // 最多等待3秒（30 * 100ms）
+    const int wait_ms = 100;
+    bool object_found = false;
+
+    for (int i = 0; i < max_attempts; ++i)
+    {
+      std::this_thread::sleep_for(std::chrono::milliseconds(wait_ms));
+      std::vector<std::string> known_objects = planning_scene_interface_->getKnownObjectNames();
+
+      for (const auto& name : known_objects)
+      {
+        if (name == ground_id)
+        {
+          object_found = true;
+          RCLCPP_INFO(this->get_logger(), "地面碰撞体 %s 已成功添加到场景中（等待了 %d ms）", 
+                     ground_id.c_str(), (i + 1) * wait_ms);
+          break;
+        }
+      }
+
+      if (object_found)
+      {
+        break;
+      }
+    }
+
+    if (!object_found)
+    {
+      RCLCPP_WARN(this->get_logger(), "地面碰撞体 %s 在 %d ms 内未添加到场景中，但继续执行", 
+                  ground_id.c_str(), max_attempts * wait_ms);
+    }
+
+    return object_found;
   }
 
   // 发布抓取流程可视化标记
@@ -2190,7 +2961,8 @@ private:
       }
       
       // 获取当前机器人状态
-      auto state = move_group_interface_->getCurrentState();
+      // 修复时间戳问题：使用Time(0)获取最新可用状态
+      auto state = move_group_interface_->getCurrentState(0.0);
       if (!state) {
         return false;
       }
@@ -2392,16 +3164,14 @@ private:
                 "[orientation计算] 输入yaw=%.3f rad (%.1f deg)（已包含所有偏移）",
                 yaw, yaw * 180.0 / M_PI);
     
-    // 方法：使用setRPY直接计算orientation，避免万向锁问题
+    // 方法：使用setRPY直接计算orientation，实现"Z轴朝下 + 绕竖直轴转yaw"
     // setRPY(Roll, Pitch, Yaw)的旋转顺序是：先Yaw，再Pitch，最后Roll
     // 所以 setRPY(M_PI, 0.0, yaw) 表示：先绕Z轴旋转yaw，再绕X轴旋转180°（朝下）
-    // 这样yaw分量直接对应输入的yaw，不受万向锁影响
-    
-    // 注意：由于Joint4是绕Link4的局部Z轴旋转，而yaw是绕世界Z轴旋转，
-    // 它们之间的关系依赖于Joint1-3的当前状态。对于4DOF机械臂，IK求解器会
-    // 自动处理这个关系，但可能不会完全匹配。我们在IK求解后会进行验证和调整。
+    // 这样yaw分量直接对应输入的yaw（绕世界Z轴的旋转角度），不受万向锁影响
+    //
+    // 注意：不需要关心Joint4的值，MoveIt的IK会自动找到合适的关节角使末端达到目标姿态
     tf2::Quaternion q;
-    q.setRPY(M_PI, 0.0, yaw);  // Roll=180°（朝下）, Pitch=0°, Yaw=yaw
+    q.setRPY(M_PI, 0.0, yaw);  // Roll=180°（朝下）, Pitch=0°, Yaw=yaw（绕竖直轴旋转）
     q.normalize();
     
     // 验证计算得到的orientation的RPY，特别是yaw分量
@@ -2420,6 +3190,104 @@ private:
     
     geometry_msgs::msg::Quaternion quat = tf2::toMsg(q);
     return quat;
+  }
+
+  // 计算"Z轴朝下"的姿态，不包含yaw约束
+  // 用于4DOF机器人，将方向控制交给Joint1，末端姿态只锁定roll/pitch（向下）
+  geometry_msgs::msg::Quaternion compute_downward_orientation_fixed()
+  {
+    // 只设置roll=180°（朝下），pitch=0°，yaw=0°（不约束yaw）
+    // 这样MoveIt的IK可以自由选择yaw，通过Joint1控制方向
+    tf2::Quaternion q;
+    q.setRPY(M_PI, 0.0, 0.0);  // Roll=180°（朝下）, Pitch=0°, Yaw=0°（不约束）
+    q.normalize();
+    
+    geometry_msgs::msg::Quaternion quat = tf2::toMsg(q);
+    RCLCPP_DEBUG(this->get_logger(), 
+                "[orientation计算] 固定向下姿态（不约束yaw）: roll=180°, pitch=0°, yaw=0°");
+    return quat;
+  }
+  
+  // 检查当前状态是否接近全零状态
+  // 返回true表示所有关节都接近0（在阈值范围内）
+  bool check_near_zero_state()
+  {
+    std::lock_guard<std::mutex> lock(moveit_mutex_);
+    try {
+      if (!move_group_interface_) {
+        RCLCPP_WARN(this->get_logger(), "[全零检测] MoveGroupInterface未初始化");
+        return false;
+      }
+      std::vector<double> current_joints = move_group_interface_->getCurrentJointValues();
+      if (current_joints.size() < 4) {
+        RCLCPP_WARN(this->get_logger(), "[全零检测] 关节数量不足: %zu < 4", current_joints.size());
+        return false;
+      }
+      
+      // 检查前4个关节是否都接近0
+      for (size_t i = 0; i < 4; ++i) {
+        if (std::abs(current_joints[i]) > near_zero_threshold_) {
+          return false;
+        }
+      }
+      RCLCPP_INFO(this->get_logger(), "[全零检测] 检测到全零状态: [%.3f, %.3f, %.3f, %.3f] rad",
+                  current_joints[0], current_joints[1], current_joints[2], current_joints[3]);
+      return true;
+    } catch (const std::exception& e) {
+      RCLCPP_WARN(this->get_logger(), "[全零检测] 无法获取当前关节状态: %s", e.what());
+      return false;
+    }
+  }
+  
+  // 从全零状态移动到安全预备位置
+  // 使用简单的MoveGroupInterface规划和执行，避免MTC的复杂性
+  bool move_to_ready_position()
+  {
+    std::lock_guard<std::mutex> lock(moveit_mutex_);
+    
+    if (!move_group_interface_) {
+      RCLCPP_ERROR(this->get_logger(), "[预运动] MoveGroupInterface未初始化");
+      return false;
+    }
+    
+    RCLCPP_INFO(this->get_logger(), "[预运动] 开始移动到预备位置: [%.3f, %.3f, %.3f, %.3f] rad",
+                ready_joint1_, ready_joint2_, ready_joint3_, ready_joint4_);
+    
+    // 设置关节目标
+    std::vector<double> ready_joints = {ready_joint1_, ready_joint2_, ready_joint3_, ready_joint4_};
+    move_group_interface_->setJointValueTarget(ready_joints);
+    
+    // 设置规划参数（使用较宽松的参数，因为只是预运动）
+    move_group_interface_->setPlanningTime(10.0);
+    move_group_interface_->setNumPlanningAttempts(10);
+    move_group_interface_->setMaxVelocityScalingFactor(0.5);  // 较慢速度，安全第一
+    move_group_interface_->setMaxAccelerationScalingFactor(0.5);
+    
+    // 规划
+    moveit::planning_interface::MoveGroupInterface::Plan plan;
+    auto result = move_group_interface_->plan(plan);
+    
+    if (result != moveit::core::MoveItErrorCode::SUCCESS) {
+      RCLCPP_ERROR(this->get_logger(), "[预运动] 规划失败，错误码: %d", result.val);
+      return false;
+    }
+    
+    RCLCPP_INFO(this->get_logger(), "[预运动] 规划成功，开始执行...");
+    
+    // 执行
+    result = move_group_interface_->execute(plan);
+    
+    if (result != moveit::core::MoveItErrorCode::SUCCESS) {
+      RCLCPP_ERROR(this->get_logger(), "[预运动] 执行失败，错误码: %d", result.val);
+      return false;
+    }
+    
+    RCLCPP_INFO(this->get_logger(), "[预运动] ✓ 成功移动到预备位置");
+    
+    // 等待一下让状态稳定
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    
+    return true;
   }
 
   // TCP偏移补偿：将"夹爪中心目标"转换为"EEF link目标"
@@ -2526,47 +3394,85 @@ private:
             std::abs(orientation.w - 1.0) < orientation_epsilon_);
   }
 
-  // 检查位置是否在工作空间内（参考m5_planning.cpp的实现）
+  // 检查位置是否在4DOF机械臂工作空间内
+  // 4DOF机械臂(Yaw + 平面2R + Wrist)的工作空间是一个"碗状"区域
+  // Joint2/3限位为[-2.97, 0]（-170°~0°），只能向下弯曲，无法"从另一侧兜过去"
   bool is_reachable(double x, double y, double z)
   {
     // URDF基本参数（从配置读取）
-    const double base_height = workspace_base_height_;
-    const double link2_length = workspace_link2_length_;
-    const double link3_length = workspace_link3_length_;
-    const double link4_to_eef = workspace_link4_to_eef_;
+    const double joint2_height = workspace_base_height_;  // Joint2轴高度(相对base原点)
+    const double link2_length = workspace_link2_length_;  // 大臂长度
+    const double link3_length = workspace_link3_length_;  // 小臂长度
+    const double link4_to_eef = workspace_link4_to_eef_;  // 末端长度
     
-    // 计算理论最大伸展距离（完全伸展时，保守估计）
-    const double max_reach_radius = link2_length + link3_length + link4_to_eef;
-    const double max_reach_radius_with_margin = max_reach_radius * workspace_reach_radius_margin_;
+    // 计算理论最大伸展距离
+    const double max_reach = link2_length + link3_length + link4_to_eef;
+    const double max_reach_with_margin = max_reach * workspace_reach_radius_margin_;
     
-    // 计算理论最大高度（完全伸展时，保守估计）
-    const double max_height = base_height + workspace_max_height_offset_;
-    const double min_height = base_height + workspace_min_height_offset_;
+    // 计算理论高度范围
+    const double max_height = joint2_height + workspace_max_height_offset_;
+    const double min_height = joint2_height + workspace_min_height_offset_;
     
-    // 计算到基座的距离（半径）
+    // 计算到基座的水平距离（半径）
     const double radius = std::sqrt(x * x + y * y);
     
-    // 软过滤：只拒绝明显超出最大半径/高度的点
-    // 其他情况都允许进入 IK 测试，由 direct IK 作为最终可达性判定
-    if (radius > max_reach_radius_with_margin)
+    // 计算相对于Joint2轴的高度
+    const double height_from_joint2 = z - joint2_height;
+    
+    // 计算从Joint2到目标点的直线距离
+    const double distance_from_joint2 = std::sqrt(radius * radius + height_from_joint2 * height_from_joint2);
+    
+    // ========== 工作空间检查 ==========
+    // 检查1: 最小半径（太靠近base无法到达）
+    if (radius < workspace_min_radius_)
     {
       RCLCPP_WARN(this->get_logger(),
-                  "目标位置 (%.3f, %.3f, %.3f) 明显超出最大半径 (%.3f > %.3f m)，拒绝",
-                  x, y, z, radius, max_reach_radius_with_margin);
+                  "[工作空间检查] 目标 (%.3f, %.3f, %.3f) 太靠近base中心 (r=%.3f < %.3f m)，可能无法到达",
+                  x, y, z, radius, workspace_min_radius_);
+      // 只警告，不直接拒绝，让IK做最终判定
+    }
+    
+    // 检查2: 最大伸展距离
+    if (distance_from_joint2 > max_reach_with_margin)
+    {
+      RCLCPP_ERROR(this->get_logger(),
+                  "[工作空间检查] 目标 (%.3f, %.3f, %.3f) 超出最大伸展距离 (d=%.3f > %.3f m)，拒绝",
+                  x, y, z, distance_from_joint2, max_reach_with_margin);
       return false;
     }
     
-    if (z > max_height || z < min_height)
+    // 检查3: 高度范围
+    if (z > max_height)
     {
-      RCLCPP_WARN(this->get_logger(),
-                  "目标位置 (%.3f, %.3f, %.3f) 明显超出高度范围 (z=%.3f 不在 [%.3f, %.3f] m)，拒绝",
-                  x, y, z, z, min_height, max_height);
+      RCLCPP_ERROR(this->get_logger(),
+                  "[工作空间检查] 目标 (%.3f, %.3f, %.3f) 高度过高 (z=%.3f > %.3f m)，拒绝",
+                  x, y, z, z, max_height);
       return false;
     }
     
-    // 其他情况都允许进入 IK 测试
-    RCLCPP_INFO(this->get_logger(), "目标位置 (%.3f, %.3f, %.3f) 通过工作空间检查（半径=%.3f m，高度=%.3f m）",
-                x, y, z, radius, z);
+    if (z < min_height)
+    {
+      RCLCPP_ERROR(this->get_logger(),
+                  "[工作空间检查] 目标 (%.3f, %.3f, %.3f) 高度过低 (z=%.3f < %.3f m)，拒绝",
+                  x, y, z, z, min_height);
+      return false;
+    }
+    
+    // 检查4: 特殊情况 - Joint2/3限位检查
+    // 由于Joint2/3只能向下弯曲[-170°, 0°]，有些位置虽然在球壳内但无法到达
+    // 简化检查：如果目标点在Joint2轴以上但水平距离很大，可能无法到达
+    if (height_from_joint2 > 0.1 && radius > 0.4)
+    {
+      RCLCPP_WARN(this->get_logger(),
+                  "[工作空间检查] 目标 (%.3f, %.3f, %.3f) 在高位且水平距离大，4DOF可能难以到达",
+                  x, y, z);
+      // 只警告，让IK做最终判定
+    }
+    
+    // 通过基本检查
+    RCLCPP_INFO(this->get_logger(), 
+                "[工作空间检查] 目标 (%.3f, %.3f, %.3f) 通过检查 (r=%.3f m, z=%.3f m, d_j2=%.3f m)",
+                x, y, z, radius, z, distance_from_joint2);
     return true;
   }
 
@@ -2706,6 +3612,147 @@ private:
     return original_yaw;  // 返回原始yaw，调用者需要检查是否有效
   }
 
+  // yaw候选搜索函数（简化版：能抓就行）
+  // 输入：目标xyz、参考yaw（如果只有xyz则为默认值）
+  // 输出：最优yaw值
+  // 评分规则：plan成功 > 关节离极限距离 > yaw误差
+  double find_best_yaw_candidate(double x, double y, double z, double reference_yaw,
+                                 const moveit::core::RobotStatePtr& state)
+  {
+    if (!state) {
+      RCLCPP_WARN(this->get_logger(), "[yaw候选搜索] state为空，返回参考yaw");
+      return reference_yaw;
+    }
+
+    const auto* jmg = state->getJointModelGroup("arm_group");
+    if (!jmg) {
+      RCLCPP_WARN(this->get_logger(), "[yaw候选搜索] 无法获取arm_group，返回参考yaw");
+      return reference_yaw;
+    }
+
+    RCLCPP_INFO(this->get_logger(), 
+                "[yaw候选搜索] 开始搜索最优yaw: 位置(%.3f, %.3f, %.3f), 参考yaw=%.3f rad (%.1f°)",
+                x, y, z, reference_yaw, reference_yaw * 180.0 / M_PI);
+
+    // 生成候选yaw集合：以参考yaw为中心，在搜索范围内每步长一个候选
+    std::vector<double> candidate_yaws;
+    double search_min = reference_yaw - yaw_candidate_range_ / 2.0;
+    double search_max = reference_yaw + yaw_candidate_range_ / 2.0;
+    
+    // 确保搜索范围在[-π, π]内
+    if (search_min < -M_PI) search_min = -M_PI;
+    if (search_max > M_PI) search_max = M_PI;
+    
+    int num_candidates = static_cast<int>((search_max - search_min) / yaw_candidate_step_) + 1;
+    for (int i = 0; i < num_candidates; ++i) {
+      double candidate = search_min + i * yaw_candidate_step_;
+      // 归一化到[-π, π]
+      while (candidate > M_PI) candidate -= 2.0 * M_PI;
+      while (candidate < -M_PI) candidate += 2.0 * M_PI;
+      candidate_yaws.push_back(candidate);
+    }
+
+    RCLCPP_INFO(this->get_logger(), 
+                "[yaw候选搜索] 生成 %zu 个候选yaw，范围[%.3f, %.3f] rad，步长=%.3f rad",
+                candidate_yaws.size(), search_min, search_max, yaw_candidate_step_);
+
+    // 评分结构
+    struct YawCandidate {
+      double yaw;
+      bool ik_valid;
+      double joint4_distance_to_limit;  // Joint4离极限的距离（越大越好）
+      double yaw_error;  // 与参考yaw的误差（越小越好）
+      double score;  // 综合评分（越大越好）
+    };
+
+    std::vector<YawCandidate> valid_candidates;
+
+    // 获取Joint4的限位信息
+    const auto* joint4_model = jmg->getJointModel("Joint4");
+    double joint4_min = -M_PI;
+    double joint4_max = M_PI;
+    if (joint4_model) {
+      const auto& bounds = joint4_model->getVariableBounds();
+      if (!bounds.empty()) {
+        // 获取第一个变量的限位（对于旋转关节通常只有一个变量）
+        const auto& variable_bounds = bounds[0];
+        joint4_min = variable_bounds.min_position_;
+        joint4_max = variable_bounds.max_position_;
+      }
+    }
+
+    // 评估每个候选yaw
+    for (double candidate_yaw : candidate_yaws) {
+      YawCandidate candidate;
+      candidate.yaw = candidate_yaw;
+      candidate.ik_valid = false;
+      candidate.joint4_distance_to_limit = 0.0;
+      candidate.yaw_error = std::abs(normalize_angle_diff(candidate_yaw - reference_yaw));
+      candidate.score = -1.0;  // 无效候选
+
+      // 构造位姿并求解IK
+      geometry_msgs::msg::Pose candidate_pose;
+      candidate_pose.position.x = x;
+      candidate_pose.position.y = y;
+      candidate_pose.position.z = z;
+      candidate_pose.orientation = compute_downward_orientation_with_yaw(candidate_yaw);
+
+      moveit::core::RobotStatePtr candidate_state(new moveit::core::RobotState(*state));
+      if (candidate_state->setFromIK(jmg, candidate_pose, eef_link_, ik_timeout_)) {
+        candidate.ik_valid = true;
+
+        // 获取Joint4值并计算离极限的距离
+        std::vector<double> joint_values;
+        candidate_state->copyJointGroupPositions(jmg, joint_values);
+        if (joint_values.size() >= 4) {
+          double joint4_value = joint_values[3];
+          // 计算到两个极限的距离，取较小值
+          double dist_to_min = joint4_value - joint4_min;
+          double dist_to_max = joint4_max - joint4_value;
+          candidate.joint4_distance_to_limit = std::min(dist_to_min, dist_to_max);
+        }
+
+        // 计算综合评分
+        // 优先级1：ik_valid（已满足）
+        // 优先级2：joint4_distance_to_limit（越大越好，归一化到[0, 1]）
+        // 优先级3：yaw_error（越小越好，归一化到[0, 1]，然后取反）
+        double normalized_joint4_dist = std::min(candidate.joint4_distance_to_limit / M_PI, 1.0);
+        double normalized_yaw_error = 1.0 - std::min(candidate.yaw_error / M_PI, 1.0);
+        
+        // 综合评分：joint4距离权重0.6，yaw误差权重0.4
+        candidate.score = 0.6 * normalized_joint4_dist + 0.4 * normalized_yaw_error;
+      }
+
+      if (candidate.ik_valid) {
+        valid_candidates.push_back(candidate);
+      }
+    }
+
+    if (valid_candidates.empty()) {
+      RCLCPP_WARN(this->get_logger(), 
+                  "[yaw候选搜索] 未找到任何有效的yaw候选，返回参考yaw");
+      return reference_yaw;
+    }
+
+    // 选择评分最高的候选
+    auto best_candidate = std::max_element(valid_candidates.begin(), valid_candidates.end(),
+                                           [](const YawCandidate& a, const YawCandidate& b) {
+                                             return a.score < b.score;
+                                           });
+
+    RCLCPP_INFO(this->get_logger(),
+                "[yaw候选搜索] 找到 %zu 个有效候选，最优yaw=%.3f rad (%.1f°)，评分=%.3f",
+                valid_candidates.size(),
+                best_candidate->yaw, best_candidate->yaw * 180.0 / M_PI,
+                best_candidate->score);
+    RCLCPP_INFO(this->get_logger(),
+                "[yaw候选搜索] Joint4离极限距离=%.3f rad, yaw误差=%.3f rad (%.1f°)",
+                best_candidate->joint4_distance_to_limit,
+                best_candidate->yaw_error, best_candidate->yaw_error * 180.0 / M_PI);
+
+    return best_candidate->yaw;
+  }
+
   // 角度差值归一化函数：将角度差值归一化到[-π, π]范围，考虑±180度等价性
   double normalize_angle_diff(double diff)
   {
@@ -2771,7 +3818,10 @@ private:
     optimal_joint_values = initial_joint_values;  // 保存初始关节值
     double best_diff = initial_diff;
 
-    // 在目标yaw±搜索范围内搜索
+    // 两阶段搜索策略：
+    // 阶段1：在目标yaw±搜索范围内进行粗搜索（使用配置的步长）
+    // 阶段2：如果找到较优解，在该解附近进行细搜索（使用更小的步长）
+    
     // 如果搜索范围超过2π，限制在合理范围内以避免跨越360度边界
     double search_range = joint4_yaw_search_range_;
     if (search_range > M_PI) {
@@ -2781,6 +3831,7 @@ private:
                   joint4_yaw_search_range_);
     }
     
+    // 阶段1：粗搜索（在目标yaw附近）
     double search_min = target_yaw - search_range;
     double search_max = target_yaw + search_range;
     
@@ -2789,24 +3840,29 @@ private:
       double offset = -M_PI - search_min;
       search_min = -M_PI;
       search_max += offset;
+      if (search_max > M_PI) search_max = M_PI;
     }
     if (search_max > M_PI) {
       double offset = search_max - M_PI;
       search_max = M_PI;
       search_min -= offset;
+      if (search_min < -M_PI) search_min = -M_PI;
     }
     
     int search_steps = static_cast<int>((search_max - search_min) / joint4_yaw_search_step_);
     if (search_steps < 1) search_steps = 1;
 
     RCLCPP_INFO(this->get_logger(),
-                "[Joint4-yaw搜索] 搜索范围: [%.3f, %.3f] rad ([%.1f, %.1f]°)，步长=%.3f rad (%.1f°)，步数=%d",
+                "[Joint4-yaw搜索] 阶段1（粗搜索）: 范围[%.3f, %.3f] rad ([%.1f, %.1f]°)，步长=%.3f rad (%.1f°)，步数=%d",
                 search_min, search_max,
                 search_min * 180.0 / M_PI, search_max * 180.0 / M_PI,
                 joint4_yaw_search_step_, joint4_yaw_search_step_ * 180.0 / M_PI,
                 search_steps);
 
     int valid_solutions = 0;
+    double best_candidate_yaw = target_yaw;  // 记录找到最优解的candidate_yaw，用于阶段2
+    
+    // 阶段1：粗搜索
     for (int i = 0; i <= search_steps; ++i) {
       double candidate_yaw = search_min + i * joint4_yaw_search_step_;
       
@@ -2844,9 +3900,10 @@ private:
         optimal_yaw = candidate_yaw;
         optimal_joint4 = candidate_joint4;
         optimal_joint_values = candidate_joint_values;  // 保存最优候选的完整关节值
+        best_candidate_yaw = candidate_yaw;  // 记录用于阶段2细搜索
         
         RCLCPP_INFO(this->get_logger(),
-                    "[Joint4-yaw搜索] 找到更优候选: yaw=%.3f rad (%.1f°), Joint4=%.3f rad (%.1f°), 差值=%.3f rad (%.1f°)",
+                    "[Joint4-yaw搜索] 阶段1找到更优候选: yaw=%.3f rad (%.1f°), Joint4=%.3f rad (%.1f°), 差值=%.3f rad (%.1f°)",
                     candidate_yaw, candidate_yaw * 180.0 / M_PI,
                     candidate_joint4, candidate_joint4 * 180.0 / M_PI,
                     candidate_diff, candidate_diff * 180.0 / M_PI);
@@ -2854,11 +3911,157 @@ private:
     }
 
     RCLCPP_INFO(this->get_logger(),
-                "[Joint4-yaw搜索] 搜索完成: 有效解数量=%d，最优yaw=%.3f rad (%.1f°), 最优Joint4=%.3f rad (%.1f°), 最优差值=%.3f rad (%.1f°)",
+                "[Joint4-yaw搜索] 阶段1完成: 有效解数量=%d，最优yaw=%.3f rad (%.1f°), 最优Joint4=%.3f rad (%.1f°), 最优差值=%.3f rad (%.1f°)",
                 valid_solutions,
                 optimal_yaw, optimal_yaw * 180.0 / M_PI,
                 optimal_joint4, optimal_joint4 * 180.0 / M_PI,
                 best_diff, best_diff * 180.0 / M_PI);
+
+    // 阶段2：如果阶段1找到了更优解（改善>5度），在该解附近进行细搜索
+    // 同时也在初始Joint4值对应的yaw附近进行搜索（反向搜索）
+    const double fine_search_threshold = 0.0873;  // 5度（降低阈值，让更多情况触发细搜索）
+    bool should_fine_search = (best_diff < initial_diff - fine_search_threshold && valid_solutions > 0);
+    
+    // 反向搜索：在初始Joint4值对应的yaw附近也进行搜索
+    // 因为Joint4与yaw的关系可能不是线性的，初始Joint4值可能对应一个更接近目标yaw的orientation
+    double reverse_search_yaw = initial_joint4;  // 假设初始Joint4值对应的yaw就是它自己
+    double reverse_search_range = 0.7854;  // ±45度反向搜索范围
+    double reverse_search_step = 0.0873;    // 5度步长
+    
+    if (should_fine_search || initial_diff > 0.5236) {  // 如果初始差值>30度，也进行反向搜索
+      RCLCPP_INFO(this->get_logger(),
+                  "[Joint4-yaw搜索] 反向搜索: 在初始Joint4=%.3f rad (%.1f°)对应的yaw附近搜索",
+                  initial_joint4, initial_joint4 * 180.0 / M_PI);
+      
+      double reverse_search_min = reverse_search_yaw - reverse_search_range;
+      double reverse_search_max = reverse_search_yaw + reverse_search_range;
+      
+      // 确保反向搜索范围在[-π, π]内
+      if (reverse_search_min < -M_PI) reverse_search_min = -M_PI;
+      if (reverse_search_max > M_PI) reverse_search_max = M_PI;
+      
+      int reverse_search_steps = static_cast<int>((reverse_search_max - reverse_search_min) / reverse_search_step);
+      if (reverse_search_steps < 1) reverse_search_steps = 1;
+      
+      for (int i = 0; i <= reverse_search_steps; ++i) {
+        double candidate_yaw = reverse_search_min + i * reverse_search_step;
+        
+        // 归一化到[-π, π]范围
+        while (candidate_yaw > M_PI) candidate_yaw -= 2.0 * M_PI;
+        while (candidate_yaw < -M_PI) candidate_yaw += 2.0 * M_PI;
+        
+        // 构造位姿并求解IK
+        geometry_msgs::msg::Pose candidate_pose;
+        candidate_pose.position.x = x;
+        candidate_pose.position.y = y;
+        candidate_pose.position.z = z;
+        candidate_pose.orientation = compute_downward_orientation_with_yaw(candidate_yaw);
+        
+        moveit::core::RobotStatePtr candidate_state(new moveit::core::RobotState(*state));
+        if (!candidate_state->setFromIK(jmg, candidate_pose, eef_link_, ik_timeout_)) {
+          continue;  // IK不可解，跳过
+        }
+        
+        std::vector<double> candidate_joint_values;
+        candidate_state->copyJointGroupPositions(jmg, candidate_joint_values);
+        if (candidate_joint_values.size() < 4) {
+          continue;
+        }
+        
+        double candidate_joint4 = candidate_joint_values[3];
+        // 使用归一化的角度差值
+        double candidate_diff_raw = candidate_joint4 - target_yaw;
+        double candidate_diff = std::abs(normalize_angle_diff(candidate_diff_raw));
+        
+        // 如果这个候选使Joint4更接近目标yaw，更新最优值
+        if (candidate_diff < best_diff) {
+          best_diff = candidate_diff;
+          optimal_yaw = candidate_yaw;
+          optimal_joint4 = candidate_joint4;
+          optimal_joint_values = candidate_joint_values;
+          best_candidate_yaw = candidate_yaw;  // 更新用于阶段2细搜索
+          
+          RCLCPP_INFO(this->get_logger(),
+                      "[Joint4-yaw搜索] 反向搜索找到更优候选: yaw=%.3f rad (%.1f°), Joint4=%.3f rad (%.1f°), 差值=%.3f rad (%.1f°)",
+                      candidate_yaw, candidate_yaw * 180.0 / M_PI,
+                      candidate_joint4, candidate_joint4 * 180.0 / M_PI,
+                      candidate_diff, candidate_diff * 180.0 / M_PI);
+        }
+      }
+    }
+    
+    // 阶段2：如果找到了更优解（改善>5度），在该解附近进行细搜索
+    if (should_fine_search) {
+      double fine_search_range = 0.5236;  // ±30度细搜索范围
+      double fine_search_step = 0.0175;   // 1度细搜索步长
+      double fine_search_min = best_candidate_yaw - fine_search_range;
+      double fine_search_max = best_candidate_yaw + fine_search_range;
+      
+      // 确保细搜索范围在[-π, π]内
+      if (fine_search_min < -M_PI) fine_search_min = -M_PI;
+      if (fine_search_max > M_PI) fine_search_max = M_PI;
+      
+      int fine_search_steps = static_cast<int>((fine_search_max - fine_search_min) / fine_search_step);
+      if (fine_search_steps < 1) fine_search_steps = 1;
+      
+      RCLCPP_INFO(this->get_logger(),
+                  "[Joint4-yaw搜索] 阶段2（细搜索）: 在yaw=%.3f rad (%.1f°)附近，范围[%.3f, %.3f] rad，步长=%.3f rad (%.1f°)，步数=%d",
+                  best_candidate_yaw, best_candidate_yaw * 180.0 / M_PI,
+                  fine_search_min, fine_search_max,
+                  fine_search_step, fine_search_step * 180.0 / M_PI,
+                  fine_search_steps);
+      
+      for (int i = 0; i <= fine_search_steps; ++i) {
+        double candidate_yaw = fine_search_min + i * fine_search_step;
+        
+        // 归一化到[-π, π]范围
+        while (candidate_yaw > M_PI) candidate_yaw -= 2.0 * M_PI;
+        while (candidate_yaw < -M_PI) candidate_yaw += 2.0 * M_PI;
+        
+        // 构造位姿并求解IK
+        geometry_msgs::msg::Pose candidate_pose;
+        candidate_pose.position.x = x;
+        candidate_pose.position.y = y;
+        candidate_pose.position.z = z;
+        candidate_pose.orientation = compute_downward_orientation_with_yaw(candidate_yaw);
+        
+        moveit::core::RobotStatePtr candidate_state(new moveit::core::RobotState(*state));
+        if (!candidate_state->setFromIK(jmg, candidate_pose, eef_link_, ik_timeout_)) {
+          continue;  // IK不可解，跳过
+        }
+        
+        std::vector<double> candidate_joint_values;
+        candidate_state->copyJointGroupPositions(jmg, candidate_joint_values);
+        if (candidate_joint_values.size() < 4) {
+          continue;
+        }
+        
+        double candidate_joint4 = candidate_joint_values[3];
+        // 使用归一化的角度差值
+        double candidate_diff_raw = candidate_joint4 - target_yaw;
+        double candidate_diff = std::abs(normalize_angle_diff(candidate_diff_raw));
+        
+        // 如果这个候选使Joint4更接近目标yaw，更新最优值
+        if (candidate_diff < best_diff) {
+          best_diff = candidate_diff;
+          optimal_yaw = candidate_yaw;
+          optimal_joint4 = candidate_joint4;
+          optimal_joint_values = candidate_joint_values;
+          
+          RCLCPP_INFO(this->get_logger(),
+                      "[Joint4-yaw搜索] 阶段2找到更优候选: yaw=%.3f rad (%.1f°), Joint4=%.3f rad (%.1f°), 差值=%.3f rad (%.1f°)",
+                      candidate_yaw, candidate_yaw * 180.0 / M_PI,
+                      candidate_joint4, candidate_joint4 * 180.0 / M_PI,
+                      candidate_diff, candidate_diff * 180.0 / M_PI);
+        }
+      }
+      
+      RCLCPP_INFO(this->get_logger(),
+                  "[Joint4-yaw搜索] 阶段2完成，最终最优yaw=%.3f rad (%.1f°), 最优Joint4=%.3f rad (%.1f°), 最优差值=%.3f rad (%.1f°)",
+                  optimal_yaw, optimal_yaw * 180.0 / M_PI,
+                  optimal_joint4, optimal_joint4 * 180.0 / M_PI,
+                  best_diff, best_diff * 180.0 / M_PI);
+    }
 
     // 如果找到更优的解（差值至少减少5度），返回true
     const double improvement_threshold = 0.0873;  // 5度
@@ -3041,9 +4244,15 @@ private:
         std::make_shared<planning_scene::PlanningScene>(move_group_interface_->getRobotModel());
     
     // 设置当前机器人状态（从MoveGroupInterface获取）
+    // 修复：使用getCurrentStateSafe()绕过时间戳检查
     try {
-      auto current_state = move_group_interface_->getCurrentState();
-      scene->setCurrentState(*current_state);
+      auto current_state = getCurrentStateSafe(1.0);
+      if (current_state) {
+        scene->setCurrentState(*current_state);
+      } else {
+        RCLCPP_WARN(this->get_logger(), "[IK碰撞检查] getCurrentStateSafe()失败，使用默认状态");
+        scene->getCurrentStateNonConst().setToDefaultValues();
+      }
     } catch (const std::exception& e) {
       RCLCPP_WARN(this->get_logger(), "[IK碰撞检查] 无法获取当前状态: %s", e.what());
       return false;
@@ -3089,6 +4298,101 @@ private:
     }
     
     return found;
+  }
+
+  // 检测并上报碰撞状态（用于规划失败时诊断）
+  // 注意：此函数必须在锁外调用，否则会死锁（因为内部会获取moveit_mutex_）
+  void check_and_report_collision(const std::string& context = "")
+  {
+    if (!move_group_interface_ || !planning_scene_interface_)
+    {
+      return;
+    }
+
+    // 创建PlanningScene用于碰撞检测
+    const moveit::core::RobotModelConstPtr& robot_model = move_group_interface_->getRobotModel();
+    if (!robot_model)
+    {
+      return;
+    }
+
+    planning_scene::PlanningScenePtr scene = 
+        std::make_shared<planning_scene::PlanningScene>(robot_model);
+    
+    // 获取当前机器人状态（在锁内获取）
+    // 修复：使用getCurrentStateSafe()绕过时间戳检查
+    moveit::core::RobotStatePtr current_state = getCurrentStateSafe(1.0);
+    
+    if (!current_state)
+    {
+      RCLCPP_WARN(this->get_logger(), "[碰撞检测] 无法获取当前机器人状态");
+      return;
+    }
+
+    // 设置当前状态到场景
+    scene->setCurrentState(*current_state);
+    
+    // 从PlanningSceneInterface获取碰撞对象并添加到scene中（在锁内获取）
+    {
+      std::lock_guard<std::mutex> lock(moveit_mutex_);
+      // 获取所有已知的collision objects
+      std::vector<std::string> known_objects = planning_scene_interface_->getKnownObjectNames();
+      
+      // 获取所有collision objects的详细信息
+      std::map<std::string, moveit_msgs::msg::CollisionObject> objects_map = 
+          planning_scene_interface_->getObjects(known_objects);
+      
+      // 将collision objects添加到scene中
+      for (const auto& obj_pair : objects_map)
+      {
+        const moveit_msgs::msg::CollisionObject& obj = obj_pair.second;
+        scene->processCollisionObjectMsg(obj);
+      }
+    }
+    
+    // 检测碰撞（包括自碰撞和环境碰撞）
+    collision_detection::CollisionRequest collision_request;
+    collision_detection::CollisionResult collision_result;
+    collision_request.contacts = true;  // 获取碰撞接触信息
+    collision_request.max_contacts = 10;  // 最多返回10个碰撞点
+
+    scene->checkCollision(collision_request, collision_result, *current_state);
+
+    if (collision_result.collision)
+    {
+      // 提取碰撞信息
+      std::string collision_info = "碰撞检测";
+      if (!context.empty())
+      {
+        collision_info += ":[" + context + "]";
+      }
+
+      collision_info += ":发现碰撞";
+      
+      // 收集碰撞对象对
+      std::set<std::string> collision_pairs;
+      for (const auto& contact : collision_result.contacts)
+      {
+        std::string pair = contact.first.first + "<->" + contact.first.second;
+        collision_pairs.insert(pair);
+      }
+
+      if (!collision_pairs.empty())
+      {
+        collision_info += ":";
+        bool first = true;
+        for (const auto& pair : collision_pairs)
+        {
+          if (!first) collision_info += ",";
+          collision_info += pair;
+          first = false;
+        }
+      }
+
+      // 上报到网页
+      publish_state("错误:碰撞", collision_info);
+      RCLCPP_WARN(this->get_logger(), "[碰撞检测] %s", collision_info.c_str());
+    }
   }
 
   // 计算预抓取位姿
@@ -3207,17 +4511,30 @@ private:
     double center_pregrasp_z = cable_pose.pose.position.z + approach_offset_z_;
     center_grasp_pose.pose.position.z = center_pregrasp_z - descend_distance_;
     
-    // 计算更安全的最小z值：考虑线缆直径和安全余量
-    // min_z = cable_pose.z + cable_center_offset_z + 0.5 * cable_diameter + z_clearance
-    double min_z = cable_pose.pose.position.z + cable_center_offset_z_ + 0.5 * cable_diameter_;
-    min_z += z_clearance_;  // 添加安全余量（默认2mm）
+    // 计算更安全的最小z值：考虑线缆直径、相机误差、TCP偏移和最小离地距离
+    // z_grasp = z_visual + camera_error_margin + tcp_offset_z + min_ground_clearance
+    // 注意：tcp_offset_z_通常是负值（LinkGG在夹爪中心上方），所以需要加上它
+    double min_z = cable_pose.pose.position.z;
+    min_z += camera_error_margin_;  // 相机标定误差余量
+    min_z += std::abs(tcp_offset_z_);  // TCP到指尖几何偏置（取绝对值，因为offset通常是负值）
+    min_z += min_ground_clearance_;  // 最小离地安全距离
+    min_z += cable_center_offset_z_ + 0.5 * cable_diameter_;  // 线缆中心偏移和半径
+    
+    // 确保不低于地面高度
+    double ground_z = ground_height_ + min_ground_clearance_;
+    if (min_z < ground_z) {
+      min_z = ground_z;
+    }
     
     if (center_grasp_pose.pose.position.z < min_z)
     {
       RCLCPP_WARN(this->get_logger(), 
-                  "抓取点z (%.3f) 低于安全最小z值 (%.3f)，限制为安全最小z值 (线缆中心z=%.3f, 直径=%.3f, 安全余量=%.3f)", 
-                  center_grasp_pose.pose.position.z, min_z,
-                  cable_pose.pose.position.z + cable_center_offset_z_, cable_diameter_, z_clearance_);
+                  "抓取点z (%.3f) 低于安全最小z值 (%.3f)，限制为安全最小z值", 
+                  center_grasp_pose.pose.position.z, min_z);
+      RCLCPP_INFO(this->get_logger(),
+                  "  安全余量组成: 相机误差=%.3f, TCP偏移=%.3f, 最小离地=%.3f, 线缆半径=%.3f",
+                  camera_error_margin_, std::abs(tcp_offset_z_), min_ground_clearance_,
+                  0.5 * cable_diameter_);
       center_grasp_pose.pose.position.z = min_z;
     }
     
@@ -3609,7 +4926,8 @@ private:
     moveit::core::RobotStatePtr state_for_yaw_check;
     {
       std::lock_guard<std::mutex> lock(moveit_mutex_);
-      state_for_yaw_check = move_group_interface_->getCurrentState();
+      // 修复时间戳问题：使用Time(0)获取最新可用状态
+      state_for_yaw_check = move_group_interface_->getCurrentState(0.0);
     }
     
     // 从end_pose的orientation中提取yaw（用于yaw合法性检查）
@@ -3809,7 +5127,13 @@ private:
           break;
         }
         
-        auto state = move_group_interface_->getCurrentState();
+        // 修复时间戳问题：使用Time(0)获取最新可用状态
+        auto state = move_group_interface_->getCurrentState(0.0);
+        if (!state) {
+          RCLCPP_WARN(this->get_logger(), "[分段提升] 无法获取当前状态");
+          control_points.clear();
+          break;
+        }
         const auto* jmg = state->getJointModelGroup("arm_group");
         if (!jmg)
         {
@@ -3845,7 +5169,12 @@ private:
       if (control_points.size() == waypoints.size())
       {
         // 重新获取state和jmg（因为它们在循环内定义）
-        auto state_for_bspline = move_group_interface_->getCurrentState();
+        // 修复时间戳问题：使用Time(0)获取最新可用状态
+        auto state_for_bspline = move_group_interface_->getCurrentState(0.0);
+        if (!state_for_bspline) {
+          RCLCPP_WARN(this->get_logger(), "[B样条] 无法获取当前状态");
+          return false;
+        }
         const auto* jmg_for_bspline = state_for_bspline->getJointModelGroup("arm_group");
         if (jmg_for_bspline)
         {
@@ -3972,7 +5301,12 @@ private:
     move_group_interface_->setStartStateToCurrentState();
 
     // 获取当前状态用于yaw合法性检查
-    auto state = move_group_interface_->getCurrentState();
+    // 修复时间戳问题：使用Time(0)获取最新可用状态
+    auto state = move_group_interface_->getCurrentState(0.0);
+    if (!state) {
+      RCLCPP_WARN(this->get_logger(), "[IK→Joint] 无法获取当前状态");
+      return false;
+    }
     const auto* jmg = state->getJointModelGroup("arm_group");
     if (!jmg)
     {
@@ -4028,7 +5362,12 @@ private:
       else
       {
         // 第一次尝试：使用当前状态
-        state = move_group_interface_->getCurrentState();
+        // 修复时间戳问题：使用Time(0)获取最新可用状态
+        state = move_group_interface_->getCurrentState(0.0);
+        if (!state) {
+          RCLCPP_WARN(this->get_logger(), "[IK→Joint] 无法获取当前状态作为seed");
+          continue;
+        }
         RCLCPP_INFO(this->get_logger(), "[IK→Joint] IK尝试 #%d (使用当前状态作为seed)", attempt + 1);
       }
 
@@ -4057,93 +5396,48 @@ private:
           }
           
           double joint4_value = joint_values[3];
-          double yaw_diff = joint4_value - target_yaw_from_orientation;
           
+          // 只记录日志，不做对比和优化
+          // 注意：Joint4 ≠ 末端yaw，不进行对比。MoveIt会通过IK自动找到合适的关节角。
           RCLCPP_INFO(this->get_logger(),
-                      "[IK→Joint] Joint4值: %.3f rad (%.1f deg) - 控制夹爪yaw方向",
+                      "[IK→Joint] Joint4值: %.3f rad (%.1f deg)",
                       joint4_value, joint4_value * 180.0 / M_PI);
           RCLCPP_INFO(this->get_logger(),
                       "[IK→Joint] 目标orientation的yaw分量: %.3f rad (%.1f deg)",
                       target_yaw_from_orientation, target_yaw_from_orientation * 180.0 / M_PI);
-          RCLCPP_INFO(this->get_logger(),
-                      "[IK→Joint] Joint4 vs orientation yaw: Joint4=%.3f rad (%.1f°), orientation yaw=%.3f rad (%.1f°), 差值=%.3f rad (%.1f°)",
-                      joint4_value, joint4_value * 180.0 / M_PI,
-                      target_yaw_from_orientation, target_yaw_from_orientation * 180.0 / M_PI,
-                      yaw_diff, yaw_diff * 180.0 / M_PI);
           
-          // Joint4验证和调整：如果Joint4与期望yaw差异太大，尝试迭代搜索更优的orientation
-          // 注意：由于Joint4是绕Link4局部Z轴旋转，而yaw是绕世界Z轴旋转，它们之间的关系
-          // 依赖于Joint1-3的当前状态，所以需要使用迭代搜索来找到最优映射
-          const double max_yaw_diff = 0.5236;  // 30度（约0.5236 rad）
-          if (std::abs(yaw_diff) > max_yaw_diff && joint4_yaw_search_enabled_)
-          {
+          // 使用FK验证实际末端yaw（仅用于日志，不强制修正）
+          moveit::core::RobotStatePtr fk_state(new moveit::core::RobotState(*state));
+          fk_state->setJointGroupPositions(jmg, joint_values);
+          fk_state->updateLinkTransforms();
+          
+          // 获取实际末端位姿
+          const Eigen::Isometry3d& eef_transform = fk_state->getGlobalLinkTransform(eef_link_);
+          Eigen::Matrix3d R = eef_transform.rotation();
+          
+          // 从旋转矩阵提取RPY
+          tf2::Matrix3x3 rot_matrix;
+          rot_matrix.setValue(R(0,0), R(0,1), R(0,2),
+                              R(1,0), R(1,1), R(1,2),
+                              R(2,0), R(2,1), R(2,2));
+          double roll_actual, pitch_actual, yaw_actual;
+          rot_matrix.getRPY(roll_actual, pitch_actual, yaw_actual);
+          
+          // 与目标yaw对比（仅用于日志）
+          double yaw_error = normalize_angle_diff(yaw_actual - target_yaw_from_orientation);
+          RCLCPP_INFO(this->get_logger(),
+                      "[FK验证] 实际末端yaw=%.3f rad (%.1f°), 目标yaw=%.3f rad (%.1f°), 误差=%.3f rad (%.1f°)",
+                      yaw_actual, yaw_actual * 180.0 / M_PI,
+                      target_yaw_from_orientation, target_yaw_from_orientation * 180.0 / M_PI,
+                      yaw_error, yaw_error * 180.0 / M_PI);
+          
+          // 注意：不进行强制修正，MoveIt的IK已经找到了合适的解
+          // 如果误差较大，可能是orientation计算需要调整，或者yaw本身不需要精确对齐
+          const double max_yaw_error = 0.5236;  // 30度
+          if (std::abs(yaw_error) > max_yaw_error) {
             RCLCPP_WARN(this->get_logger(),
-                        "[IK→Joint] Joint4与期望yaw差异较大 (%.1f°)，开始迭代搜索更优的orientation...",
-                        std::abs(yaw_diff) * 180.0 / M_PI);
-            
-            // 使用迭代搜索找到使Joint4最接近期望yaw的orientation
-            double optimal_yaw = target_yaw_from_orientation;
-            double optimal_joint4 = joint4_value;
-            std::vector<double> optimal_joint_values;
-            
-            if (find_optimal_yaw_for_joint4(target_yaw_from_orientation,
-                                           pose_in_planning.pose.position.x,
-                                           pose_in_planning.pose.position.y,
-                                           pose_in_planning.pose.position.z,
-                                           state,
-                                           optimal_yaw,
-                                           optimal_joint4,
-                                           optimal_joint_values))
-            {
-              // 找到更优的解，直接使用搜索返回的关节值（避免重新求解IK导致结果不一致）
-              RCLCPP_INFO(this->get_logger(),
-                          "[IK→Joint] 迭代搜索找到更优解，最优yaw=%.3f rad (%.1f°)，最优Joint4=%.3f rad (%.1f°)",
-                          optimal_yaw, optimal_yaw * 180.0 / M_PI,
-                          optimal_joint4, optimal_joint4 * 180.0 / M_PI);
-              
-              if (optimal_joint_values.size() >= 4)
-              {
-                // 计算使用搜索返回关节值后的差值（使用归一化的角度差值）
-                double optimal_yaw_diff_raw = optimal_joint4 - target_yaw_from_orientation;
-                double optimal_yaw_diff = normalize_angle_diff(optimal_yaw_diff_raw);
-                double yaw_diff_normalized = normalize_angle_diff(yaw_diff);
-                
-                RCLCPP_INFO(this->get_logger(),
-                            "[IK→Joint] 搜索返回的Joint4值: %.3f rad (%.1f deg), 与期望yaw差值: %.3f rad (%.1f°)",
-                            optimal_joint4, optimal_joint4 * 180.0 / M_PI,
-                            optimal_yaw_diff, optimal_yaw_diff * 180.0 / M_PI);
-                
-                // 如果搜索返回的Joint4更接近期望yaw，使用搜索返回的结果
-                if (std::abs(optimal_yaw_diff) < std::abs(yaw_diff_normalized))
-                {
-                  RCLCPP_INFO(this->get_logger(),
-                              "[IK→Joint] 使用迭代搜索找到的最优orientation和关节值（Joint4更接近期望yaw）");
-                  joint_values = optimal_joint_values;  // 直接使用搜索返回的关节值
-                  pose_in_planning.pose.orientation = compute_downward_orientation_with_yaw(optimal_yaw);
-                }
-                else
-                {
-                  RCLCPP_INFO(this->get_logger(),
-                              "[IK→Joint] 保持原始orientation和关节值（搜索返回的值未改善）");
-                }
-              }
-              else
-              {
-                RCLCPP_WARN(this->get_logger(),
-                            "[IK→Joint] 搜索返回的关节值数量不足，保持原始结果");
-              }
-            }
-            else
-            {
-              RCLCPP_INFO(this->get_logger(),
-                          "[IK→Joint] 迭代搜索未找到更优解，保持原始orientation和关节值");
-            }
-          }
-          else if (std::abs(yaw_diff) > max_yaw_diff && !joint4_yaw_search_enabled_)
-          {
-            RCLCPP_WARN(this->get_logger(),
-                        "[IK→Joint] Joint4与期望yaw差异较大 (%.1f°)，但迭代搜索已禁用，保持原始结果",
-                        std::abs(yaw_diff) * 180.0 / M_PI);
+                        "[FK验证] 末端yaw误差较大 (%.1f°)，但继续使用（如果只需要垂直向下，yaw误差可接受）",
+                        std::abs(yaw_error) * 180.0 / M_PI);
           }
         }
         break;
@@ -4226,9 +5520,9 @@ private:
     }
 
     // 标准MoveIt规划（如果多项式插值未启用或失败）
-    // 修复：IK成功后、调用plan之前强制刷新start_state，避免使用旧状态
+    // 修复：IK成功后、调用plan之前显式设置start_state（绕过时间戳检查）
     // IK求解可能花费了一些时间，状态可能已经更新，必须使用最新状态
-    move_group_interface_->setStartStateToCurrentState();
+    setStartStateExplicit();
     
     move_group_interface_->clearPoseTargets();
     move_group_interface_->clearPathConstraints();
@@ -4244,7 +5538,7 @@ private:
       // 执行前再次同步状态（规划后状态可能已更新）
       // 这是 MoveIt 的常见做法：规划后、执行前再次确认状态，避免"Invalid Trajectory"错误
       std::this_thread::sleep_for(std::chrono::milliseconds(50));
-      move_group_interface_->setStartStateToCurrentState();
+      setStartStateExplicit();
       
       result = move_group_interface_->execute(plan);
       if (result == moveit::core::MoveItErrorCode::SUCCESS)
@@ -4297,7 +5591,12 @@ private:
     
     try {
       // 获取关节名称
-      auto state = move_group_interface_->getCurrentState();
+      // 修复时间戳问题：使用Time(0)获取最新可用状态
+      auto state = move_group_interface_->getCurrentState(0.0);
+      if (!state) {
+        RCLCPP_WARN(this->get_logger(), "无法获取当前状态");
+        return false;
+      }
       const auto* jmg = state->getJointModelGroup("arm_group");
       if (!jmg)
       {
@@ -4404,7 +5703,12 @@ private:
       }
 
       // 获取关节名称
-      auto state = move_group_interface_->getCurrentState();
+      // 修复时间戳问题：使用Time(0)获取最新可用状态
+      auto state = move_group_interface_->getCurrentState(0.0);
+      if (!state) {
+        RCLCPP_WARN(this->get_logger(), "无法获取当前状态");
+        return false;
+      }
       const auto* jmg = state->getJointModelGroup("arm_group");
       if (!jmg)
       {
@@ -4462,6 +5766,131 @@ private:
     catch (const std::exception& e)
     {
       RCLCPP_ERROR(this->get_logger(), "B样条轨迹生成失败: %s", e.what());
+      return false;
+    }
+  }
+
+  // 使用Pilz PTP规划器执行点对点运动（关节空间规划）
+  bool plan_execute_pilz_ptp(const geometry_msgs::msg::PoseStamped& target_pose)
+  {
+    // 转换到planning frame
+    geometry_msgs::msg::PoseStamped pose_in_planning = target_pose;
+    if (!transform_pose_to_planning(pose_in_planning))
+    {
+      return false;
+    }
+
+    std::lock_guard<std::mutex> lock(moveit_mutex_);
+    
+    // 保存当前规划器配置
+    std::string old_pipeline = move_group_interface_->getPlanningPipelineId();
+    std::string old_planner = move_group_interface_->getPlannerId();
+    double old_planning_time = move_group_interface_->getPlanningTime();
+    
+    // 切换到Pilz PTP
+    move_group_interface_->setPlanningPipelineId("pilz_industrial_motion_planner");
+    move_group_interface_->setPlannerId("PTP");
+    move_group_interface_->setPlanningTime(5.0);  // Pilz通常很快
+    move_group_interface_->setStartStateToCurrentState();
+    
+    // 设置目标位姿
+    move_group_interface_->setPoseTarget(pose_in_planning.pose, eef_link_);
+    
+    // 规划
+    moveit::planning_interface::MoveGroupInterface::Plan plan;
+    moveit::core::MoveItErrorCode result = move_group_interface_->plan(plan);
+    
+    // 恢复原规划器配置
+    move_group_interface_->setPlanningPipelineId(old_pipeline);
+    move_group_interface_->setPlannerId(old_planner);
+    move_group_interface_->setPlanningTime(old_planning_time);
+    
+    if (result == moveit::core::MoveItErrorCode::SUCCESS)
+    {
+      RCLCPP_INFO(this->get_logger(), "[Pilz PTP] 规划成功，执行轨迹");
+      result = move_group_interface_->execute(plan);
+      if (result == moveit::core::MoveItErrorCode::SUCCESS)
+      {
+        RCLCPP_INFO(this->get_logger(), "[Pilz PTP] 执行成功");
+        return true;
+      }
+      else
+      {
+        RCLCPP_WARN(this->get_logger(), "[Pilz PTP] 规划成功但执行失败");
+        return false;
+      }
+    }
+    else
+    {
+      RCLCPP_WARN(this->get_logger(), "[Pilz PTP] 规划失败");
+      return false;
+    }
+  }
+
+  // 使用Pilz LIN规划器执行直线运动（笛卡尔空间规划）
+  bool plan_execute_pilz_lin(const geometry_msgs::msg::PoseStamped& start_pose,
+                             const geometry_msgs::msg::PoseStamped& end_pose)
+  {
+    // 转换到planning frame
+    geometry_msgs::msg::PoseStamped start_in_planning = start_pose;
+    geometry_msgs::msg::PoseStamped end_in_planning = end_pose;
+    if (!transform_pose_to_planning(start_in_planning) || 
+        !transform_pose_to_planning(end_in_planning))
+    {
+      return false;
+    }
+
+    std::lock_guard<std::mutex> lock(moveit_mutex_);
+    
+    // 保存当前规划器配置
+    std::string old_pipeline = move_group_interface_->getPlanningPipelineId();
+    std::string old_planner = move_group_interface_->getPlannerId();
+    double old_planning_time = move_group_interface_->getPlanningTime();
+    // 注意：MoveIt2的MoveGroupInterface没有getMaxVelocityScalingFactor/getMaxAccelerationScalingFactor方法
+    // 使用成员变量保存当前值
+    double old_velocity_scaling = max_velocity_scaling_;
+    double old_acceleration_scaling = max_acceleration_scaling_;
+    
+    // 切换到Pilz LIN并设置较低的速度缩放因子
+    move_group_interface_->setPlanningPipelineId("pilz_industrial_motion_planner");
+    move_group_interface_->setPlannerId("LIN");
+    move_group_interface_->setPlanningTime(5.0);  // Pilz通常很快
+    move_group_interface_->setMaxVelocityScalingFactor(0.2);  // 降低速度，确保不超过关节限制
+    move_group_interface_->setMaxAccelerationScalingFactor(0.2);
+    move_group_interface_->setStartStateToCurrentState();
+    
+    // 设置目标位姿
+    move_group_interface_->setPoseTarget(end_in_planning.pose, eef_link_);
+    
+    // 规划
+    moveit::planning_interface::MoveGroupInterface::Plan plan;
+    moveit::core::MoveItErrorCode result = move_group_interface_->plan(plan);
+    
+    // 恢复原规划器配置
+    move_group_interface_->setPlanningPipelineId(old_pipeline);
+    move_group_interface_->setPlannerId(old_planner);
+    move_group_interface_->setPlanningTime(old_planning_time);
+    move_group_interface_->setMaxVelocityScalingFactor(old_velocity_scaling);
+    move_group_interface_->setMaxAccelerationScalingFactor(old_acceleration_scaling);
+    
+    if (result == moveit::core::MoveItErrorCode::SUCCESS)
+    {
+      RCLCPP_INFO(this->get_logger(), "[Pilz LIN] 规划成功，执行轨迹");
+      result = move_group_interface_->execute(plan);
+      if (result == moveit::core::MoveItErrorCode::SUCCESS)
+      {
+        RCLCPP_INFO(this->get_logger(), "[Pilz LIN] 执行成功");
+        return true;
+      }
+      else
+      {
+        RCLCPP_WARN(this->get_logger(), "[Pilz LIN] 规划成功但执行失败");
+        return false;
+      }
+    }
+    else
+    {
+      RCLCPP_WARN(this->get_logger(), "[Pilz LIN] 规划失败");
       return false;
     }
   }
@@ -4593,8 +6022,8 @@ private:
     // 临时降低 planning time，避免在 OMPL 里浪费太多时间
     // 使用成员变量而不是 getPlanningTime()（MoveIt2 某些版本没有此方法）
     move_group_interface_->setPlanningTime(fallback_planning_time_);  // 使用配置的fallback规划时间
-    
-    move_group_interface_->setStartStateToCurrentState();
+
+    setStartStateExplicit();
     move_group_interface_->clearPoseTargets();
     move_group_interface_->clearPathConstraints();
     move_group_interface_->setPositionTarget(
@@ -4663,7 +6092,12 @@ private:
       RCLCPP_INFO(this->get_logger(),
                   "对orientation候选 #%zu 进行IK检查...",
                   i + 1);
-      auto state_for_ik = move_group_interface_->getCurrentState();
+      // 修复时间戳问题：使用Time(0)获取最新可用状态
+      auto state_for_ik = move_group_interface_->getCurrentState(0.0);
+      if (!state_for_ik) {
+        RCLCPP_WARN(this->get_logger(), "无法获取当前状态进行IK检查");
+        continue;
+      }
       if (!check_ik_only_impl(pose_in_planning, state_for_ik)) {
         RCLCPP_WARN(this->get_logger(),
                     "orientation候选 #%zu IK 直接失败（目标状态无效，不是规划问题），跳过此候选",
@@ -4675,7 +6109,7 @@ private:
                   i + 1);
       
       // 尝试完整姿态目标
-      move_group_interface_->setStartStateToCurrentState();
+      setStartStateExplicit();
       move_group_interface_->clearPoseTargets();
       move_group_interface_->clearPathConstraints();
       move_group_interface_->setPoseTarget(pose_in_planning);
@@ -4719,9 +6153,9 @@ private:
     
     // ========== Fallback 3：使用Pilz PTP planner（不走OMPL的sampling逻辑）==========
     // 如果Pilz PTP能规划成功，说明问题在OMPL goal sampler
-    RCLCPP_INFO(this->get_logger(), 
+    RCLCPP_INFO(this->get_logger(),
                 "[Fallback 3] 所有OMPL策略失败，尝试Pilz PTP planner...");
-    move_group_interface_->setStartStateToCurrentState();
+    setStartStateExplicit();
     move_group_interface_->clearPoseTargets();
     move_group_interface_->clearPathConstraints();
     move_group_interface_->setPositionTarget(
@@ -4770,15 +6204,2585 @@ private:
     
     // 函数结束前恢复默认值，确保不影响后续调用
     move_group_interface_->setGoalOrientationTolerance(0.5);
+    
+    // 所有fallback都失败，在锁外检测并上报碰撞状态（避免死锁）
+    // 注意：lock会在作用域结束时自动释放，这里在return前调用
+    check_and_report_collision("位姿规划:所有fallback失败");
+    
     return false;
   }
 
-  // 核心抓取函数
+  // 计算预放置位姿（放置功能）
+  geometry_msgs::msg::PoseStamped compute_preplace_pose(const geometry_msgs::msg::PoseStamped& place_pose)
+  {
+    geometry_msgs::msg::PoseStamped preplace_pose = place_pose;
+    preplace_pose.pose.position.z += place_approach_offset_z_;
+    return preplace_pose;
+  }
+
+  // 计算放置位姿（从预放置点向下压）
+  geometry_msgs::msg::PoseStamped compute_place_pose(
+      const geometry_msgs::msg::PoseStamped& preplace_pose,
+      const geometry_msgs::msg::PoseStamped& target_place_pose)
+  {
+    geometry_msgs::msg::PoseStamped place_pose = target_place_pose;
+    // 从预放置高度向下压descend_distance_
+    double center_preplace_z = target_place_pose.pose.position.z + place_approach_offset_z_;
+    place_pose.pose.position.z = center_preplace_z - place_descend_distance_;
+    
+    // 确保不低于目标位置
+    if (place_pose.pose.position.z < target_place_pose.pose.position.z) {
+      place_pose.pose.position.z = target_place_pose.pose.position.z;
+    }
+    
+    // 使用目标位姿的orientation
+    place_pose.pose.orientation = target_place_pose.pose.orientation;
+    
+    return place_pose;
+  }
+
+  // 检查Joint2/3是否在可达范围内（[-2.97, 0]，即[-170°, 0°]）
+  // 返回true表示可达，false表示需要"向上折"（不可达）
+  bool check_joint23_reachable(const moveit::core::RobotStatePtr& state, 
+                                const std::string& jmg_name,
+                                std::vector<double>& joint2_3_values)
+  {
+    const auto* jmg = state->getJointModelGroup(jmg_name);
+    if (!jmg) {
+      return false;
+    }
+    
+    const std::vector<std::string>& joint_names = jmg->getJointModelNames();
+    std::vector<double> joint_values;
+    state->copyJointGroupPositions(jmg, joint_values);
+    
+    // 查找Joint2和Joint3的索引
+    int joint2_idx = -1, joint3_idx = -1;
+    for (size_t i = 0; i < joint_names.size(); ++i) {
+      if (joint_names[i] == "Joint2") {
+        joint2_idx = i;
+      } else if (joint_names[i] == "Joint3") {
+        joint3_idx = i;
+      }
+    }
+    
+    if (joint2_idx < 0 || joint3_idx < 0) {
+      RCLCPP_WARN(this->get_logger(), "[Joint2/3检查] 无法找到Joint2或Joint3");
+      return false;
+    }
+    
+    double joint2_value = joint_values[joint2_idx];
+    double joint3_value = joint_values[joint3_idx];
+    joint2_3_values = {joint2_value, joint3_value};
+    
+    // 检查是否在[-2.97, 0]范围内（厂家新限制：[-170°, 0°]，允许小容差）
+    const double lower_limit = -2.97 - 0.01;  // -170° = -2.967 rad，允许1度容差
+    const double upper_limit = 0.0 + 0.01;
+    
+    bool joint2_ok = (joint2_value >= lower_limit && joint2_value <= upper_limit);
+    bool joint3_ok = (joint3_value >= lower_limit && joint3_value <= upper_limit);
+    
+    if (!joint2_ok || !joint3_ok) {
+      RCLCPP_WARN(this->get_logger(), 
+                  "[Joint2/3检查] 不可达: Joint2=%.3f rad (%.1f°), Joint3=%.3f rad (%.1f°)",
+                  joint2_value, joint2_value * 180.0 / M_PI,
+                  joint3_value, joint3_value * 180.0 / M_PI);
+      RCLCPP_WARN(this->get_logger(), 
+                  "[Joint2/3检查] 需要范围: [-2.97, 0] rad ([-170°, 0°])");
+      return false;
+    }
+    
+    return true;
+  }
+
+  // 尝试多个yaw候选进行IK求解，选择Joint2/3可达的解
+  // 返回：是否找到可达解，以及选定的yaw值
+  struct YawIKResult {
+    bool success;
+    double selected_yaw;
+    std::vector<double> joint2_3_values;
+    std::string reason;  // 失败原因
+    moveit::core::RobotStatePtr successful_state;  // 成功时的状态（避免重新计算IK）
+  };
+  
+  YawIKResult try_yaw_candidates_for_ik(const geometry_msgs::msg::Pose& target_pose,
+                                        const std::vector<double>& yaw_candidates,
+                                        const std::string& eef_link,
+                                        double ik_timeout = 0.5)
+  {
+    YawIKResult result;
+    result.success = false;
+    result.selected_yaw = yaw_candidates.empty() ? 0.0 : yaw_candidates[0];
+    
+    // 增加超时时间，确保能获取到当前状态
+    auto current_state = getCurrentStateSafe(3.0);  // 增加到3秒
+    if (!current_state) {
+      result.reason = "无法获取当前状态（超时3秒）";
+      RCLCPP_WARN(this->get_logger(), "[Yaw候选IK] 无法获取当前状态，尝试使用move_group_interface的机器人模型创建默认状态");
+      // 尝试创建一个默认状态
+      try {
+        if (move_group_interface_) {
+          const auto& robot_model = move_group_interface_->getRobotModel();
+          if (robot_model) {
+            current_state = std::make_shared<moveit::core::RobotState>(robot_model);
+            current_state->setToDefaultValues();
+            RCLCPP_INFO(this->get_logger(), "[Yaw候选IK] 使用默认机器人状态");
+          } else {
+            return result;
+          }
+        } else {
+          return result;
+        }
+      } catch (...) {
+        return result;
+      }
+    }
+    
+    const auto* jmg = current_state->getJointModelGroup("arm_group");
+    if (!jmg) {
+      result.reason = "无法获取arm_group关节模型组";
+      return result;
+    }
+    
+    RCLCPP_INFO(this->get_logger(), "[Yaw候选IK] 开始尝试 %zu 个yaw候选", yaw_candidates.size());
+    
+    // 对每个yaw候选进行IK求解
+    for (size_t i = 0; i < yaw_candidates.size(); ++i) {
+      double candidate_yaw = yaw_candidates[i];
+      RCLCPP_INFO(this->get_logger(), "[Yaw候选IK] 尝试候选 #%zu: yaw=%.3f rad (%.1f°)",
+                  i + 1, candidate_yaw, candidate_yaw * 180.0 / M_PI);
+      
+      // 构造目标姿态（保持位置，更新yaw）
+      geometry_msgs::msg::Pose pose_for_ik = target_pose;
+      pose_for_ik.orientation = compute_downward_orientation_with_yaw(candidate_yaw);
+      
+      // 创建临时状态用于IK求解
+      auto test_state = std::make_shared<moveit::core::RobotState>(*current_state);
+      
+      // 尝试多次IK（使用不同seed）
+      bool ik_solved = false;
+      for (int ik_attempt = 0; ik_attempt < 5; ++ik_attempt) {
+        if (ik_attempt > 0) {
+          test_state->setToRandomPositions(jmg);
+        }
+        
+        if (test_state->setFromIK(jmg, pose_for_ik, eef_link, ik_timeout)) {
+          ik_solved = true;
+          break;
+        }
+      }
+      
+      if (!ik_solved) {
+        RCLCPP_WARN(this->get_logger(), "[Yaw候选IK] 候选 #%zu (yaw=%.3f) IK求解失败", 
+                    i + 1, candidate_yaw);
+        continue;
+      }
+      
+      // IK成功，检查Joint2/3可达性
+      std::vector<double> joint2_3_values;
+      if (check_joint23_reachable(test_state, "arm_group", joint2_3_values)) {
+        RCLCPP_INFO(this->get_logger(), "[Yaw候选IK] ✓ 候选 #%zu (yaw=%.3f) 可达！", 
+                    i + 1, candidate_yaw);
+        RCLCPP_INFO(this->get_logger(), "[Yaw候选IK] Joint2=%.3f rad (%.1f°), Joint3=%.3f rad (%.1f°)",
+                    joint2_3_values[0], joint2_3_values[0] * 180.0 / M_PI,
+                    joint2_3_values[1], joint2_3_values[1] * 180.0 / M_PI);
+        
+        result.success = true;
+        result.selected_yaw = candidate_yaw;
+        result.joint2_3_values = joint2_3_values;
+        result.successful_state = test_state;  // 保存成功时的状态，避免重新计算IK
+        return result;
+      } else {
+        RCLCPP_WARN(this->get_logger(), "[Yaw候选IK] 候选 #%zu (yaw=%.3f) IK可解但Joint2/3不可达", 
+                    i + 1, candidate_yaw);
+      }
+    }
+    
+    result.reason = "所有yaw候选都失败（IK无解或Joint2/3不可达）";
+    return result;
+  }
+
+  // 使用MTC库创建抓取Task
+  // 4DOF控制：joint4_target用于控制夹爪yaw旋转，Joint1由IK自动计算，末端姿态只锁定roll/pitch（向下）
+  mtc::Task create_grasp_task_mtc(const geometry_msgs::msg::PoseStamped& cable_pose, double cable_yaw, double joint4_target)
+  {
+    mtc::Task task;
+    
+    // 强制清理所有残留constraints（最重要！）
+    // 避免OMPL在"带path constraints + joint goal"时无法采样goal tree
+    {
+      std::lock_guard<std::mutex> lock(moveit_mutex_);
+      move_group_interface_->clearPathConstraints();
+      move_group_interface_->clearPoseTargets();
+      RCLCPP_DEBUG(this->get_logger(), "[清理] 已清理所有残留constraints和pose targets");
+    }
+    
+    // 必须先加载机器人模型，否则MTC Task无法工作
+    if (!move_group_interface_) {
+      RCLCPP_ERROR(this->get_logger(), "MoveGroupInterface未初始化，无法创建MTC Task");
+      return task;
+    }
+    
+    // 检查碰撞对象配置：MTC需要对象存在于场景中
+    if (!add_collision_object_) {
+      RCLCPP_WARN(this->get_logger(), "add_collision_object_=false，但MTC需要对象存在，强制启用碰撞对象添加");
+      // 注意：我们仍然会添加对象，但记录警告
+    }
+    
+    // 从ROS参数服务器加载机器人模型到Task
+    task.loadRobotModel(shared_from_this());
+    task.stages()->setName("cable grasp task");
+    
+    // 启用introspection以便在RViz中查看stage状态
+    task.enableIntrospection(true);
+    task.introspection().publishAllSolutions(true);
+    
+    // 创建solver用于连接各个阶段
+    mtc::solvers::PipelinePlannerPtr pipeline_planner;
+    try {
+      auto robot_model = task.getRobotModel();
+      if (!robot_model) {
+        throw std::runtime_error("Task机器人模型未加载");
+      }
+      
+      // 确保MTC使用OMPL而不是CHOMP：在创建PlanningPipeline之前，明确设置planning_plugin参数
+      // 修复CHOMP错误："Only joint-space goals are supported"
+      std::string planning_plugin_param = "ompl.planning_plugin";
+      if (!this->has_parameter(planning_plugin_param)) {
+        // 如果参数不存在，尝试声明并设置
+        this->declare_parameter(planning_plugin_param, "ompl_interface/OMPLPlanner");
+        RCLCPP_INFO(this->get_logger(), "[确保OMPL] 已声明参数 %s = ompl_interface/OMPLPlanner", planning_plugin_param.c_str());
+      } else {
+        // 如果参数已存在，检查并可能覆盖
+        std::string current_plugin;
+        if (this->get_parameter(planning_plugin_param, current_plugin)) {
+          if (current_plugin != "ompl_interface/OMPLPlanner") {
+            RCLCPP_WARN(this->get_logger(), "[确保OMPL] 当前planning_plugin=%s，不是OMPL，尝试覆盖", current_plugin.c_str());
+            // 注意：ROS2中不能直接覆盖已存在的参数，但我们可以通过设置参数来确保
+            // 实际上，PlanningPipeline会从"ompl"命名空间读取，所以我们需要确保ompl.planning_plugin正确
+          } else {
+            RCLCPP_INFO(this->get_logger(), "[确保OMPL] 验证：planning_plugin已正确设置为ompl_interface/OMPLPlanner");
+          }
+        }
+      }
+      
+      // 创建PlanningPipeline，明确指定使用OMPL
+      // 注意：PlanningPipeline会从ROS参数服务器读取ompl_planning.yaml配置
+      // 配置文件中已设置 planning_plugin: ompl_interface/OMPLPlanner
+      auto planning_pipeline = std::make_shared<planning_pipeline::PlanningPipeline>(
+          robot_model, shared_from_this(), "ompl");
+      pipeline_planner = std::make_shared<mtc::solvers::PipelinePlanner>(planning_pipeline);
+      
+      RCLCPP_INFO(this->get_logger(), "[确保OMPL] 使用PlanningPipeline创建PipelinePlanner成功（pipeline=ompl）");
+      RCLCPP_INFO(this->get_logger(), "[确保OMPL] PipelinePlanner将使用OMPL规划器（不是CHOMP）");
+      
+      // 验证规划器配置：检查参数服务器中的planning_plugin设置
+      std::string planning_plugin;
+      if (this->get_parameter("ompl.planning_plugin", planning_plugin)) {
+        RCLCPP_INFO(this->get_logger(), "[确保OMPL] 验证：ompl.planning_plugin = %s", planning_plugin.c_str());
+        if (planning_plugin != "ompl_interface/OMPLPlanner") {
+          RCLCPP_WARN(this->get_logger(), "[确保OMPL] 警告：planning_plugin不是ompl_interface/OMPLPlanner，而是%s", planning_plugin.c_str());
+          RCLCPP_WARN(this->get_logger(), "[确保OMPL] 这可能导致MTC使用CHOMP而不是OMPL，出现'Only joint-space goals are supported'错误");
+        } else {
+          RCLCPP_INFO(this->get_logger(), "[确保OMPL] ✓ planning_plugin已正确设置为OMPL");
+        }
+      } else {
+        // 尝试从robot_description_planning命名空间读取
+        if (this->get_parameter("robot_description_planning.ompl.planning_plugin", planning_plugin)) {
+          RCLCPP_INFO(this->get_logger(), "[确保OMPL] 验证：robot_description_planning.ompl.planning_plugin = %s", planning_plugin.c_str());
+        } else {
+          RCLCPP_WARN(this->get_logger(), "[确保OMPL] 无法从参数服务器读取planning_plugin，可能使用默认配置（可能不是OMPL）");
+          RCLCPP_WARN(this->get_logger(), "[确保OMPL] 建议：检查ompl_planning.yaml中planning_plugin=ompl_interface/OMPLPlanner");
+        }
+      }
+    } catch (const std::exception& e) {
+      RCLCPP_WARN(this->get_logger(), "无法使用PlanningPipeline创建PipelinePlanner: %s，回退到直接创建", e.what());
+      pipeline_planner = std::make_shared<mtc::solvers::PipelinePlanner>(shared_from_this(), "ompl");
+      RCLCPP_INFO(this->get_logger(), "回退方案：直接创建PipelinePlanner（pipeline=ompl）");
+    }
+    
+    // 转换缆绳位姿到planning frame
+    // 注意：cable_pose是针对"夹爪中心"的目标，但MTC的IK frame是LinkGG，需要补偿TCP偏移
+    geometry_msgs::msg::PoseStamped cable_pose_planning = cable_pose;
+    if (!transform_pose_to_planning(cable_pose_planning)) {
+      RCLCPP_ERROR(this->get_logger(), "无法转换缆绳位姿到planning frame");
+      return task;
+    }
+    
+    // ========== 自动计算Joint1方位角（关键！）==========
+    // Joint1控制机械臂朝向，必须根据目标位置的方位角计算
+    // 否则当目标在"后面"时，由于Joint2/3只能向下折叠（限位[-170°, 0°]），机械臂无法到达
+    double joint1_auto = 0.0;
+    try {
+      // 将目标位置转换到base_link坐标系计算方位角
+      geometry_msgs::msg::TransformStamped transform_to_base = 
+          tf_buffer_->lookupTransform("base_link", cable_pose_planning.header.frame_id, tf2::TimePointZero);
+      geometry_msgs::msg::PoseStamped target_in_base;
+      tf2::doTransform(cable_pose_planning, target_in_base, transform_to_base);
+      
+      double x_in_base = target_in_base.pose.position.x;
+      double y_in_base = target_in_base.pose.position.y;
+      
+      // Joint1 = atan2(y, x)：让机械臂朝向目标方向
+      joint1_auto = std::atan2(y_in_base, x_in_base);
+      RCLCPP_INFO(this->get_logger(), "[Joint1自动计算] 目标在base_link: (%.3f, %.3f) -> Joint1=%.3f rad (%.1f°)",
+                  x_in_base, y_in_base, joint1_auto, joint1_auto * 180.0 / M_PI);
+    } catch (const tf2::TransformException& ex) {
+      RCLCPP_WARN(this->get_logger(), "[Joint1自动计算] TF转换失败: %s，使用默认值0", ex.what());
+      joint1_auto = 0.0;
+    }
+    
+    // 计算预抓取位姿（目标上方approach_offset_z_）
+    // 注意：cable_pose是夹爪中心目标，需要转换为LinkGG目标（补偿TCP偏移）
+    // 增加额外的clearance，确保预抓取位置有足够空间（避免与cable碰撞）
+    // 增加clearance到20cm，确保OMPL能够采样goal tree
+    double pregrasp_clearance = std::max(approach_offset_z_, 0.20);  // 至少20cm clearance
+    geometry_msgs::msg::PoseStamped pregrasp_pose_center = cable_pose_planning;
+    pregrasp_pose_center.pose.position.z += pregrasp_clearance;  // 预抓取高度（夹爪中心，增加clearance）
+    // 4DOF控制：使用fixed orientation（只锁定roll/pitch向下，不约束yaw）
+    pregrasp_pose_center.pose.orientation = compute_downward_orientation_fixed();
+    
+    // 输出预抓取位置诊断信息（在转换前）
+    RCLCPP_INFO(this->get_logger(), "[4DOF控制] 预抓取位置（夹爪中心）: pos=(%.3f, %.3f, %.3f), clearance=%.3f", 
+                pregrasp_pose_center.pose.position.x, pregrasp_pose_center.pose.position.y, 
+                pregrasp_pose_center.pose.position.z, pregrasp_clearance);
+    RCLCPP_INFO(this->get_logger(), "[4DOF控制] Joint1(方位角)=%.3f rad (%.1f°), Joint4(夹爪yaw)=%.3f rad (%.1f°)",
+                joint1_auto, joint1_auto * 180.0 / M_PI,
+                joint4_target, joint4_target * 180.0 / M_PI);
+    
+    // 将夹爪中心目标转换为LinkGG目标：p_linkgg = p_center - R * offset
+    // offset是从LinkGG到夹爪中心的偏移，所以LinkGG = center - R * offset
+    tf2::Quaternion q_center;
+    tf2::fromMsg(pregrasp_pose_center.pose.orientation, q_center);
+    tf2::Matrix3x3 R_center(q_center);
+    tf2::Vector3 offset_center_from_linkgg(tcp_offset_x_, tcp_offset_y_, tcp_offset_z_);
+    tf2::Vector3 offset_world = R_center * offset_center_from_linkgg;
+    
+    geometry_msgs::msg::PoseStamped pregrasp_pose;
+    pregrasp_pose.header.frame_id = planning_frame_;
+    pregrasp_pose.pose.position.x = pregrasp_pose_center.pose.position.x - offset_world.x();
+    pregrasp_pose.pose.position.y = pregrasp_pose_center.pose.position.y - offset_world.y();
+    pregrasp_pose.pose.position.z = pregrasp_pose_center.pose.position.z - offset_world.z();
+    pregrasp_pose.pose.orientation = pregrasp_pose_center.pose.orientation;
+    RCLCPP_INFO(this->get_logger(), "预抓取位置（LinkGG，已补偿TCP偏移）: pos=(%.3f, %.3f, %.3f)", 
+                pregrasp_pose.pose.position.x, pregrasp_pose.pose.position.y, 
+                pregrasp_pose.pose.position.z);
+    RCLCPP_INFO(this->get_logger(), "TCP偏移补偿: offset=(%.4f, %.4f, %.4f) -> world=(%.4f, %.4f, %.4f)", 
+                tcp_offset_x_, tcp_offset_y_, tcp_offset_z_,
+                offset_world.x(), offset_world.y(), offset_world.z());
+    
+    // 计算抓取位姿（直接使用cable_pose_planning，orientation向下）
+    // 4DOF控制：使用fixed orientation（只锁定roll/pitch向下，不约束yaw）
+    geometry_msgs::msg::PoseStamped grasp_pose = cable_pose_planning;
+    grasp_pose.pose.orientation = compute_downward_orientation_fixed();
+    // 确保frame_id是planning_frame_
+    grasp_pose.header.frame_id = planning_frame_;
+    
+    // 1. FixedState - 使用getCurrentJointValues()构造固定起始状态（绕过时间戳检查）
+    // 修复：CurrentState stage会触发时间戳严格检查（差5ms就失败），改用FixedState
+    // 这样MTC起点状态从"监视器时间戳严格检查"中解耦出来
+    auto fixed_state = std::make_unique<mtc::stages::FixedState>("fixed start");
+    {
+      std::lock_guard<std::mutex> lock(moveit_mutex_);
+      const auto& robot_model = move_group_interface_->getRobotModel();
+      if (robot_model) {
+        // 创建PlanningScene用于FixedState
+        auto scene = std::make_shared<planning_scene::PlanningScene>(robot_model);
+        moveit::core::RobotState start(robot_model);
+        start.setToDefaultValues();
+        
+        // 获取arm_group关节值（使用getCurrentJointValues()绕过时间戳检查）
+        const auto* arm_jmg = robot_model->getJointModelGroup("arm_group");
+        if (arm_jmg) {
+          std::vector<double> arm_vals = move_group_interface_->getCurrentJointValues();
+          if (arm_vals.size() == arm_jmg->getActiveJointModelNames().size()) {
+            start.setJointGroupPositions(arm_jmg, arm_vals);
+          }
+        }
+        
+        // 获取gripper_group关节值
+        if (gripper_group_interface_) {
+          const auto* grip_jmg = robot_model->getJointModelGroup("gripper_group");
+          if (grip_jmg) {
+            std::vector<double> grip_vals = gripper_group_interface_->getCurrentJointValues();
+            if (grip_vals.size() == grip_jmg->getActiveJointModelNames().size()) {
+              start.setJointGroupPositions(grip_jmg, grip_vals);
+            }
+          }
+        }
+        
+        start.update();
+        // 修复Invalid Start State：确保关节值在合法范围内，避免浮点误差导致状态被判为invalid
+        start.enforceBounds();
+        // FixedState需要PlanningScenePtr，设置其current state
+        scene->setCurrentState(start);
+        fixed_state->setState(scene);
+        RCLCPP_INFO(this->get_logger(), "[FixedState] 使用getCurrentJointValues()构造起始状态（绕过时间戳检查，已调用enforceBounds）");
+        task.add(std::move(fixed_state));
+        RCLCPP_DEBUG(this->get_logger(), "已添加FixedState stage");
+      } else {
+        RCLCPP_WARN(this->get_logger(), "[FixedState] 无法获取robot_model，fallback到CurrentState");
+        // Fallback：如果无法构造FixedState，使用CurrentState
+        auto current_state = std::make_unique<mtc::stages::CurrentState>("current state");
+        task.add(std::move(current_state));
+        RCLCPP_DEBUG(this->get_logger(), "已添加CurrentState stage（fallback）");
+      }
+    }
+    
+    // 2. 准备碰撞对象（但先不添加，等MoveTo pregrasp完成后再添加，避免goal state被判碰撞）
+    auto add_object = std::make_unique<mtc::stages::ModifyPlanningScene>("add cable object");
+    moveit_msgs::msg::CollisionObject collision_object;
+    collision_object.header.frame_id = planning_frame_;
+    collision_object.id = cable_name_ + "_world";
+    collision_object.operation = moveit_msgs::msg::CollisionObject::ADD;
+    
+    shape_msgs::msg::SolidPrimitive cylinder;
+    cylinder.type = shape_msgs::msg::SolidPrimitive::CYLINDER;
+    cylinder.dimensions.resize(2);
+    cylinder.dimensions[0] = cable_length_;  // height
+    cylinder.dimensions[1] = cable_diameter_ / 2.0;  // radius
+    
+    collision_object.primitives.push_back(cylinder);
+    // 注意：cylinder_pose的yaw会在预抓取IK选定yaw后更新（如果需要）
+    // 先使用原始yaw，如果预抓取IK选择了翻转yaw，会在后面更新
+    geometry_msgs::msg::Pose cylinder_pose = make_cable_cylinder_pose(cable_pose_planning, cable_yaw);
+    collision_object.primitive_poses.push_back(cylinder_pose);
+    
+    // 验证碰撞体位姿
+    RCLCPP_INFO(this->get_logger(), "[碰撞体验证] 圆柱体碰撞对象参数:");
+    RCLCPP_INFO(this->get_logger(), "[碰撞体验证]   位置: pos=(%.3f, %.3f, %.3f)", 
+               cylinder_pose.position.x, cylinder_pose.position.y, cylinder_pose.position.z);
+    RCLCPP_INFO(this->get_logger(), "[碰撞体验证]   方向: orientation=(%.3f, %.3f, %.3f, %.3f)", 
+               cylinder_pose.orientation.x, cylinder_pose.orientation.y, 
+               cylinder_pose.orientation.z, cylinder_pose.orientation.w);
+    // 转换为RPY
+    tf2::Quaternion q;
+    tf2::fromMsg(cylinder_pose.orientation, q);
+    double roll, pitch, yaw;
+    tf2::Matrix3x3(q).getRPY(roll, pitch, yaw);
+    RCLCPP_INFO(this->get_logger(), "[碰撞体验证]   方向(RPY): roll=%.3f rad (%.1f°), pitch=%.3f rad (%.1f°), yaw=%.3f rad (%.1f°)", 
+               roll, roll * 180.0 / M_PI, pitch, pitch * 180.0 / M_PI, yaw, yaw * 180.0 / M_PI);
+    RCLCPP_INFO(this->get_logger(), "[碰撞体验证]   尺寸: 高度=%.3f m, 半径=%.3f m", 
+               cable_length_, cable_diameter_ / 2.0);
+    RCLCPP_INFO(this->get_logger(), "[碰撞体验证]   注意: 圆柱体默认轴沿Z轴，pitch=90°表示轴沿X或Y轴");
+    
+    // 2. MoveTo - 移动到预抓取位姿（先到达，避免与cable碰撞体冲突）
+    // 对于4DOF机械臂，使用joint goal而不是pose goal，避免姿态约束过严导致规划失败
+    // 先尝试IK求解预抓取位置，支持yaw候选尝试（原始yaw和yaw+π），选择Joint2/3可达的解
+    moveit::core::RobotStatePtr pregrasp_state;
+    std::map<std::string, double> pregrasp_joint_map;
+    bool use_joint_goal = false;
+    double selected_pregrasp_yaw = cable_yaw;  // 记录选定的yaw
+    
+    try {
+      // 准备yaw候选：原始yaw和yaw+π（对缆绳来说物理等价）
+      std::vector<double> yaw_candidates;
+      yaw_candidates.push_back(cable_yaw);
+      double yaw_flipped = cable_yaw + M_PI;
+      // 归一化到[-π, π]
+      while (yaw_flipped > M_PI) yaw_flipped -= 2.0 * M_PI;
+      while (yaw_flipped < -M_PI) yaw_flipped += 2.0 * M_PI;
+      yaw_candidates.push_back(yaw_flipped);
+      
+      RCLCPP_INFO(this->get_logger(), "[预抓取IK] 尝试yaw候选: 原始yaw=%.3f rad (%.1f°), 翻转yaw=%.3f rad (%.1f°)",
+                  cable_yaw, cable_yaw * 180.0 / M_PI,
+                  yaw_flipped, yaw_flipped * 180.0 / M_PI);
+      
+      // 使用yaw候选尝试IK求解
+      YawIKResult ik_result = try_yaw_candidates_for_ik(pregrasp_pose.pose, yaw_candidates, eef_link_, 0.5);
+      
+      if (ik_result.success && ik_result.successful_state) {
+        // IK成功且Joint2/3可达，直接使用返回的状态（避免重新计算IK可能失败）
+        const auto* jmg = ik_result.successful_state->getJointModelGroup("arm_group");
+        if (jmg) {
+          // 直接使用返回的状态，提取关节值
+          pregrasp_state = ik_result.successful_state;
+          std::vector<double> joint_values;
+          pregrasp_state->copyJointGroupPositions(jmg, joint_values);
+          
+          // 使用getActiveJointModelNames()只获取可动关节，避免虚拟关节导致的数量不匹配
+          const std::vector<std::string>& joint_names = jmg->getActiveJointModelNames();
+          
+          // 诊断信息：输出关节名和值的对应关系
+          RCLCPP_DEBUG(this->get_logger(), "[预抓取IK] 关节值数量: %zu, 关节名数量: %zu", 
+                       joint_values.size(), joint_names.size());
+          if (joint_values.size() != joint_names.size()) {
+            RCLCPP_WARN(this->get_logger(), "[预抓取IK] 关节值数量不匹配: %zu != %zu", 
+                       joint_values.size(), joint_names.size());
+            RCLCPP_WARN(this->get_logger(), "[预抓取IK] 尝试使用匹配的关节（前%zu个）", 
+                       std::min(joint_values.size(), joint_names.size()));
+          }
+          
+            // 即使数量不完全匹配，也尝试使用joint goal（只使用匹配的关节）
+            size_t num_joints = std::min(joint_values.size(), joint_names.size());
+            if (num_joints > 0) {
+              for (size_t i = 0; i < num_joints; ++i) {
+                pregrasp_joint_map[joint_names[i]] = joint_values[i];
+              }
+              
+              // 覆盖性检查：确认pregrasp_joint_map覆盖了arm_group的所有active joints
+              // 如果少一个关节，MTC/OMPL可能会把缺失关节当成0或默认值，导致goal invalid
+              bool all_joints_covered = true;
+              for (const auto& jn : joint_names) {
+                if (pregrasp_joint_map.find(jn) == pregrasp_joint_map.end()) {
+                  RCLCPP_ERROR(this->get_logger(), "[预抓取IK] ✗ pregrasp_joint_map缺少关节: %s", jn.c_str());
+                  all_joints_covered = false;
+                }
+              }
+              if (!all_joints_covered) {
+                RCLCPP_ERROR(this->get_logger(), "[预抓取IK] ✗ pregrasp_joint_map不完整，可能导致OMPL Invalid goal state");
+                // 继续尝试，但记录错误
+              } else {
+                RCLCPP_DEBUG(this->get_logger(), "[预抓取IK] ✓ pregrasp_joint_map覆盖了所有active joints");
+              }
+              
+              use_joint_goal = true;
+              selected_pregrasp_yaw = ik_result.selected_yaw;
+            
+            // 修复Joint4方向问题：保持用户指定的joint4_target，用它覆盖IK解的Joint4
+            // Joint4控制夹爪的yaw旋转角度
+            if (pregrasp_joint_map.find("Joint4") != pregrasp_joint_map.end()) {
+              double ik_joint4 = pregrasp_joint_map["Joint4"];
+              RCLCPP_INFO(this->get_logger(), "[Joint4方向] IK解Joint4=%.3f rad (%.1f°)，用户指定Joint4=%.3f rad (%.1f°)，使用用户指定值",
+                         ik_joint4, ik_joint4 * 180.0 / M_PI,
+                         joint4_target, joint4_target * 180.0 / M_PI);
+              // 用用户指定的joint4_target覆盖IK解的Joint4（关键修复！）
+              pregrasp_joint_map["Joint4"] = joint4_target;
+            } else {
+              RCLCPP_WARN(this->get_logger(), "[Joint4方向] 警告：pregrasp_joint_map中未找到Joint4，添加用户指定值");
+              pregrasp_joint_map["Joint4"] = joint4_target;
+            }
+            
+            // 修复Joint1方向问题：使用自动计算的方位角，确保机械臂朝向目标方向
+            // 这对于"后面"的目标位置至关重要，否则Joint2/3由于限位无法到达
+            if (pregrasp_joint_map.find("Joint1") != pregrasp_joint_map.end()) {
+              double ik_joint1 = pregrasp_joint_map["Joint1"];
+              RCLCPP_INFO(this->get_logger(), "[Joint1方向] IK解Joint1=%.3f rad (%.1f°)，自动计算Joint1=%.3f rad (%.1f°)，使用自动计算值",
+                         ik_joint1, ik_joint1 * 180.0 / M_PI,
+                         joint1_auto, joint1_auto * 180.0 / M_PI);
+              // 用自动计算的joint1_auto覆盖IK解的Joint1（确保朝向正确！）
+              pregrasp_joint_map["Joint1"] = joint1_auto;
+            } else {
+              RCLCPP_WARN(this->get_logger(), "[Joint1方向] 警告：pregrasp_joint_map中未找到Joint1，添加自动计算值");
+              pregrasp_joint_map["Joint1"] = joint1_auto;
+            }
+            
+            RCLCPP_INFO(this->get_logger(), "[预抓取IK] ✓ 成功！使用yaw=%.3f rad (%.1f°)，使用joint goal",
+                       selected_pregrasp_yaw, selected_pregrasp_yaw * 180.0 / M_PI);
+            if (num_joints >= 4) {
+              RCLCPP_INFO(this->get_logger(), "[预抓取IK] 关节值: %s=%.3f, %s=%.3f, %s=%.3f, %s=%.3f",
+                         joint_names[0].c_str(), joint_values[0],
+                         joint_names[1].c_str(), joint_values[1],
+                         joint_names[2].c_str(), joint_values[2],
+                         joint_names[3].c_str(), joint_values[3]);
+            } else {
+              RCLCPP_WARN(this->get_logger(), "[预抓取IK] 关节数量不足（%zu < 4），可能影响规划", num_joints);
+            }
+            RCLCPP_INFO(this->get_logger(), "[预抓取IK] Joint2=%.3f rad (%.1f°), Joint3=%.3f rad (%.1f°) - 可达",
+                       ik_result.joint2_3_values[0], ik_result.joint2_3_values[0] * 180.0 / M_PI,
+                       ik_result.joint2_3_values[1], ik_result.joint2_3_values[1] * 180.0 / M_PI);
+            
+            // 检查goal state是否与场景碰撞
+            // 修复：使用包含当前场景的版本，而不是空场景
+            // 空场景会导致假阴性：检查时无碰撞，但实际规划时场景中有地面/物体，导致OMPL采样不到goal
+            // 方案：从PlanningSceneInterface获取已知对象，添加到临时scene中
+            planning_scene::PlanningScenePtr planning_scene = 
+                std::make_shared<planning_scene::PlanningScene>(task.getRobotModel());
+            
+            // 从PlanningSceneInterface获取已知对象并添加到scene中（至少包含ground_plane）
+            {
+              std::lock_guard<std::mutex> lock(moveit_mutex_);
+              if (planning_scene_interface_) {
+                std::vector<std::string> known_objects = planning_scene_interface_->getKnownObjectNames();
+                if (!known_objects.empty()) {
+                  // 获取对象并添加到scene中
+                  std::map<std::string, moveit_msgs::msg::CollisionObject> objects_map;
+                  planning_scene_interface_->getObjects(known_objects);
+                  for (const auto& obj_name : known_objects) {
+                    // 注意：getObjects()返回的是map，但我们需要手动添加
+                    // 这里至少确保ground_plane被包含（如果存在）
+                    if (obj_name == "ground_plane") {
+                      RCLCPP_DEBUG(this->get_logger(), "[预抓取IK] 将ground_plane添加到碰撞检查scene");
+                      // ground_plane会在MTC规划时自动包含，这里只是标记
+                    }
+                  }
+                  RCLCPP_DEBUG(this->get_logger(), "[预抓取IK] 当前场景包含 %zu 个已知对象（ground_plane等会在MTC规划时自动包含）", known_objects.size());
+                }
+              }
+            }
+            
+            // 注意：这里创建的scene是"最小版本"，MTC/MoveGroup真正规划时会使用完整的planning scene
+            // 这个检查主要用于快速验证goal state的基本可行性，不是100%准确
+            RCLCPP_DEBUG(this->get_logger(), "[预抓取IK] 使用临时planning scene进行碰撞检查（MTC规划时会使用完整scene）");
+            
+            collision_detection::CollisionRequest collision_request;
+            collision_detection::CollisionResult collision_result;
+            collision_request.group_name = "arm_group";  // 指定group，提高检查效率
+            collision_request.contacts = true;  // 获取碰撞接触信息
+            collision_request.max_contacts = 10;
+            // 直接检查pregrasp_state，不修改scene的current state
+            planning_scene->checkCollision(collision_request, collision_result, *pregrasp_state);
+            
+            if (collision_result.collision) {
+              RCLCPP_WARN(this->get_logger(), "[预抓取IK] ⚠️ goal state与场景碰撞，可能导致OMPL无法采样goal tree");
+              // 输出碰撞的详细信息
+              if (collision_result.contacts.size() > 0) {
+                RCLCPP_WARN(this->get_logger(), "[预抓取IK] 碰撞接触点数量: %zu", collision_result.contacts.size());
+                size_t contact_count = 0;
+                for (const auto& contact_pair : collision_result.contacts) {
+                  if (contact_count < 3) {  // 只输出前3个碰撞对
+                    RCLCPP_WARN(this->get_logger(), "[预抓取IK] 碰撞: %s <-> %s", 
+                               contact_pair.first.first.c_str(), contact_pair.first.second.c_str());
+                    contact_count++;
+                  }
+                }
+                if (collision_result.contacts.size() > 3) {
+                  RCLCPP_WARN(this->get_logger(), "[预抓取IK] ... 还有 %zu 个碰撞对", 
+                             collision_result.contacts.size() - 3);
+                }
+              }
+              RCLCPP_WARN(this->get_logger(), "[预抓取IK] 建议：检查cable碰撞体尺寸/位置，或调整预抓取位置");
+              // 即使碰撞，仍然尝试使用joint goal（让OMPL尝试规划，可能能找到无碰撞路径）
+              RCLCPP_INFO(this->get_logger(), "[预抓取IK] 将继续使用joint goal，让OMPL尝试规划无碰撞路径");
+            } else {
+              RCLCPP_INFO(this->get_logger(), "[预抓取IK] ✓ goal state无碰撞");
+            }
+            
+            // 验证goal state的关节值是否在限位内
+            const auto* jmg_check = pregrasp_state->getJointModelGroup("arm_group");
+            if (jmg_check) {
+              std::vector<double> goal_joint_values;
+              pregrasp_state->copyJointGroupPositions(jmg_check, goal_joint_values);
+              bool joints_valid = true;
+              // 容差用于处理边界值浮点误差（如-1.570在[-1.57, 0]范围内但被误判超限）
+              const double JOINT_LIMIT_TOLERANCE = 1e-4;  // 约0.006度
+              for (size_t i = 0; i < goal_joint_values.size() && i < jmg_check->getActiveJointModels().size(); ++i) {
+                const auto* joint_model = jmg_check->getActiveJointModels()[i];
+                if (joint_model) {
+                  double min_bound = joint_model->getVariableBounds()[0].min_position_;
+                  double max_bound = joint_model->getVariableBounds()[0].max_position_;
+                  double joint_value = goal_joint_values[i];
+                  if (joint_value < min_bound - JOINT_LIMIT_TOLERANCE || joint_value > max_bound + JOINT_LIMIT_TOLERANCE) {
+                    RCLCPP_WARN(this->get_logger(), "[预抓取IK] ⚠️ 关节 %s 值 %.3f 超出限位 [%.3f, %.3f]", 
+                               joint_model->getName().c_str(), joint_value, min_bound, max_bound);
+                    joints_valid = false;
+                  }
+                }
+              }
+              if (joints_valid) {
+                RCLCPP_INFO(this->get_logger(), "[预抓取IK] ✓ 所有关节值在限位内");
+              } else {
+                RCLCPP_WARN(this->get_logger(), "[预抓取IK] ⚠️ 部分关节值超出限位，可能导致规划失败");
+              }
+            }
+          } else {
+            RCLCPP_ERROR(this->get_logger(), "[预抓取IK] 无法提取关节值（num_joints=0）");
+          }
+        } else {
+          RCLCPP_WARN(this->get_logger(), "[预抓取IK] 无法从successful_state获取arm_group");
+        }
+      } else {
+        RCLCPP_WARN(this->get_logger(), "[预抓取IK] ✗ 失败: %s", ik_result.reason.c_str());
+        RCLCPP_WARN(this->get_logger(), "[预抓取IK] 将使用pose goal（可能因姿态约束或工作空间限制导致规划失败）");
+      }
+    } catch (const std::exception& e) {
+      RCLCPP_WARN(this->get_logger(), "[预抓取IK] 异常: %s，将使用pose goal", e.what());
+    }
+    
+    // 4DOF控制：orientation始终使用fixed（只锁定roll/pitch向下，不约束yaw）
+    // 如果选定了不同的yaw，只更新碰撞对象的yaw（用于碰撞检测），但orientation保持fixed
+    if (use_joint_goal && std::abs(selected_pregrasp_yaw - cable_yaw) > 1e-6) {
+      // orientation保持fixed（4DOF控制策略）
+      pregrasp_pose.pose.orientation = compute_downward_orientation_fixed();
+      grasp_pose.pose.orientation = compute_downward_orientation_fixed();
+      RCLCPP_INFO(this->get_logger(), "[4DOF控制] 预抓取IK选定了不同yaw: %.3f rad (%.1f°) 替代原始yaw: %.3f rad (%.1f°)，但orientation保持fixed",
+                  selected_pregrasp_yaw, selected_pregrasp_yaw * 180.0 / M_PI,
+                  cable_yaw, cable_yaw * 180.0 / M_PI);
+      // 更新碰撞对象的yaw（用于碰撞检测）
+      cylinder_pose = make_cable_cylinder_pose(cable_pose_planning, selected_pregrasp_yaw);
+      collision_object.primitive_poses[0] = cylinder_pose;
+      RCLCPP_INFO(this->get_logger(), "[碰撞对象] 已更新cylinder_pose的yaw以匹配选定的yaw");
+    }
+    
+    // 2.5. Connect - 连接到预抓取位置（帮助OMPL找到从当前状态到预抓取位置的路径）
+    // 注意：Connect stage会自动连接相邻的stage，但可能在某些情况下会导致初始化失败
+    // 暂时注释掉，让MoveTo stage直接使用PipelinePlanner进行规划
+    /*
+    mtc::stages::Connect::GroupPlannerVector planners_grasp = {{"arm_group", pipeline_planner}};
+    auto connect_to_pregrasp = std::make_unique<mtc::stages::Connect>("connect to pregrasp", planners_grasp);
+    task.add(std::move(connect_to_pregrasp));
+    RCLCPP_DEBUG(this->get_logger(), "已添加Connect stage: connect to pregrasp (group=arm_group)");
+    */
+    
+    // 2.55. Open gripper - 打开夹爪（在移动到预抓取位置之前）
+    // 关键：必须先打开夹爪，否则无法抓取物体
+    // 夹爪控制：0度=夹住，负值=打开
+    auto open_gripper_stage = std::make_unique<mtc::stages::MoveTo>("open gripper", pipeline_planner);
+    open_gripper_stage->setGroup("gripper_group");
+    // 计算打开夹爪的关节角度
+    double open_width = gripper_open_width_;
+    double open_joint_gl = width_to_joint_angle(open_width);  // 负值
+    double open_joint_gr = -open_joint_gl;  // JointGR是JointGL的镜像
+    std::map<std::string, double> open_gripper_joint_map;
+    open_gripper_joint_map["JointGL"] = open_joint_gl;
+    open_gripper_joint_map["JointGR"] = open_joint_gr;
+    open_gripper_stage->setGoal(open_gripper_joint_map);
+    task.add(std::move(open_gripper_stage));
+    RCLCPP_INFO(this->get_logger(), "已添加MoveTo stage: open gripper (JointGL=%.3f rad, 对应宽度=%.3f m)", 
+                open_joint_gl, open_width);
+    
+    // 2.6. 检查当前状态：如果从全零状态开始，使用pose goal而不是joint goal（提高OMPL灵活性）
+    // 修复：从全零状态直接规划到joint goal可能失败，因为路径太大
+    bool is_near_zero_state = false;
+    {
+      std::lock_guard<std::mutex> lock(moveit_mutex_);
+      try {
+        std::vector<double> current_joints = move_group_interface_->getCurrentJointValues();
+        if (current_joints.size() >= 4) {
+          // 检查是否所有关节都接近0（容差0.1 rad）
+          bool all_near_zero = true;
+          for (size_t i = 0; i < 4; ++i) {
+            if (std::abs(current_joints[i]) > 0.1) {
+              all_near_zero = false;
+              break;
+            }
+          }
+          if (all_near_zero) {
+            is_near_zero_state = true;
+            RCLCPP_INFO(this->get_logger(), "[MoveTo优化] 检测到全零起始状态，使用pose goal提高规划成功率");
+          }
+        }
+      } catch (const std::exception& e) {
+        RCLCPP_DEBUG(this->get_logger(), "[MoveTo优化] 无法检查当前状态: %s，使用原始策略", e.what());
+      }
+    }
+    
+    // 3. MoveTo - 移动到预抓取位姿（先到达，避免与cable碰撞体冲突）
+    // 4DOF控制策略：使用JointConstraint(J1)控制方向，OrientationConstraint只锁定roll/pitch
+    auto move_to_pregrasp = std::make_unique<mtc::stages::MoveTo>("move to pregrasp", pipeline_planner);
+    move_to_pregrasp->setGroup("arm_group");
+    
+    // 设置超时时间，给OMPL更多时间找到路径
+    move_to_pregrasp->setTimeout(30.0);  // 30秒超时
+    
+    // 修复：如果从全零状态开始，强制使用pose goal而不是joint goal（提高OMPL灵活性）
+    if (use_joint_goal && !is_near_zero_state) {
+      // 如果预抓取IK成功，优先使用joint goal（更可靠）
+      // 注意：使用joint goal时，不再设置JointConstraint(J1)，因为joint goal已经固死了所有关节值
+      // 设置JointConstraint会导致约束冲突，使OMPL无法采样goal tree的合法状态
+      move_to_pregrasp->setGoal(pregrasp_joint_map);
+      RCLCPP_INFO(this->get_logger(), "[4DOF控制] 已添加MoveTo stage: move to pregrasp (使用joint goal，超时=30s)");
+      RCLCPP_INFO(this->get_logger(), "[4DOF控制] 注意：使用joint goal时不设置JointConstraint(J1)，避免约束冲突");
+    } else {
+      // 使用pose goal + 约束（4DOF控制策略）
+      move_to_pregrasp->setIKFrame(eef_link_);
+      move_to_pregrasp->setGoal(pregrasp_pose);
+      
+      // 设置约束：JointConstraint(J1) + JointConstraint(J4) + OrientationConstraint
+      // Joint1约束确保机械臂朝向目标方向（对于"后面"的目标至关重要！）
+      // Joint4约束用于控制夹爪yaw旋转角度
+      moveit_msgs::msg::Constraints constraints;
+      
+      // JointConstraint(J1)：控制机械臂朝向（方位角）
+      // 这对于目标在"后面"的情况至关重要，因为Joint2/3只能向下折叠
+      moveit_msgs::msg::JointConstraint joint1_constraint;
+      joint1_constraint.joint_name = "Joint1";
+      joint1_constraint.position = joint1_auto;
+      joint1_constraint.tolerance_above = joint1_tolerance_;
+      joint1_constraint.tolerance_below = joint1_tolerance_;
+      joint1_constraint.weight = 1.0;  // 高权重，作为强约束
+      constraints.joint_constraints.push_back(joint1_constraint);
+      RCLCPP_INFO(this->get_logger(), "[4DOF控制] JointConstraint(J1): 目标=%.3f rad (%.1f deg), 容差=±%.3f rad (±%.1f deg)",
+                  joint1_auto, joint1_auto * 180.0 / M_PI,
+                  joint1_tolerance_, joint1_tolerance_ * 180.0 / M_PI);
+      
+      // JointConstraint(J4)：控制夹爪旋转角度（yaw）
+      moveit_msgs::msg::JointConstraint joint4_constraint;
+      joint4_constraint.joint_name = "Joint4";
+      joint4_constraint.position = joint4_target;
+      joint4_constraint.tolerance_above = joint4_tolerance_;
+      joint4_constraint.tolerance_below = joint4_tolerance_;
+      joint4_constraint.weight = 1.0;  // 高权重，作为强约束
+      constraints.joint_constraints.push_back(joint4_constraint);
+      RCLCPP_INFO(this->get_logger(), "[4DOF控制] JointConstraint(J4): 目标=%.3f rad (%.1f deg), 容差=±%.3f rad (±%.1f deg)",
+                  joint4_target, joint4_target * 180.0 / M_PI,
+                  joint4_tolerance_, joint4_tolerance_ * 180.0 / M_PI);
+      
+      // OrientationConstraint：只锁定roll/pitch（向下），不约束yaw
+      moveit_msgs::msg::OrientationConstraint orientation_constraint;
+      orientation_constraint.header.frame_id = planning_frame_;
+      orientation_constraint.link_name = eef_link_;
+      orientation_constraint.orientation = compute_downward_orientation_fixed();
+      orientation_constraint.absolute_x_axis_tolerance = 0.1;  // roll容差（约±5.7°）
+      orientation_constraint.absolute_y_axis_tolerance = 0.1;  // pitch容差（约±5.7°）
+      orientation_constraint.absolute_z_axis_tolerance = M_PI;  // yaw完全不约束（±180°）
+      orientation_constraint.weight = 1.0;
+      constraints.orientation_constraints.push_back(orientation_constraint);
+      RCLCPP_INFO(this->get_logger(), "[4DOF控制] OrientationConstraint: roll/pitch容差=±0.1 rad (±5.7°), yaw不约束");
+      
+      // 设置约束到MoveTo stage
+      move_to_pregrasp->setPathConstraints(constraints);
+      RCLCPP_INFO(this->get_logger(), "[4DOF控制] 已添加MoveTo stage: move to pregrasp (使用pose goal + 约束，超时=30s)");
+    }
+    
+    task.add(std::move(move_to_pregrasp));
+    RCLCPP_DEBUG(this->get_logger(), "已添加MoveTo stage: move to pregrasp (group=arm_group, goal_type=%s)", 
+                 use_joint_goal ? "joint" : "pose");
+    
+    // 4. ModifyPlanningScene - 添加缆绳碰撞对象（在MoveTo pregrasp之后，避免goal state被判碰撞）
+    // 分阶段碰撞策略（方案A - 最稳）：
+    // - MoveTo pregrasp：碰撞对象在pregrasp之后添加，所以pregrasp阶段不受影响（可达性不受限制）
+    // - MoveRelative descend：需要ACM允许碰撞（否则下探会被判invalid）
+    // - Close gripper：必须允许碰撞（这一步几乎一定与缆绳接触/穿入）
+    // - Attach object：闭合后attach，此时缆绳成为夹爪的一部分
+    // - Lift / transport：attach后保留碰撞检查（让它别撞环境），ACM持续有效
+    add_object->addObject(collision_object);
+    task.add(std::move(add_object));
+    RCLCPP_DEBUG(this->get_logger(), "已添加ModifyPlanningScene stage: add cable object (object_id=%s)", 
+                 (cable_name_ + "_world").c_str());
+    RCLCPP_INFO(this->get_logger(), "碰撞对象在MoveTo pregrasp之后添加，避免goal state被判碰撞");
+    
+    // 4.5. ModifyPlanningScene - 设置AllowedCollisionMatrix（ACM），允许夹爪link与缆绳碰撞
+    // 关键修复：在descend/close阶段，夹爪必须与缆绳接触/穿入，不能把缆绳当成严格障碍
+    // 使用ACM允许夹爪相关link（LinkGG/LinkGL/LinkGR）与缆绳碰撞，这样：
+    // - 规划器能看到缆绳位置（用于避障，避免从侧面扫过去）
+    // - 但不会因为"必须接触"而判goal/path invalid
+    // ACM设置后持续有效，覆盖descend、close、lift、transport等后续阶段
+    auto allow_collisions = std::make_unique<mtc::stages::ModifyPlanningScene>("allow gripper-cable collisions");
+    std::string cable_object_id = cable_name_ + "_world";
+    
+    // 允许夹爪相关link与缆绳碰撞
+    // allow_touch_links_默认包含["LinkGG", "LinkGL", "LinkGR"]
+    std::stringstream links_ss;
+    for (size_t i = 0; i < allow_touch_links_.size(); ++i) {
+      const auto& link = allow_touch_links_[i];
+      allow_collisions->allowCollisions(cable_object_id, link, true);
+      RCLCPP_DEBUG(this->get_logger(), "[ACM] 允许 %s 与 %s 碰撞", cable_object_id.c_str(), link.c_str());
+      if (i > 0) links_ss << ", ";
+      links_ss << link;
+    }
+    
+    task.add(std::move(allow_collisions));
+    RCLCPP_INFO(this->get_logger(), "[ACM] 已设置AllowedCollisionMatrix：允许夹爪link(%s)与缆绳碰撞，避免descend/close阶段被判invalid",
+                links_ss.str().c_str());
+    
+    // 5. MoveTo - 使用Cartesian路径下探descend_distance_
+    // Descend阶段：ACM已设置，允许夹爪与缆绳碰撞
+    // 使用Cartesian路径替代MoveRelative，更可靠，不需要OMPL采样goal tree
+    // 在创建MoveTo之前，验证下探后的位置是否IK可解
+    geometry_msgs::msg::PoseStamped descend_pose = pregrasp_pose;
+    descend_pose.pose.position.z -= descend_distance_;
+    
+    {
+      RCLCPP_INFO(this->get_logger(), "[下探验证] 验证下探后的位置是否IK可解...");
+      RCLCPP_INFO(this->get_logger(), "[下探验证] 下探后位置: pos=(%.3f, %.3f, %.3f)", 
+                 descend_pose.pose.position.x, descend_pose.pose.position.y, descend_pose.pose.position.z);
+      
+      try {
+        // 使用pregrasp_state作为seed进行IK检查
+        if (pregrasp_state) {
+          const auto* jmg = pregrasp_state->getJointModelGroup("arm_group");
+          if (jmg) {
+            auto test_state = std::make_shared<moveit::core::RobotState>(*pregrasp_state);
+            bool ik_solved = test_state->setFromIK(jmg, descend_pose.pose, eef_link_, 0.5);
+            
+            if (ik_solved) {
+              RCLCPP_INFO(this->get_logger(), "[下探验证] ✓ 下探后位置IK可解");
+              
+              // 检查下探后的状态是否有碰撞
+              auto robot_model = task.getRobotModel();
+              if (robot_model) {
+                auto test_scene = std::make_shared<planning_scene::PlanningScene>(robot_model);
+                test_scene->getCurrentStateNonConst() = *test_state;
+                
+                // 添加碰撞对象
+                if (add_collision_object_) {
+                  test_scene->processCollisionObjectMsg(collision_object);
+                }
+                
+                // 设置ACM
+                collision_detection::AllowedCollisionMatrix acm = test_scene->getAllowedCollisionMatrix();
+                acm.setEntry(cable_name_ + "_world", "LinkGG", true);
+                acm.setEntry(cable_name_ + "_world", "LinkGL", true);
+                acm.setEntry(cable_name_ + "_world", "LinkGR", true);
+                test_scene->getAllowedCollisionMatrixNonConst() = acm;
+                
+                collision_detection::CollisionRequest req;
+                collision_detection::CollisionResult res;
+                req.contacts = true;
+                req.max_contacts = 10;
+                
+                test_scene->checkCollision(req, res, *test_state);
+                
+                if (res.collision) {
+                  RCLCPP_WARN(this->get_logger(), "[下探验证] ⚠️ 下探后位置有碰撞（但ACM已设置，可能允许）");
+                  for (const auto& contact : res.contacts) {
+                    RCLCPP_WARN(this->get_logger(), "[下探验证]   碰撞: %s vs %s", 
+                               contact.first.first.c_str(), contact.first.second.c_str());
+                  }
+                } else {
+                  RCLCPP_INFO(this->get_logger(), "[下探验证] ✓ 下探后位置无碰撞");
+                }
+              }
+            } else {
+              RCLCPP_ERROR(this->get_logger(), "[下探验证] ✗ 下探后位置IK无解！");
+              RCLCPP_ERROR(this->get_logger(), "[下探验证] 建议：减小descend_distance_或检查TCP偏移补偿");
+            }
+          }
+        }
+      } catch (const std::exception& e) {
+        RCLCPP_WARN(this->get_logger(), "[下探验证] 验证下探位置时出错: %s", e.what());
+      }
+    }
+    
+    // 验证下探路径上的中间状态（帮助诊断路径规划问题）
+    {
+      RCLCPP_INFO(this->get_logger(), "[下探验证] 验证下探路径上的中间状态...");
+      const int num_intermediate_states = 5;
+      bool all_intermediate_valid = true;
+      
+      try {
+        if (pregrasp_state) {
+          const auto* jmg = pregrasp_state->getJointModelGroup("arm_group");
+          auto robot_model = task.getRobotModel();
+          
+          if (jmg && robot_model) {
+            auto test_scene = std::make_shared<planning_scene::PlanningScene>(robot_model);
+            
+            // 添加碰撞对象和ACM
+            if (add_collision_object_) {
+              test_scene->processCollisionObjectMsg(collision_object);
+            }
+            collision_detection::AllowedCollisionMatrix acm = test_scene->getAllowedCollisionMatrix();
+            acm.setEntry(cable_name_ + "_world", "LinkGG", true);
+            acm.setEntry(cable_name_ + "_world", "LinkGL", true);
+            acm.setEntry(cable_name_ + "_world", "LinkGR", true);
+            test_scene->getAllowedCollisionMatrixNonConst() = acm;
+            
+            for (int i = 1; i <= num_intermediate_states; ++i) {
+              double fraction = static_cast<double>(i) / num_intermediate_states;
+              geometry_msgs::msg::PoseStamped intermediate_pose = pregrasp_pose;
+              intermediate_pose.pose.position.z -= descend_distance_ * fraction;
+              
+              auto test_state = std::make_shared<moveit::core::RobotState>(*pregrasp_state);
+              bool ik_solved = test_state->setFromIK(jmg, intermediate_pose.pose, eef_link_, 0.5);
+              
+              if (ik_solved) {
+                test_scene->getCurrentStateNonConst() = *test_state;
+                collision_detection::CollisionRequest req;
+                collision_detection::CollisionResult res;
+                req.contacts = true;
+                req.max_contacts = 5;
+                
+                test_scene->checkCollision(req, res, *test_state);
+                
+                if (res.collision) {
+                  RCLCPP_WARN(this->get_logger(), "[下探验证] 中间状态 #%d (%.0f%%) 有碰撞", i, fraction * 100.0);
+                  for (const auto& contact : res.contacts) {
+                    RCLCPP_WARN(this->get_logger(), "[下探验证]   碰撞: %s vs %s", 
+                               contact.first.first.c_str(), contact.first.second.c_str());
+                  }
+                  all_intermediate_valid = false;
+                } else {
+                  RCLCPP_DEBUG(this->get_logger(), "[下探验证] 中间状态 #%d (%.0f%%) IK可解且无碰撞", i, fraction * 100.0);
+                }
+              } else {
+                RCLCPP_WARN(this->get_logger(), "[下探验证] 中间状态 #%d (%.0f%%) IK无解", i, fraction * 100.0);
+                all_intermediate_valid = false;
+              }
+            }
+            
+            if (all_intermediate_valid) {
+              RCLCPP_INFO(this->get_logger(), "[下探验证] ✓ 所有中间状态验证通过");
+            } else {
+              RCLCPP_WARN(this->get_logger(), "[下探验证] ⚠️ 部分中间状态有问题，但Cartesian路径可能会自动处理");
+            }
+          }
+        }
+      } catch (const std::exception& e) {
+        RCLCPP_WARN(this->get_logger(), "[下探验证] 验证中间状态时出错: %s", e.what());
+      }
+    }
+    
+    // 4DOF机械臂修复：使用MoveTo + joint goal代替MoveRelative
+    // MoveRelative在4DOF机械臂上不可靠：
+    // 1. 4DOF末端姿态不固定，"相对于LinkGG的-Z方向"会随姿态变化
+    // 2. OMPL无法采样到符合约束的goal tree
+    // 解决方案：预先计算下探后的关节值，直接用MoveTo跳转
+    
+    // 计算下探后的目标位置
+    geometry_msgs::msg::PoseStamped grasp_pose_linkgg = pregrasp_pose;
+    grasp_pose_linkgg.pose.position.z -= descend_distance_;
+    
+    // 使用IK求解下探后的关节值
+    bool use_descend_joint_goal = false;
+    std::map<std::string, double> descend_joint_map;
+    
+    if (pregrasp_state) {
+      const auto* jmg = pregrasp_state->getJointModelGroup("arm_group");
+      if (jmg) {
+        auto descend_state = std::make_shared<moveit::core::RobotState>(*pregrasp_state);
+        bool ik_ok = descend_state->setFromIK(jmg, grasp_pose_linkgg.pose, eef_link_, 0.5);
+        
+        if (ik_ok) {
+          // 检查Joint2/3是否在范围内
+          std::vector<double> descend_joint_values;
+          descend_state->copyJointGroupPositions(jmg, descend_joint_values);
+          
+          const std::vector<std::string>& joint_names = jmg->getActiveJointModelNames();
+          size_t num_joints = std::min(joint_names.size(), descend_joint_values.size());
+          
+          bool joints_valid = true;
+          for (size_t i = 0; i < num_joints; ++i) {
+            const auto* joint_model = jmg->getActiveJointModels()[i];
+            if (joint_model) {
+              double min_bound = joint_model->getVariableBounds()[0].min_position_;
+              double max_bound = joint_model->getVariableBounds()[0].max_position_;
+              if (descend_joint_values[i] < min_bound - 0.01 || descend_joint_values[i] > max_bound + 0.01) {
+                joints_valid = false;
+                RCLCPP_WARN(this->get_logger(), "[下探] 关节 %s 值 %.3f 超出限位 [%.3f, %.3f]",
+                           joint_names[i].c_str(), descend_joint_values[i], min_bound, max_bound);
+              }
+            }
+            descend_joint_map[joint_names[i]] = descend_joint_values[i];
+          }
+          
+          if (joints_valid) {
+            use_descend_joint_goal = true;
+            
+            // 关键修复：用自动计算的joint1_auto覆盖IK解的Joint1（确保朝向正确）
+            if (descend_joint_map.find("Joint1") != descend_joint_map.end()) {
+              double ik_joint1 = descend_joint_map["Joint1"];
+              RCLCPP_INFO(this->get_logger(), "[下探] Joint1修复: IK解=%.3f rad (%.1f°) -> 自动计算=%.3f rad (%.1f°)",
+                         ik_joint1, ik_joint1 * 180.0 / M_PI, joint1_auto, joint1_auto * 180.0 / M_PI);
+              descend_joint_map["Joint1"] = joint1_auto;
+            }
+            
+            // 关键修复：用用户指定的joint4_target覆盖IK解的Joint4（控制夹爪yaw）
+            if (descend_joint_map.find("Joint4") != descend_joint_map.end()) {
+              double ik_joint4 = descend_joint_map["Joint4"];
+              RCLCPP_INFO(this->get_logger(), "[下探] Joint4修复: IK解=%.3f rad (%.1f°) -> 用户指定=%.3f rad (%.1f°)",
+                         ik_joint4, ik_joint4 * 180.0 / M_PI, joint4_target, joint4_target * 180.0 / M_PI);
+              descend_joint_map["Joint4"] = joint4_target;
+            }
+            
+            RCLCPP_INFO(this->get_logger(), "[下探] ✓ 使用joint goal代替MoveRelative");
+            for (const auto& kv : descend_joint_map) {
+              RCLCPP_DEBUG(this->get_logger(), "[下探]   %s = %.3f rad (%.1f°)", 
+                          kv.first.c_str(), kv.second, kv.second * 180.0 / M_PI);
+            }
+          }
+        } else {
+          RCLCPP_WARN(this->get_logger(), "[下探] IK求解失败，回退到MoveRelative");
+        }
+      }
+    }
+    
+    if (use_descend_joint_goal) {
+      // 使用MoveTo + joint goal
+      auto move_down = std::make_unique<mtc::stages::MoveTo>("move down", pipeline_planner);
+      move_down->setGroup("arm_group");
+      move_down->setTimeout(20.0);
+      move_down->setGoal(descend_joint_map);
+      task.add(std::move(move_down));
+      RCLCPP_INFO(this->get_logger(), "已添加MoveTo stage: move down (使用joint goal，更可靠)");
+    } else {
+      // 回退到MoveRelative（使用world_link作为参考系）
+      auto move_down = std::make_unique<mtc::stages::MoveRelative>("move down", pipeline_planner);
+      move_down->setGroup("arm_group");
+      move_down->setIKFrame(eef_link_);
+      move_down->setTimeout(20.0);
+      
+      // 使用world_link作为方向参考系，确保"向下"是真正的世界坐标系向下
+      geometry_msgs::msg::TwistStamped descend;
+      descend.header.frame_id = planning_frame_;  // 使用world_link
+      descend.twist.linear.z = -1.0;  // 向下（世界坐标系）
+      move_down->setDirection(descend);
+      move_down->setMinMaxDistance(descend_distance_, descend_distance_);
+      
+      task.add(std::move(move_down));
+      RCLCPP_WARN(this->get_logger(), "已添加MoveRelative stage: move down (回退方案，direction frame=%s)", 
+                   planning_frame_.c_str());
+    }
+    
+    // 6. MoveTo - 夹爪闭合（使用joint target，不依赖named state）
+    // Close gripper阶段：ACM已设置，必须允许碰撞
+    // 这一步几乎一定与缆绳接触/穿入，至少允许夹爪指尖（LinkGL/LinkGR）与缆绳碰撞
+    auto close_gripper = std::make_unique<mtc::stages::MoveTo>("close gripper", pipeline_planner);
+    close_gripper->setGroup("gripper_group");
+    // 计算闭合关节角度
+    double close_width = gripper_close_width_ - gripper_close_extra_;
+    double joint_gl = width_to_joint_angle(close_width);
+    double joint_gr = -joint_gl;  // 镜像对称
+    // MoveTo::setGoal需要map<string, double>格式（关节名->值）
+    std::map<std::string, double> gripper_joint_map;
+    gripper_joint_map["JointGL"] = joint_gl;
+    gripper_joint_map["JointGR"] = joint_gr;
+    close_gripper->setGoal(gripper_joint_map);
+    task.add(std::move(close_gripper));
+    RCLCPP_DEBUG(this->get_logger(), "已添加MoveTo stage: close gripper (group=gripper_group, JointGL=%.3f, JointGR=%.3f)", 
+                 joint_gl, joint_gr);
+    
+    // 7. ModifyPlanningScene - 附着对象到末端执行器
+    // 闭合后attach：此时缆绳成为夹爪的一部分
+    // attach会自动处理一部分碰撞关系，但之前设置的ACM仍然有效
+    // 这确保缆绳与夹爪link（LinkGG/LinkGL/LinkGR）的碰撞被允许（因为它们天然重叠）
+    auto attach_object = std::make_unique<mtc::stages::ModifyPlanningScene>("attach object");
+    attach_object->attachObject(cable_name_ + "_world", eef_link_);
+    task.add(std::move(attach_object));
+    RCLCPP_DEBUG(this->get_logger(), "已添加ModifyPlanningScene stage: attach object (object_id=%s, link=%s)", 
+                 (cable_name_ + "_world").c_str(), eef_link_.c_str());
+    
+    // 8. 抬起lift_distance_
+    // 4DOF机械臂修复：使用MoveTo + joint goal代替MoveRelative（与下探相同策略）
+    // Lift / transport阶段：ACM持续有效，允许缆绳与夹爪link持续碰撞
+    
+    // 计算抬起后的目标位置（从grasp位置向上抬起）
+    geometry_msgs::msg::PoseStamped lift_pose_linkgg = grasp_pose_linkgg;
+    lift_pose_linkgg.pose.position.z += lift_distance_;
+    
+    bool use_lift_joint_goal = false;
+    std::map<std::string, double> lift_joint_map;
+    
+    if (pregrasp_state) {
+      const auto* jmg = pregrasp_state->getJointModelGroup("arm_group");
+      if (jmg) {
+        auto lift_state = std::make_shared<moveit::core::RobotState>(*pregrasp_state);
+        bool ik_ok = lift_state->setFromIK(jmg, lift_pose_linkgg.pose, eef_link_, 0.5);
+        
+        if (ik_ok) {
+          std::vector<double> lift_joint_values;
+          lift_state->copyJointGroupPositions(jmg, lift_joint_values);
+          
+          const std::vector<std::string>& joint_names = jmg->getActiveJointModelNames();
+          size_t num_joints = std::min(joint_names.size(), lift_joint_values.size());
+          
+          bool joints_valid = true;
+          for (size_t i = 0; i < num_joints; ++i) {
+            const auto* joint_model = jmg->getActiveJointModels()[i];
+            if (joint_model) {
+              double min_bound = joint_model->getVariableBounds()[0].min_position_;
+              double max_bound = joint_model->getVariableBounds()[0].max_position_;
+              if (lift_joint_values[i] < min_bound - 0.01 || lift_joint_values[i] > max_bound + 0.01) {
+                joints_valid = false;
+              }
+            }
+            lift_joint_map[joint_names[i]] = lift_joint_values[i];
+          }
+          
+          if (joints_valid) {
+            use_lift_joint_goal = true;
+            
+            // 关键修复：用自动计算的joint1_auto覆盖IK解的Joint1（确保朝向正确）
+            if (lift_joint_map.find("Joint1") != lift_joint_map.end()) {
+              double ik_joint1 = lift_joint_map["Joint1"];
+              RCLCPP_INFO(this->get_logger(), "[抬起] Joint1修复: IK解=%.3f rad (%.1f°) -> 自动计算=%.3f rad (%.1f°)",
+                         ik_joint1, ik_joint1 * 180.0 / M_PI, joint1_auto, joint1_auto * 180.0 / M_PI);
+              lift_joint_map["Joint1"] = joint1_auto;
+            }
+            
+            // 关键修复：用用户指定的joint4_target覆盖IK解的Joint4（控制夹爪yaw）
+            if (lift_joint_map.find("Joint4") != lift_joint_map.end()) {
+              double ik_joint4 = lift_joint_map["Joint4"];
+              RCLCPP_INFO(this->get_logger(), "[抬起] Joint4修复: IK解=%.3f rad (%.1f°) -> 用户指定=%.3f rad (%.1f°)",
+                         ik_joint4, ik_joint4 * 180.0 / M_PI, joint4_target, joint4_target * 180.0 / M_PI);
+              lift_joint_map["Joint4"] = joint4_target;
+            }
+            
+            RCLCPP_INFO(this->get_logger(), "[抬起] ✓ 使用joint goal代替MoveRelative");
+          }
+        }
+      }
+    }
+    
+    if (use_lift_joint_goal) {
+      auto move_up = std::make_unique<mtc::stages::MoveTo>("move up", pipeline_planner);
+      move_up->setGroup("arm_group");
+      move_up->setTimeout(20.0);
+      move_up->setGoal(lift_joint_map);
+      task.add(std::move(move_up));
+      RCLCPP_INFO(this->get_logger(), "已添加MoveTo stage: move up (使用joint goal，更可靠)");
+    } else {
+      // 回退到MoveRelative
+      auto move_up = std::make_unique<mtc::stages::MoveRelative>("move up", pipeline_planner);
+      move_up->setGroup("arm_group");
+      move_up->setIKFrame(eef_link_);
+      move_up->setTimeout(20.0);
+      geometry_msgs::msg::TwistStamped lift;
+      lift.header.frame_id = planning_frame_;
+      lift.twist.linear.z = 1.0;
+      move_up->setDirection(lift);
+      move_up->setMinMaxDistance(lift_distance_, lift_distance_);
+      task.add(std::move(move_up));
+      RCLCPP_WARN(this->get_logger(), "已添加MoveRelative stage: move up (回退方案)");
+    }
+    
+    // 在返回task之前，验证pregrasp goal state（如果使用joint goal）
+    if (use_joint_goal && pregrasp_state) {
+      RCLCPP_INFO(this->get_logger(), "[Goal验证] 开始验证pregrasp goal state...");
+      try {
+        // 创建PlanningScene用于验证
+        auto robot_model = task.getRobotModel();
+        if (robot_model) {
+          auto planning_scene = std::make_shared<planning_scene::PlanningScene>(robot_model);
+          
+          // 设置goal state到scene
+          planning_scene->getCurrentStateNonConst() = *pregrasp_state;
+          
+          // 添加碰撞对象到scene（如果已创建）
+          // 注意：这里添加碰撞对象用于验证，但MTC Task会在ModifyPlanningScene stage中添加
+          // 我们这里添加是为了模拟MTC规划时的场景
+          if (add_collision_object_) {
+            planning_scene->processCollisionObjectMsg(collision_object);
+          }
+          
+          // 设置ACM（允许夹爪link与缆绳碰撞）
+          collision_detection::AllowedCollisionMatrix acm = planning_scene->getAllowedCollisionMatrix();
+          acm.setEntry(cable_name_ + "_world", "LinkGG", true);
+          acm.setEntry(cable_name_ + "_world", "LinkGL", true);
+          acm.setEntry(cable_name_ + "_world", "LinkGR", true);
+          planning_scene->getAllowedCollisionMatrixNonConst() = acm;
+          
+          // 执行碰撞检查
+          collision_detection::CollisionRequest req;
+          collision_detection::CollisionResult res;
+          req.contacts = true;
+          req.max_contacts = 20;
+          req.verbose = false;
+          
+          planning_scene->checkCollision(req, res, *pregrasp_state);
+          
+          if (res.collision) {
+            RCLCPP_ERROR(this->get_logger(), "[Goal验证] pregrasp goal state有碰撞！");
+            RCLCPP_ERROR(this->get_logger(), "[Goal验证] 碰撞数量: %zu", res.contacts.size());
+            for (const auto& contact : res.contacts) {
+              RCLCPP_ERROR(this->get_logger(), "[Goal验证]   碰撞: %s vs %s", 
+                           contact.first.first.c_str(), contact.first.second.c_str());
+            }
+          } else {
+            RCLCPP_INFO(this->get_logger(), "[Goal验证] pregrasp goal state无碰撞 ✓");
+          }
+          
+          // 检查关节限位（使用容差避免边界值误判）
+          // 注意：satisfiesBounds()使用严格比较，边界值会被误判为超限
+          // 改用容差检查
+          const double JOINT_LIMIT_TOLERANCE = 1e-4;  // 约0.006度
+          bool bounds_satisfied = true;
+          const auto* jmg = pregrasp_state->getJointModelGroup("arm_group");
+          if (jmg) {
+            const auto& joint_names = jmg->getActiveJointModelNames();
+            std::vector<double> joint_values;
+            pregrasp_state->copyJointGroupPositions(jmg, joint_values);
+            for (size_t i = 0; i < joint_names.size() && i < joint_values.size(); ++i) {
+              const auto* joint_model = pregrasp_state->getRobotModel()->getJointModel(joint_names[i]);
+              if (joint_model) {
+                const auto& bounds = joint_model->getVariableBounds();
+                if (!bounds.empty()) {
+                  double joint_value = joint_values[i];
+                  double min_bound = bounds[0].min_position_;
+                  double max_bound = bounds[0].max_position_;
+                  if (joint_value < min_bound - JOINT_LIMIT_TOLERANCE || joint_value > max_bound + JOINT_LIMIT_TOLERANCE) {
+                    RCLCPP_ERROR(this->get_logger(), "[Goal验证]   超出限位: %s = %.3f rad (限位: [%.3f, %.3f])", 
+                               joint_names[i].c_str(), joint_value, min_bound, max_bound);
+                    bounds_satisfied = false;
+                  }
+                }
+              }
+            }
+          }
+          if (!bounds_satisfied) {
+            RCLCPP_ERROR(this->get_logger(), "[Goal验证] pregrasp goal state超出关节限位！");
+          } else {
+            RCLCPP_INFO(this->get_logger(), "[Goal验证] pregrasp goal state关节限位检查通过 ✓");
+          }
+        }
+      } catch (const std::exception& e) {
+        RCLCPP_WARN(this->get_logger(), "[Goal验证] 验证pregrasp goal state时出错: %s", e.what());
+      }
+      
+      // 二分定位验证：使用MoveGroup验证pregrasp joint goal
+      if (!pregrasp_joint_map.empty()) {
+        RCLCPP_INFO(this->get_logger(), "[二分验证] 开始使用MoveGroup验证pregrasp joint goal...");
+        // 注意：这里需要释放moveit_mutex_，因为verify_pregrasp_goal_with_movegroup会获取锁
+        // 但我们在create_grasp_task_mtc中可能已经持有锁，所以需要小心
+        // 实际上，create_grasp_task_mtc中大部分代码不在锁内，所以这里应该没问题
+        bool movegroup_valid = verify_pregrasp_goal_with_movegroup(pregrasp_joint_map);
+        if (movegroup_valid) {
+          RCLCPP_INFO(this->get_logger(), "[二分验证] ✓ MoveGroup验证通过，pregrasp goal本身valid，问题可能在MTC的后续stage");
+        } else {
+          RCLCPP_ERROR(this->get_logger(), "[二分验证] ✗ MoveGroup验证失败，pregrasp goal本身invalid，需要检查碰撞/越界");
+        }
+      }
+    }
+    
+    return task;
+  }
+  
+  // 使用MTC库创建放置Task
+  mtc::Task create_place_task_mtc(const geometry_msgs::msg::PoseStamped& place_pose, double place_yaw)
+  {
+    mtc::Task task;
+    
+    // 必须先加载机器人模型，否则MTC Task无法工作
+    if (!move_group_interface_) {
+      RCLCPP_ERROR(this->get_logger(), "MoveGroupInterface未初始化，无法创建MTC Task");
+      return task;
+    }
+    
+    // 从ROS参数服务器加载机器人模型到Task
+    // loadRobotModel需要传入node指针来访问ROS参数服务器
+    task.loadRobotModel(shared_from_this());
+    task.stages()->setName("cable place task");
+    
+    // 创建solver用于连接各个阶段
+    // 使用Task的机器人模型创建PlanningPipeline，确保与Task使用相同的机器人模型
+    mtc::solvers::PipelinePlannerPtr pipeline_planner;
+    try {
+      // 从Task获取机器人模型（与Task使用相同的模型实例）
+      auto robot_model = task.getRobotModel();
+      if (!robot_model) {
+        throw std::runtime_error("Task机器人模型未加载");
+      }
+      // 创建PlanningPipeline实例，使用Task的机器人模型和"ompl"作为pipeline ID
+      auto planning_pipeline = std::make_shared<planning_pipeline::PlanningPipeline>(
+          robot_model, shared_from_this(), "ompl");
+      // 使用PlanningPipeline创建PipelinePlanner
+      pipeline_planner = std::make_shared<mtc::solvers::PipelinePlanner>(planning_pipeline);
+      RCLCPP_INFO(this->get_logger(), "使用PlanningPipeline创建PipelinePlanner成功（使用Task的机器人模型）");
+    } catch (const std::exception& e) {
+      // 如果PlanningPipeline创建失败，回退到直接使用node和pipeline名称
+      RCLCPP_WARN(this->get_logger(), "无法使用PlanningPipeline创建PipelinePlanner: %s，回退到直接创建", e.what());
+      pipeline_planner = std::make_shared<mtc::solvers::PipelinePlanner>(shared_from_this(), "ompl");
+    }
+    
+    // 转换放置位姿到planning frame
+    geometry_msgs::msg::PoseStamped place_pose_planning = place_pose;
+    if (!transform_pose_to_planning(place_pose_planning)) {
+      RCLCPP_ERROR(this->get_logger(), "无法转换放置位姿到planning frame");
+      return task;
+    }
+    
+    // 1. FixedState - 使用getCurrentJointValues()构造固定起始状态（绕过时间戳检查）
+    // 修复：CurrentState stage会触发时间戳严格检查（差5ms就失败），改用FixedState
+    auto fixed_state = std::make_unique<mtc::stages::FixedState>("fixed start");
+    {
+      std::lock_guard<std::mutex> lock(moveit_mutex_);
+      const auto& robot_model = move_group_interface_->getRobotModel();
+      if (robot_model) {
+        // 创建PlanningScene用于FixedState
+        auto scene = std::make_shared<planning_scene::PlanningScene>(robot_model);
+        moveit::core::RobotState start(robot_model);
+        start.setToDefaultValues();
+        
+        // 获取arm_group关节值（使用getCurrentJointValues()绕过时间戳检查）
+        const auto* arm_jmg = robot_model->getJointModelGroup("arm_group");
+        if (arm_jmg) {
+          std::vector<double> arm_vals = move_group_interface_->getCurrentJointValues();
+          if (arm_vals.size() == arm_jmg->getActiveJointModelNames().size()) {
+            start.setJointGroupPositions(arm_jmg, arm_vals);
+          }
+        }
+        
+        // 获取gripper_group关节值
+        if (gripper_group_interface_) {
+          const auto* grip_jmg = robot_model->getJointModelGroup("gripper_group");
+          if (grip_jmg) {
+            std::vector<double> grip_vals = gripper_group_interface_->getCurrentJointValues();
+            if (grip_vals.size() == grip_jmg->getActiveJointModelNames().size()) {
+              start.setJointGroupPositions(grip_jmg, grip_vals);
+            }
+          }
+        }
+        
+        start.update();
+        // 修复Invalid Start State：确保关节值在合法范围内，避免浮点误差导致状态被判为invalid
+        start.enforceBounds();
+        // FixedState需要PlanningScenePtr，设置其current state
+        scene->setCurrentState(start);
+        fixed_state->setState(scene);
+        RCLCPP_INFO(this->get_logger(), "[FixedState] 使用getCurrentJointValues()构造起始状态（绕过时间戳检查，已调用enforceBounds）");
+        task.add(std::move(fixed_state));
+        RCLCPP_DEBUG(this->get_logger(), "已添加FixedState stage");
+      } else {
+        RCLCPP_WARN(this->get_logger(), "[FixedState] 无法获取robot_model，fallback到CurrentState");
+        // Fallback：如果无法构造FixedState，使用CurrentState
+        auto current_state = std::make_unique<mtc::stages::CurrentState>("current state");
+        task.add(std::move(current_state));
+        RCLCPP_DEBUG(this->get_logger(), "已添加CurrentState stage（fallback）");
+      }
+    }
+    
+    // 2. Connect - 连接到放置准备位置（可选，Place内部也会自动连接）
+    mtc::stages::Connect::GroupPlannerVector planners_place = {{"arm_group", pipeline_planner}};
+    auto connect_to_place = std::make_unique<mtc::stages::Connect>("connect to place", planners_place);
+    task.add(std::move(connect_to_place));
+    
+    // 3. GeneratePlacePose - 生成放置位姿候选
+    auto place_generator = std::make_unique<mtc::stages::GeneratePlacePose>("generate place pose");
+    place_generator->setObject(cable_name_ + "_world");
+    // 设置放置位姿（使用setPose方法，传入PoseStamped）
+    place_generator->setPose(place_pose_planning);
+    // 设置planning group（arm_group用于运动规划）
+    place_generator->setProperty("group", "arm_group");
+    
+    // 4. Place - 完整的放置流程（接近、释放、后退）
+    // Place内部会自动使用Connect来连接各个阶段
+    auto place = std::make_unique<mtc::stages::Place>(std::move(place_generator), "place");
+    // setEndEffector需要传入end-effector名称（从SRDF中定义），而不是link名称
+    // SRDF中定义的end-effector名称是"gripper"
+    place->setEndEffector("gripper");
+    place->setObject(cable_name_ + "_world");
+    // 设置planning group（arm_group用于运动规划）
+    place->setProperty("group", "arm_group");
+    // Place内部会自动创建Connect阶段，我们需要通过setProperty设置solver
+    // 注意：Place没有setSolver方法，solver通过Connect阶段内部配置
+    
+    // 设置放置运动（向下移动）
+    geometry_msgs::msg::TwistStamped place_motion;
+    place_motion.header.frame_id = eef_link_;
+    place_motion.twist.linear.z = 1.0;  // 向下（相对于末端执行器）
+    place->setPlaceMotion(place_motion, eef_step_, place_descend_distance_);
+    
+    // 设置后退运动（向上移动）
+    geometry_msgs::msg::TwistStamped retract;
+    retract.header.frame_id = planning_frame_;
+    retract.twist.linear.z = 1.0;  // 向上
+    place->setRetractMotion(retract, eef_step_, place_retreat_distance_);
+    
+    task.add(std::move(place));
+    
+    // 5. ModifyPlanningScene - 分离对象
+    auto detach_object = std::make_unique<mtc::stages::ModifyPlanningScene>("detach object");
+    detach_object->detachObject(cable_name_ + "_world", eef_link_);
+    task.add(std::move(detach_object));
+    
+    // 7. ModifyPlanningScene - 移除对象（可选）
+    if (add_collision_object_) {
+      auto remove_object = std::make_unique<mtc::stages::ModifyPlanningScene>("remove object");
+      remove_object->removeObject(cable_name_ + "_world");
+      task.add(std::move(remove_object));
+    }
+    
+    return task;
+  }
+  
+  // 二分定位验证：绕过MTC，直接用MoveGroup验证pregrasp joint goal是否valid
+  bool verify_pregrasp_goal_with_movegroup(const std::map<std::string, double>& joint_map)
+  {
+    RCLCPP_INFO(this->get_logger(), "[二分验证] 开始验证pregrasp joint goal（绕过MTC，使用MoveGroup）...");
+    std::lock_guard<std::mutex> lock(moveit_mutex_);
+    
+    // 清理所有constraints
+    move_group_interface_->clearPathConstraints();
+    move_group_interface_->clearPoseTargets();
+    
+    // 设置joint goal
+    try {
+      move_group_interface_->setJointValueTarget(joint_map);
+      RCLCPP_INFO(this->get_logger(), "[二分验证] 已设置joint goal，关节值:");
+      for (const auto& pair : joint_map) {
+        RCLCPP_INFO(this->get_logger(), "[二分验证]   %s = %.3f rad (%.1f deg)", 
+                   pair.first.c_str(), pair.second, pair.second * 180.0 / M_PI);
+      }
+    } catch (const std::exception& e) {
+      RCLCPP_ERROR(this->get_logger(), "[二分验证] 设置joint goal失败: %s", e.what());
+      return false;
+    }
+    
+    // 尝试规划
+    moveit::planning_interface::MoveGroupInterface::Plan plan;
+    RCLCPP_INFO(this->get_logger(), "[二分验证] 开始规划（planning_time=5.0s）...");
+    move_group_interface_->setPlanningTime(5.0);
+    auto result = move_group_interface_->plan(plan);
+    
+    if (result == moveit::core::MoveItErrorCode::SUCCESS) {
+      RCLCPP_INFO(this->get_logger(), "[二分验证] ✓ MoveGroup plan成功，pregrasp goal本身valid");
+      RCLCPP_INFO(this->get_logger(), "[二分验证] 规划轨迹包含 %zu 个点", plan.trajectory_.joint_trajectory.points.size());
+      return true;
+    } else {
+      RCLCPP_ERROR(this->get_logger(), "[二分验证] ✗ MoveGroup plan失败，pregrasp goal本身invalid");
+      RCLCPP_ERROR(this->get_logger(), "[二分验证] 错误代码: %d", result.val);
+      return false;
+    }
+  }
+  
+  // 执行MTC Task（带急停检查和状态发布）
+  bool execute_mtc_task(mtc::Task& task, const std::string& task_name)
+  {
+    RCLCPP_INFO(this->get_logger(), "开始规划MTC Task: %s", task_name.c_str());
+    publish_state("规划中:" + task_name);
+    
+    // 检查急停
+    if (emergency_stop_) {
+      RCLCPP_WARN(this->get_logger(), "急停触发，停止Task规划");
+      publish_state("急停:任务已停止");
+      return false;
+    }
+    
+    // 修复时间戳问题：显式设置start state（使用getCurrentJointValues()绕过时间戳检查）
+    // 这样move_group端就不需要等待current_state_monitor，避免"差10ms就失败"的问题
+    // 修复Path constraints残留：清理所有残留的constraints和pose targets
+    // 避免OMPL在"带path constraints + joint goal"时无法采样goal tree
+    {
+      std::lock_guard<std::mutex> lock(moveit_mutex_);
+      move_group_interface_->clearPathConstraints();  // 清理残留约束（最重要！）
+      move_group_interface_->clearPoseTargets();     // 清理pose目标
+      
+      // 显式设置start state：使用getCurrentJointValues()获取关节值，构造RobotState
+      // 这样即使current_state_monitor一时拿不到"足够新"的状态，也能正常规划
+      try {
+        const auto& robot_model = move_group_interface_->getRobotModel();
+        if (robot_model) {
+          auto start_state = std::make_shared<moveit::core::RobotState>(robot_model);
+          start_state->setToDefaultValues();
+          
+          // 获取arm_group关节值
+          const auto* arm_jmg = robot_model->getJointModelGroup("arm_group");
+          if (arm_jmg) {
+            std::vector<double> arm_joint_values = move_group_interface_->getCurrentJointValues();
+            if (arm_joint_values.size() == arm_jmg->getActiveJointModelNames().size()) {
+              start_state->setJointGroupPositions(arm_jmg, arm_joint_values);
+            }
+          }
+          
+          // 获取gripper_group关节值
+          const auto* gripper_jmg = robot_model->getJointModelGroup("gripper_group");
+          if (gripper_jmg && gripper_group_interface_) {
+            std::vector<double> gripper_joint_values = gripper_group_interface_->getCurrentJointValues();
+            if (gripper_joint_values.size() == gripper_jmg->getActiveJointModelNames().size()) {
+              start_state->setJointGroupPositions(gripper_jmg, gripper_joint_values);
+            }
+          }
+          
+          start_state->update();
+          // 修复Invalid Start State：确保关节值在合法范围内
+          start_state->enforceBounds();
+          move_group_interface_->setStartState(*start_state);
+          RCLCPP_INFO(this->get_logger(), "[清理状态] 已清理path constraints和pose targets，显式设置start state（绕过时间戳检查，已调用enforceBounds）");
+        } else {
+          // Fallback：如果构造失败，使用setStartStateToCurrentState()
+          move_group_interface_->setStartStateToCurrentState();
+          RCLCPP_WARN(this->get_logger(), "[清理状态] 无法构造start state，使用setStartStateToCurrentState()");
+        }
+      } catch (const std::exception& e) {
+        // Fallback：如果异常，使用setStartStateToCurrentState()
+        move_group_interface_->setStartStateToCurrentState();
+        RCLCPP_WARN(this->get_logger(), "[清理状态] 构造start state异常: %s，使用setStartStateToCurrentState()", e.what());
+      }
+    }
+    
+    // 先尝试初始化Task以获取更详细的错误信息
+    RCLCPP_INFO(this->get_logger(), "MTC Task包含 %zu 个stage，准备初始化", task.stages()->numChildren());
+    
+    try {
+      task.init();
+      RCLCPP_INFO(this->get_logger(), "MTC Task初始化成功");
+    } catch (const std::exception& e) {
+      RCLCPP_ERROR(this->get_logger(), "MTC Task初始化失败: %s", e.what());
+      RCLCPP_ERROR_STREAM(this->get_logger(), "详细初始化错误: " << e.what());
+      
+      // 尝试输出异常类型和更详细的信息
+      try {
+        std::rethrow_if_nested(e);
+      } catch (const std::exception& nested) {
+        RCLCPP_ERROR_STREAM(this->get_logger(), "嵌套异常: " << nested.what());
+      } catch (...) {
+        RCLCPP_ERROR(this->get_logger(), "嵌套异常: 未知类型");
+      }
+      
+      // 输出Task状态以便调试
+      RCLCPP_ERROR(this->get_logger(), "Task包含 %zu 个stage", task.stages()->numChildren());
+      RCLCPP_ERROR(this->get_logger(), "可能的原因: Connect stage配置错误，或某个stage的solver未正确设置");
+      
+      publish_state("错误:Task初始化失败");
+      return false;
+    }
+    
+    // 规划Task（在后台线程中执行，以便检查急停）
+    std::atomic<bool> planning_done{false};
+    std::atomic<bool> planning_success{false};
+    std::exception_ptr planning_exception;
+    
+    std::thread planning_thread([&]() {
+      try {
+        // 设置更长的规划时间，给OMPL更多机会找到路径
+        // 注意：MTC Task的plan()方法内部会使用PipelinePlanner的配置
+        // 我们已经在ompl_planning.yaml中设置了goal_bias=0.25，应该能帮助采样goal tree
+        RCLCPP_INFO(this->get_logger(), "开始执行task.plan()，这可能需要较长时间...");
+        task.plan();
+        planning_success = true;
+        RCLCPP_INFO(this->get_logger(), "task.plan()完成，找到 %zu 个解", task.solutions().size());
+      } catch (const std::exception& e) {
+        planning_exception = std::current_exception();
+        planning_success = false;
+        RCLCPP_ERROR(this->get_logger(), "task.plan()异常: %s", e.what());
+      }
+      planning_done = true;
+    });
+    
+    // 等待规划完成或急停
+    while (!planning_done && !emergency_stop_) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+    
+    if (emergency_stop_) {
+      RCLCPP_WARN(this->get_logger(), "急停触发，停止Task规划");
+      publish_state("急停:任务已停止");
+      task.preempt();  // 停止Task
+      if (planning_thread.joinable()) {
+        planning_thread.join();
+      }
+      return false;
+    }
+    
+    if (planning_thread.joinable()) {
+      planning_thread.join();
+    }
+    
+    // 检查规划异常
+    if (planning_exception) {
+      try {
+        std::rethrow_exception(planning_exception);
+      } catch (const std::exception& e) {
+        RCLCPP_ERROR(this->get_logger(), "MTC Task规划异常: %s", e.what());
+        // 输出更详细的错误信息
+        RCLCPP_ERROR_STREAM(this->get_logger(), "详细错误信息: " << e.what());
+        // 尝试输出异常类型名称
+        try {
+          std::string exception_type = typeid(e).name();
+          RCLCPP_ERROR(this->get_logger(), "异常类型: %s", exception_type.c_str());
+        } catch (...) {
+          // 忽略类型信息获取异常
+        }
+        // 尝试输出嵌套异常
+        try {
+          std::rethrow_if_nested(e);
+        } catch (const std::exception& nested) {
+          RCLCPP_ERROR_STREAM(this->get_logger(), "嵌套异常: " << nested.what());
+        } catch (...) {
+          RCLCPP_ERROR(this->get_logger(), "嵌套异常: 未知类型");
+        }
+        publish_state("错误:规划异常");
+        return false;
+      } catch (...) {
+        RCLCPP_ERROR(this->get_logger(), "MTC Task规划异常: 未知异常类型");
+        publish_state("错误:规划异常");
+        return false;
+      }
+    }
+    
+    // 检查规划结果
+    if (!planning_success) {
+      RCLCPP_ERROR(this->get_logger(), "MTC Task规划失败（planning_success=false）");
+      publish_state("错误:规划失败");
+      return false;
+    }
+    
+    if (task.solutions().empty()) {
+      RCLCPP_ERROR(this->get_logger(), "MTC Task规划完成但无可用解");
+      // 输出Task的详细信息
+      RCLCPP_ERROR(this->get_logger(), "Task状态: solutions().size()=%zu", task.solutions().size());
+      
+      // 输出每个stage的详细状态（最关键！）
+      RCLCPP_ERROR(this->get_logger(), "=== 开始输出Task状态（task.printState()）===");
+      try {
+        // 重定向stdout到stringstream，捕获printState()输出
+        std::stringstream ss;
+        std::streambuf* old_cout = std::cout.rdbuf(ss.rdbuf());
+        
+        task.printState();
+        
+        // 恢复stdout
+        std::cout.rdbuf(old_cout);
+        
+        // 输出到日志
+        std::string state_output = ss.str();
+        if (!state_output.empty()) {
+          // 按行输出，避免单行过长
+          std::istringstream iss(state_output);
+          std::string line;
+          while (std::getline(iss, line)) {
+            RCLCPP_ERROR(this->get_logger(), "Task状态: %s", line.c_str());
+          }
+        } else {
+          RCLCPP_WARN(this->get_logger(), "task.printState()没有输出内容");
+        }
+      } catch (const std::exception& e) {
+        RCLCPP_ERROR(this->get_logger(), "调用task.printState()时出错: %s", e.what());
+      }
+      
+      // 尝试手动遍历stages获取统计信息
+      try {
+        auto stages = task.stages();
+        if (stages) {
+          size_t num_children = stages->numChildren();
+          RCLCPP_ERROR(this->get_logger(), "Task包含 %zu 个stage，尝试获取每个stage的统计信息...", num_children);
+          // 注意：MTC的ContainerBase可能没有直接的child访问方法
+          // 这里先输出基本信息
+        }
+      } catch (const std::exception& e) {
+        RCLCPP_ERROR(this->get_logger(), "获取stage统计信息时出错: %s", e.what());
+      }
+      
+      RCLCPP_ERROR(this->get_logger(), "=== Task状态输出完成 ===");
+      
+      // 诊断：输出Task基本信息
+      RCLCPP_ERROR(this->get_logger(), "=== 规划失败诊断 ===");
+      try {
+        auto stages = task.stages();
+        if (stages) {
+          size_t num_children = stages->numChildren();
+          RCLCPP_ERROR(this->get_logger(), "Task包含 %zu 个stage", num_children);
+          
+          // 增强错误诊断：输出当前状态详细信息
+          try {
+            std::lock_guard<std::mutex> lock(moveit_mutex_);
+            // 修复时间戳问题：使用Time(0)获取最新可用状态，避免时间戳检查失败
+            auto current_state = move_group_interface_->getCurrentState(0.0);
+            if (current_state) {
+              const auto* jmg = current_state->getJointModelGroup("arm_group");
+              if (jmg) {
+                std::vector<double> current_joint_values;
+                current_state->copyJointGroupPositions(jmg, current_joint_values);
+                const auto& joint_names = jmg->getActiveJointModelNames();
+                
+                RCLCPP_ERROR(this->get_logger(), "[状态诊断] 当前机器人状态:");
+                for (size_t i = 0; i < current_joint_values.size() && i < joint_names.size(); ++i) {
+                  RCLCPP_ERROR(this->get_logger(), "  %s = %.3f rad (%.1f°)", 
+                              joint_names[i].c_str(), current_joint_values[i],
+                              current_joint_values[i] * 180.0 / M_PI);
+                }
+                
+                // 检查当前状态是否碰撞
+                planning_scene::PlanningScenePtr planning_scene = 
+                    std::make_shared<planning_scene::PlanningScene>(current_state->getRobotModel());
+                planning_scene->setCurrentState(*current_state);
+                collision_detection::CollisionRequest collision_request;
+                collision_detection::CollisionResult collision_result;
+                planning_scene->checkCollision(collision_request, collision_result);
+                
+                if (collision_result.collision) {
+                  RCLCPP_ERROR(this->get_logger(), "[状态诊断] ⚠️ 当前状态与场景碰撞！这可能导致规划失败");
+                  if (collision_result.contacts.size() > 0) {
+                    size_t contact_count = 0;
+                    for (const auto& contact_pair : collision_result.contacts) {
+                      if (contact_count < 3) {
+                        RCLCPP_ERROR(this->get_logger(), "[状态诊断] 碰撞: %s <-> %s", 
+                                   contact_pair.first.first.c_str(), contact_pair.first.second.c_str());
+                        contact_count++;
+                      }
+                    }
+                  }
+                } else {
+                  RCLCPP_INFO(this->get_logger(), "[状态诊断] ✓ 当前状态无碰撞");
+                }
+                
+                // 检查关节值是否在限位内（使用容差避免边界值误判）
+                bool joints_in_limits = true;
+                const double JOINT_LIMIT_TOLERANCE = 1e-4;  // 约0.006度
+                for (size_t i = 0; i < current_joint_values.size() && i < joint_names.size(); ++i) {
+                  const auto* joint_model = jmg->getActiveJointModels()[i];
+                  if (joint_model) {
+                    double min_bound = joint_model->getVariableBounds()[0].min_position_;
+                    double max_bound = joint_model->getVariableBounds()[0].max_position_;
+                    double joint_value = current_joint_values[i];
+                    if (joint_value < min_bound - JOINT_LIMIT_TOLERANCE || joint_value > max_bound + JOINT_LIMIT_TOLERANCE) {
+                      RCLCPP_ERROR(this->get_logger(), "[状态诊断] ⚠️ 关节 %s 值 %.3f 超出限位 [%.3f, %.3f]", 
+                                 joint_names[i].c_str(), joint_value, min_bound, max_bound);
+                      joints_in_limits = false;
+                    }
+                  }
+                }
+                if (joints_in_limits) {
+                  RCLCPP_INFO(this->get_logger(), "[状态诊断] ✓ 所有关节值在限位内");
+                }
+              }
+            } else {
+              RCLCPP_WARN(this->get_logger(), "[状态诊断] ⚠️ 无法获取当前状态（可能joint_states未就绪或关节名不匹配）");
+            }
+          } catch (const std::exception& e) {
+            RCLCPP_WARN(this->get_logger(), "[状态诊断] 获取状态信息时出错: %s", e.what());
+          }
+          
+          RCLCPP_ERROR(this->get_logger(), "可能的原因:");
+          RCLCPP_ERROR(this->get_logger(), "  1. MoveTo到预抓取位置失败（IK无解或路径规划失败）");
+          RCLCPP_ERROR(this->get_logger(), "  2. MoveRelative下探失败（碰撞或超出工作空间）");
+          RCLCPP_ERROR(this->get_logger(), "  3. 预抓取位置不可达（位置或姿态问题）");
+          RCLCPP_ERROR(this->get_logger(), "  4. Path constraints残留（已清理，但可能仍有其他约束）");
+          RCLCPP_ERROR(this->get_logger(), "  5. 关节命名不一致导致状态更新失败");
+          RCLCPP_ERROR(this->get_logger(), "建议:");
+          RCLCPP_ERROR(this->get_logger(), "  - 检查预抓取位置是否在工作空间内");
+          RCLCPP_ERROR(this->get_logger(), "  - 尝试降低approach_offset_z_或调整目标位置");
+          RCLCPP_ERROR(this->get_logger(), "  - 检查当前机器人状态是否与预抓取位置冲突");
+          RCLCPP_ERROR(this->get_logger(), "  - 检查关节命名是否一致（查看启动日志中的关节命名诊断）");
+        }
+      } catch (const std::exception& e) {
+        RCLCPP_ERROR(this->get_logger(), "获取Task信息时出错: %s", e.what());
+      }
+      RCLCPP_ERROR(this->get_logger(), "=== 诊断完成 ===");
+      
+      publish_state("错误:规划失败");
+      return false;
+    }
+    
+    RCLCPP_INFO(this->get_logger(), "MTC Task规划成功，找到 %zu 个解", task.solutions().size());
+    publish_state("规划成功:执行中");
+    
+    // 选择最优解（第一个解通常是最优的）
+    const auto& solution = task.solutions().front();
+    
+    // 检查急停
+    if (emergency_stop_) {
+      RCLCPP_WARN(this->get_logger(), "急停触发，停止Task执行");
+      publish_state("急停:任务已停止");
+      return false;
+    }
+    
+    // 修复轨迹时间戳问题：使用手动执行方式，在发送前修复轨迹时间戳
+    // 问题：MTC生成的轨迹中，第一个点和第二个点的time_from_start可能都是0
+    // 这会导致ros2_control的joint_trajectory_controller拒绝执行
+    // 解决方案：在发送执行请求前，检查并修复轨迹时间戳
+    auto execute_task_solution_client_ = rclcpp_action::create_client<moveit_task_constructor_msgs::action::ExecuteTaskSolution>(
+        shared_from_this(), "execute_task_solution");
+    
+    if (!execute_task_solution_client_->wait_for_action_server(std::chrono::seconds(5))) {
+      RCLCPP_ERROR(this->get_logger(), "execute_task_solution action server不可用");
+      publish_state("错误:action server不可用");
+      return false;
+    }
+    
+    // 转换解决方案为ROS消息
+    moveit_task_constructor_msgs::msg::Solution sol_msg;
+    solution->toMsg(sol_msg, &task.introspection());
+    
+    // 收集所有stage信息用于状态报告
+    std::vector<std::string> stage_names;        // 英文原始名称（用于日志）
+    std::vector<std::string> stage_names_cn;     // 中文名称（用于网页显示）
+    std::vector<double> stage_durations;
+    double total_duration = 0.0;
+    
+    // Stage名称英文到中文的映射
+    auto translate_stage_name = [](const std::string& en_name) -> std::string {
+      // 抓取任务相关
+      if (en_name == "fixed start" || en_name == "current state") return "初始状态";
+      if (en_name == "open gripper") return "打开夹爪";
+      if (en_name == "move to pregrasp") return "移动到预抓取位置";
+      if (en_name == "add cable object") return "添加碰撞对象";
+      if (en_name == "allow gripper-cable collisions") return "设置碰撞允许";
+      if (en_name == "move down") return "下探抓取";
+      if (en_name == "close gripper") return "闭合夹爪";
+      if (en_name == "attach object") return "附着物体";
+      if (en_name == "move up") return "抬起";
+      // 放置任务相关
+      if (en_name == "move to preplace") return "移动到预放置位置";
+      if (en_name == "place down") return "下放物体";
+      if (en_name == "detach object") return "分离物体";
+      if (en_name == "retreat") return "撤离";
+      // 通用
+      if (en_name.find("stage_") == 0) return "阶段" + en_name.substr(6);
+      // 默认返回原名
+      return en_name;
+    };
+    
+    for (const auto& sub_traj : sol_msg.sub_trajectory) {
+      std::string stage_name = sub_traj.info.comment;
+      if (stage_name.empty()) {
+        stage_name = "stage_" + std::to_string(sub_traj.info.stage_id);
+      }
+      stage_names.push_back(stage_name);
+      stage_names_cn.push_back(translate_stage_name(stage_name));
+      
+      // 计算该stage的轨迹时长
+      double duration = 0.0;
+      if (!sub_traj.trajectory.joint_trajectory.points.empty()) {
+        const auto& last_point = sub_traj.trajectory.joint_trajectory.points.back();
+        duration = last_point.time_from_start.sec + last_point.time_from_start.nanosec * 1e-9;
+      }
+      stage_durations.push_back(duration);
+      total_duration += duration;
+    }
+    
+    // 输出所有stage信息
+    RCLCPP_INFO(this->get_logger(), "[MTC执行] 任务包含 %zu 个阶段:", stage_names.size());
+    for (size_t i = 0; i < stage_names.size(); ++i) {
+      RCLCPP_INFO(this->get_logger(), "  阶段%zu: %s (%s) (时长: %.2fs)", 
+                  i+1, stage_names_cn[i].c_str(), stage_names[i].c_str(), stage_durations[i]);
+    }
+    
+    // 修复所有子轨迹的时间戳
+    // 问题：MTC生成的轨迹可能时间戳全为0或不严格递增
+    // 解决方案：检测是否需要修复，如果需要则基于关节运动量计算合理时间
+    const double MAX_JOINT_VELOCITY = 1.0;  // rad/s，关节最大速度（降低速度以减少抖动）
+    const double MIN_SEGMENT_TIME = 0.05;   // 最小段时间50ms（提高平滑度）
+    const double MIN_GRIPPER_TRAJECTORY_TIME = 1.5;  // 夹爪轨迹最小执行时间1.5秒
+    const double MIN_ARM_TRAJECTORY_TIME = 1.0;      // 机械臂轨迹最小执行时间1秒
+    
+    int traj_index = 0;
+    for (auto& sub_traj : sol_msg.sub_trajectory) {
+      auto& joint_traj = sub_traj.trajectory.joint_trajectory;
+      traj_index++;
+      
+      if (joint_traj.points.size() >= 2) {
+        // 检测是否是夹爪轨迹（通过关节名称判断）
+        bool is_gripper_traj = false;
+        for (const auto& name : joint_traj.joint_names) {
+          if (name == "JointGL" || name == "JointGR") {
+            is_gripper_traj = true;
+            break;
+          }
+        }
+        
+        // 获取原始轨迹时间
+        double original_last_time = joint_traj.points.back().time_from_start.sec + 
+                                   joint_traj.points.back().time_from_start.nanosec * 1e-9;
+        
+        // 确定最小轨迹时间
+        double min_traj_time = is_gripper_traj ? MIN_GRIPPER_TRAJECTORY_TIME : MIN_ARM_TRAJECTORY_TIME;
+        
+        // 如果整个轨迹时间小于最小时间，则需要重新计算
+        bool needs_fix = (original_last_time < min_traj_time);
+        
+        // 也检查是否有不递增的情况
+        if (!needs_fix) {
+          for (size_t i = 1; i < joint_traj.points.size(); ++i) {
+            auto& prev_time = joint_traj.points[i-1].time_from_start;
+            auto& curr_time = joint_traj.points[i].time_from_start;
+            double prev_sec = prev_time.sec + prev_time.nanosec * 1e-9;
+            double curr_sec = curr_time.sec + curr_time.nanosec * 1e-9;
+            if (curr_sec <= prev_sec) {
+              needs_fix = true;
+              break;
+            }
+          }
+        }
+        
+        RCLCPP_INFO(this->get_logger(), "[轨迹诊断] 子轨迹 #%d: %s, %zu个点, 原始时长=%.3fs, 需要修复=%s",
+                   traj_index, is_gripper_traj ? "夹爪" : "机械臂",
+                   joint_traj.points.size(), original_last_time, needs_fix ? "是" : "否");
+        
+        if (needs_fix) {
+          // 重新计算所有点的时间戳，基于关节运动量
+          double accumulated_time = 0.0;
+          joint_traj.points[0].time_from_start.sec = 0;
+          joint_traj.points[0].time_from_start.nanosec = 0;
+          
+          for (size_t i = 1; i < joint_traj.points.size(); ++i) {
+            // 计算从上一点到当前点的最大关节运动量
+            double max_joint_diff = 0.0;
+            const auto& prev_positions = joint_traj.points[i-1].positions;
+            const auto& curr_positions = joint_traj.points[i].positions;
+            
+            for (size_t j = 0; j < std::min(prev_positions.size(), curr_positions.size()); ++j) {
+              double diff = std::abs(curr_positions[j] - prev_positions[j]);
+              if (diff > max_joint_diff) {
+                max_joint_diff = diff;
+              }
+            }
+            
+            // 基于关节运动量计算所需时间
+            double segment_time = max_joint_diff / MAX_JOINT_VELOCITY;
+            if (segment_time < MIN_SEGMENT_TIME) {
+              segment_time = MIN_SEGMENT_TIME;
+            }
+            
+            accumulated_time += segment_time;
+            auto& curr_time = joint_traj.points[i].time_from_start;
+            curr_time.sec = static_cast<int32_t>(accumulated_time);
+            curr_time.nanosec = static_cast<uint32_t>((accumulated_time - curr_time.sec) * 1e9);
+          }
+          
+          // 如果计算出的时间仍然小于最小时间，进行缩放
+          if (accumulated_time < min_traj_time) {
+            double scale = min_traj_time / accumulated_time;
+            for (size_t i = 1; i < joint_traj.points.size(); ++i) {
+              double old_time = joint_traj.points[i].time_from_start.sec + 
+                               joint_traj.points[i].time_from_start.nanosec * 1e-9;
+              double new_time = old_time * scale;
+              joint_traj.points[i].time_from_start.sec = static_cast<int32_t>(new_time);
+              joint_traj.points[i].time_from_start.nanosec = static_cast<uint32_t>((new_time - static_cast<int32_t>(new_time)) * 1e9);
+            }
+            accumulated_time = min_traj_time;
+            RCLCPP_INFO(this->get_logger(), "[轨迹修复] 时间缩放: %.2f -> %.2f 秒 (scale=%.2f)", 
+                       accumulated_time / scale, accumulated_time, scale);
+          }
+          
+          RCLCPP_INFO(this->get_logger(), 
+                      "[轨迹修复] 子轨迹 #%d (%s): %zu个点, 修复后时长=%.2f秒", 
+                      traj_index, is_gripper_traj ? "夹爪" : "机械臂",
+                      joint_traj.points.size(), accumulated_time);
+        }
+      }
+    }
+    
+    // 创建goal并发送
+    moveit_task_constructor_msgs::action::ExecuteTaskSolution::Goal goal_msg;
+    goal_msg.solution = sol_msg;
+    
+    // 执行Task（在后台线程中执行，以便检查急停）
+    std::atomic<bool> execution_done{false};
+    std::atomic<bool> execution_success{false};
+    std::exception_ptr execution_exception;
+    
+    std::thread execution_thread([&, this]() {
+      try {
+        auto send_goal_options = rclcpp_action::Client<moveit_task_constructor_msgs::action::ExecuteTaskSolution>::SendGoalOptions();
+        
+        std::promise<bool> result_promise;
+        auto result_future_local = result_promise.get_future();
+        
+        send_goal_options.result_callback = [this, &result_promise](const auto& result) {
+          if (result.code == rclcpp_action::ResultCode::SUCCEEDED) {
+            RCLCPP_INFO(this->get_logger(), "MTC执行完成，error_code=%d", result.result->error_code.val);
+            result_promise.set_value(result.result->error_code.val == moveit_msgs::msg::MoveItErrorCodes::SUCCESS);
+          } else {
+            RCLCPP_ERROR(this->get_logger(), "MTC执行被取消或失败");
+            result_promise.set_value(false);
+          }
+        };
+        
+        auto goal_handle_future = execute_task_solution_client_->async_send_goal(goal_msg, send_goal_options);
+        
+        // 等待goal被接受（使用简单的future等待）
+        auto status = goal_handle_future.wait_for(std::chrono::seconds(10));
+        if (status != std::future_status::ready) {
+          RCLCPP_ERROR(this->get_logger(), "发送goal超时");
+          return;
+        }
+        
+        auto goal_handle = goal_handle_future.get();
+        if (!goal_handle) {
+          RCLCPP_ERROR(this->get_logger(), "Goal被拒绝");
+          return;
+        }
+        
+        RCLCPP_INFO(this->get_logger(), "Goal已被接受，等待执行完成...");
+        
+        // 等待结果（通过result_callback设置的promise）
+        auto result_status = result_future_local.wait_for(std::chrono::seconds(120));
+        if (result_status == std::future_status::ready) {
+          execution_success = result_future_local.get();
+        } else {
+          RCLCPP_ERROR(this->get_logger(), "等待执行结果超时");
+        }
+      } catch (const std::exception& e) {
+        execution_exception = std::current_exception();
+        RCLCPP_ERROR(this->get_logger(), "执行异常: %s", e.what());
+        execution_success = false;
+      }
+      execution_done = true;
+    });
+    
+    // 等待执行完成或急停，同时发布分阶段状态
+    // 基于累计时间估算当前执行的阶段
+    auto execution_start = std::chrono::steady_clock::now();
+    size_t current_stage = 0;
+    double accumulated_time = 0.0;
+    
+    // 重新计算修复后的stage_durations（因为之前可能被修改了）
+    stage_durations.clear();
+    total_duration = 0.0;
+    for (const auto& sub_traj : sol_msg.sub_trajectory) {
+      double duration = 0.0;
+      if (!sub_traj.trajectory.joint_trajectory.points.empty()) {
+        const auto& last_point = sub_traj.trajectory.joint_trajectory.points.back();
+        duration = last_point.time_from_start.sec + last_point.time_from_start.nanosec * 1e-9;
+      }
+      stage_durations.push_back(duration);
+      total_duration += duration;
+    }
+    
+    // 发布第一个阶段状态（使用中文名称）
+    if (!stage_names_cn.empty()) {
+      publish_state("执行:" + stage_names_cn[0], "1/" + std::to_string(stage_names_cn.size()));
+    }
+    
+    while (!execution_done && !emergency_stop_) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(100));
+      
+      // 计算已执行时间
+      auto now = std::chrono::steady_clock::now();
+      double elapsed = std::chrono::duration<double>(now - execution_start).count();
+      
+      // 基于时间估算当前阶段
+      accumulated_time = 0.0;
+      size_t estimated_stage = 0;
+      for (size_t i = 0; i < stage_durations.size(); ++i) {
+        accumulated_time += stage_durations[i];
+        if (elapsed < accumulated_time) {
+          estimated_stage = i;
+          break;
+        }
+        if (i == stage_durations.size() - 1) {
+          estimated_stage = i;  // 最后一个阶段
+        }
+      }
+      
+      // 如果阶段变化了，发布新状态（使用中文名称）
+      if (estimated_stage != current_stage && estimated_stage < stage_names_cn.size()) {
+        current_stage = estimated_stage;
+        std::string stage_info = std::to_string(current_stage + 1) + "/" + std::to_string(stage_names_cn.size());
+        publish_state("执行:" + stage_names_cn[current_stage], stage_info);
+        RCLCPP_INFO(this->get_logger(), "[MTC执行] 进入阶段 %zu/%zu: %s (%s)", 
+                    current_stage + 1, stage_names_cn.size(), 
+                    stage_names_cn[current_stage].c_str(), stage_names[current_stage].c_str());
+      }
+    }
+    
+    if (emergency_stop_) {
+      RCLCPP_WARN(this->get_logger(), "急停触发，停止Task执行");
+      publish_state("急停:任务已停止");
+      task.preempt();  // 停止Task
+      if (execution_thread.joinable()) {
+        execution_thread.join();
+      }
+      return false;
+    }
+    
+    if (execution_thread.joinable()) {
+      execution_thread.join();
+    }
+    
+    // 检查执行异常
+    if (execution_exception) {
+      try {
+        std::rethrow_exception(execution_exception);
+      } catch (const std::exception& e) {
+        RCLCPP_ERROR(this->get_logger(), "MTC Task执行异常: %s", e.what());
+        publish_state("错误:执行异常");
+        return false;
+      }
+    }
+    
+    if (execution_success) {
+      RCLCPP_INFO(this->get_logger(), "MTC Task执行成功");
+      publish_state("完成");
+      return true;
+    } else {
+      RCLCPP_ERROR(this->get_logger(), "MTC Task执行失败");
+      publish_state("错误:执行失败");
+      return false;
+    }
+  }
+  
+  // 使用MTC库的抓取函数
+  bool do_cable_grasp_mtc(const geometry_msgs::msg::PoseStamped& cable_pose, double cable_yaw)
+  {
+    RCLCPP_INFO(this->get_logger(), "========================================");
+    RCLCPP_INFO(this->get_logger(), "=== 开始执行MTC抓取任务 ===");
+    RCLCPP_INFO(this->get_logger(), "目标位置: pos=(%.3f, %.3f, %.3f), frame=%s",
+                cable_pose.pose.position.x, cable_pose.pose.position.y, 
+                cable_pose.pose.position.z, cable_pose.header.frame_id.c_str());
+    RCLCPP_INFO(this->get_logger(), "原始yaw（障碍物方向）: %.3f rad (%.1f deg)",
+                cable_yaw, cable_yaw * 180.0 / M_PI);
+    RCLCPP_INFO(this->get_logger(), "========================================");
+    
+    if (!rclcpp::ok() || emergency_stop_) {
+      RCLCPP_WARN(this->get_logger(), "系统停止或急停，停止抓取任务");
+      publish_state("急停:任务已停止");
+      return false;
+    }
+    
+    publish_state("已接收");
+    
+    // ========== 全零状态预运动 ==========
+    // 如果机械臂处于全零状态（奇异点附近），先移动到安全预备位置
+    // 这可以大幅提高后续MTC规划的成功率
+    if (auto_move_to_ready_ && check_near_zero_state()) {
+      RCLCPP_INFO(this->get_logger(), "[预运动] 检测到全零状态，先移动到安全预备位置...");
+      publish_state("预运动");
+      
+      if (!move_to_ready_position()) {
+        RCLCPP_ERROR(this->get_logger(), "[预运动] 移动到预备位置失败，但继续尝试MTC任务");
+        // 不返回false，继续尝试MTC任务，可能会成功
+      } else {
+        RCLCPP_INFO(this->get_logger(), "[预运动] ✓ 已到达预备位置，继续执行MTC抓取任务");
+      }
+    }
+    
+    // 清理残留的碰撞对象
+    const std::string cable_world_id = cable_name_ + "_world";
+    const std::string cable_attached_id = cable_name_ + "_attached";
+    scene_detach_and_remove(cable_world_id, eef_link_);
+    scene_detach_and_remove(cable_attached_id, eef_link_);
+    scene_detach_and_remove(cable_name_, eef_link_);
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    
+    // 注意：碰撞对象将在MTC Task内的ModifyPlanningScene stage中添加
+    // 这里不再重复添加，避免时序混乱和重复添加
+    // 如果需要提前添加用于可视化，可以保留，但MTC Task内也会添加
+    // 为了简化，我们只在Task内添加，这里注释掉
+    /*
+    if (add_collision_object_) {
+      geometry_msgs::msg::PoseStamped cable_pose_planning = cable_pose;
+      if (!transform_pose_to_planning(cable_pose_planning)) {
+        publish_state("错误:缆绳位姿转换失败");
+        return false;
+      }
+      if (!scene_add_cable_object(cable_pose_planning, cable_yaw, cable_world_id)) {
+        publish_state("错误:添加物体失败");
+        return false;
+      }
+    }
+    */
+    RCLCPP_INFO(this->get_logger(), "碰撞对象将在MTC Task内添加（ModifyPlanningScene stage）");
+    
+    // ========== 工作空间预检查 ==========
+    // 先进行基本的工作空间检查，快速拒绝明显不可达的目标
+    geometry_msgs::msg::PoseStamped cable_pose_in_base;
+    try {
+      geometry_msgs::msg::TransformStamped tf_to_base = 
+          tf_buffer_->lookupTransform("base_link", cable_pose.header.frame_id, tf2::TimePointZero);
+      tf2::doTransform(cable_pose, cable_pose_in_base, tf_to_base);
+      
+      double x_base = cable_pose_in_base.pose.position.x;
+      double y_base = cable_pose_in_base.pose.position.y;
+      double z_base = cable_pose_in_base.pose.position.z;
+      
+      if (!is_reachable(x_base, y_base, z_base)) {
+        RCLCPP_ERROR(this->get_logger(), "目标位置超出4DOF机械臂工作空间，拒绝抓取任务");
+        publish_state("错误:超出工作空间");
+        return false;
+      }
+    } catch (const tf2::TransformException& ex) {
+      RCLCPP_WARN(this->get_logger(), "无法转换到base_link进行工作空间检查: %s，继续尝试", ex.what());
+    }
+    
+    // ========== 快速IK可达性检查（使用Joint1方位角seed）==========
+    // 使用Joint1对准目标方位角，给IK一个好seed，再判断Joint2/3是否能在范围内找到解
+    RCLCPP_INFO(this->get_logger(), "[IK可达性检查] 开始快速IK可达性检查（Joint2/3 ∈ [-2.97, 0]，即[-170°, 0°]）");
+    
+    // 使用原始yaw（不强制翻转，yaw处理仅在夹爪对线缆方向时）
+    double grasp_yaw = cable_yaw;
+    
+    // 4DOF控制：计算Joint4目标值（控制夹爪yaw旋转）
+    // Joint1由IK自动根据目标位置计算（机械臂朝向）
+    double joint4_target = cable_yaw;
+    joint4_target += grasp_yaw_add_;
+    joint4_target += yaw_offset_;
+    if (yaw_flip_) {
+      joint4_target += M_PI;
+    }
+    // 归一化到[-π, π]
+    while (joint4_target > M_PI) joint4_target -= 2.0 * M_PI;
+    while (joint4_target < -M_PI) joint4_target += 2.0 * M_PI;
+    RCLCPP_INFO(this->get_logger(), "[4DOF控制] 计算Joint4目标值: %.3f rad (%.1f deg)", 
+                joint4_target, joint4_target * 180.0 / M_PI);
+    
+    geometry_msgs::msg::PoseStamped target_in_base;
+    try {
+      // 将目标转换到base_link坐标系（用于计算方位角）
+      geometry_msgs::msg::TransformStamped transform = 
+          tf_buffer_->lookupTransform("base_link", cable_pose.header.frame_id, tf2::TimePointZero);
+      tf2::doTransform(cable_pose, target_in_base, transform);
+      target_in_base.header.frame_id = "base_link";
+      
+      double x_in_base = target_in_base.pose.position.x;
+      double y_in_base = target_in_base.pose.position.y;
+      
+      RCLCPP_INFO(this->get_logger(), "[IK可达性检查] 目标在base_link中的位置: x=%.3f, y=%.3f, z=%.3f",
+                  x_in_base, y_in_base, target_in_base.pose.position.z);
+      
+      // 计算Joint1方位角seed: j1_seed = atan2(y, x)
+      double j1_seed = std::atan2(y_in_base, x_in_base);
+      RCLCPP_INFO(this->get_logger(), "[IK可达性检查] 计算Joint1方位角seed: j1_seed=%.3f rad (%.1f°)",
+                  j1_seed, j1_seed * 180.0 / M_PI);
+      
+      // 转换到planning frame进行IK测试
+      geometry_msgs::msg::PoseStamped target_for_ik = cable_pose;
+      if (!transform_pose_to_planning(target_for_ik)) {
+        RCLCPP_ERROR(this->get_logger(), "[IK可达性检查] ✗ 无法转换位姿到planning frame，拒绝目标");
+        publish_state("错误:位姿转换失败");
+        return false;
+      }
+      
+      // 快速可达性检查只回答一个问题：
+      // "这个xyz，有没有任何一个Joint2/3 ∈ [-2.97,0]的解？"（即[-170°, 0°]）
+      // 抓取姿态（roll=180°、yaw）只能放到MTC/真正规划阶段
+      geometry_msgs::msg::Pose pose_pos_only;
+      pose_pos_only.position = target_for_ik.pose.position;
+      // orientation给一个"中性值"，不要锁死
+      pose_pos_only.orientation.w = 1.0;
+      pose_pos_only.orientation.x = 0.0;
+      pose_pos_only.orientation.y = 0.0;
+      pose_pos_only.orientation.z = 0.0;
+      RCLCPP_INFO(this->get_logger(), "[IK可达性检查] 使用position-only检查（不锁死姿态）");
+      
+      // 准备多个Joint1 seed集合
+      std::vector<double> j1_seeds;
+      j1_seeds.push_back(j1_seed);
+      
+      // Seed 2: 避免奇异性，尝试 j1_seed +/- pi
+      double j1_seed2 = j1_seed + M_PI;
+      // 归一化到[-π, π]
+      while (j1_seed2 > M_PI) j1_seed2 -= 2.0 * M_PI;
+      while (j1_seed2 < -M_PI) j1_seed2 += 2.0 * M_PI;
+      j1_seeds.push_back(j1_seed2);
+      
+      RCLCPP_INFO(this->get_logger(), "[IK可达性检查] 准备 %zu 个Joint1 seed: [%.3f, %.3f] rad",
+                  j1_seeds.size(), j1_seed, j1_seed2);
+      
+      // 获取当前状态作为基础
+      auto test_state = getCurrentStateSafe(1.0);
+      if (!test_state) {
+        RCLCPP_WARN(this->get_logger(), "[IK可达性检查] 无法获取当前状态，跳过IK检查（继续尝试）");
+      } else {
+        const auto* jmg = test_state->getJointModelGroup("arm_group");
+        if (jmg) {
+          // 获取当前状态的关节值作为seed
+          std::vector<double> seed_values;
+          test_state->copyJointGroupPositions(jmg, seed_values);
+          
+          // 对每个Joint1 seed进行IK求解
+          bool ik_found = false;
+          int ik_solved_count = 0;  // 统计IK可解的次数
+          int joint23_invalid_count = 0;  // 统计Joint2/3超出范围的次数
+          
+          for (size_t seed_idx = 0; seed_idx < j1_seeds.size(); ++seed_idx) {
+            double j1 = j1_seeds[seed_idx];
+            RCLCPP_INFO(this->get_logger(), "[IK可达性检查] 尝试seed #%zu: Joint1=%.3f rad (%.1f°)",
+                       seed_idx + 1, j1, j1 * 180.0 / M_PI);
+            
+            // 复制当前状态
+            auto seed_state = std::make_shared<moveit::core::RobotState>(*test_state);
+            
+            // 真正设置Joint1 seed（修改seed数组，然后设置到state）
+            seed_values[0] = j1;  // Joint1是第一个关节
+            seed_state->setJointGroupPositions(jmg, seed_values);
+            
+            // IK求解（使用position-only pose，超时0.2s）
+            if (seed_state->setFromIK(jmg, pose_pos_only, eef_link_, 0.2)) {
+              ik_solved_count++;
+              RCLCPP_INFO(this->get_logger(), "[IK可达性检查] seed #%zu: IK求解成功", seed_idx + 1);
+              
+              // 检查Joint2/3可达性
+              std::vector<double> joint2_3_values;
+              if (check_joint23_reachable(seed_state, "arm_group", joint2_3_values)) {
+                ik_found = true;
+                RCLCPP_INFO(this->get_logger(), "[IK可达性检查] ✓ seed #%zu: IK可达性检查通过", seed_idx + 1);
+                RCLCPP_INFO(this->get_logger(), "[IK可达性检查] Joint2=%.3f rad (%.1f°), Joint3=%.3f rad (%.1f°) - 在范围内",
+                           joint2_3_values[0], joint2_3_values[0] * 180.0 / M_PI,
+                           joint2_3_values[1], joint2_3_values[1] * 180.0 / M_PI);
+                break;
+              } else {
+                joint23_invalid_count++;
+                RCLCPP_WARN(this->get_logger(), "[IK可达性检查] seed #%zu: IK可解但Joint2/3不可达", seed_idx + 1);
+                RCLCPP_WARN(this->get_logger(), "[IK可达性检查] Joint2=%.3f rad (%.1f°), Joint3=%.3f rad (%.1f°)",
+                           joint2_3_values[0], joint2_3_values[0] * 180.0 / M_PI,
+                           joint2_3_values[1], joint2_3_values[1] * 180.0 / M_PI);
+              }
+            } else {
+              RCLCPP_WARN(this->get_logger(), "[IK可达性检查] seed #%zu: IK求解失败", seed_idx + 1);
+            }
+          }
+          
+          // 输出诊断信息（不直接拒绝，让MTC有机会尝试）
+          if (!ik_found) {
+            RCLCPP_WARN(this->get_logger(), "[IK预检查] 位置IK失败，仍然允许进入MTC规划（避免误杀）");
+            if (ik_solved_count > 0) {
+              RCLCPP_WARN(this->get_logger(), "[IK预检查] 诊断: IK可解 %d 次，但Joint2/3均超出范围", ik_solved_count);
+            } else {
+              RCLCPP_WARN(this->get_logger(), "[IK预检查] 诊断: 所有seed的IK求解均失败");
+            }
+            RCLCPP_WARN(this->get_logger(), "[IK预检查] 继续执行MTC规划，让OMPL/MTC有机会尝试");
+            // 不return，继续执行MTC规划
+            // 让MTC/OMPL有机会尝试
+          } else {
+            RCLCPP_INFO(this->get_logger(), "[IK预检查] ✓ 位置IK检查通过，Joint2/3可达");
+          }
+        } else {
+          RCLCPP_WARN(this->get_logger(), "[IK可达性检查] 无法获取arm_group，跳过IK检查（继续尝试）");
+        }
+      }
+      
+      // 无论IK预检查是否通过，都继续创建MTC Task
+      // IK预检查只是启发，不是判官
+      RCLCPP_INFO(this->get_logger(), "[IK可达性检查] 继续创建MTC Task（让MTC/OMPL有机会尝试）");
+      
+    } catch (const tf2::TransformException& ex) {
+      RCLCPP_ERROR(this->get_logger(), "[工程判定] ✗ 无法转换到base_link: %s", ex.what());
+      RCLCPP_ERROR(this->get_logger(), "[工程判定] 拒绝该目标");
+      publish_state("错误:TF转换失败");
+      return false;
+    } catch (const std::exception& e) {
+      RCLCPP_ERROR(this->get_logger(), "[工程判定] ✗ 异常: %s", e.what());
+      publish_state("错误:判定异常");
+      return false;
+    }
+    
+    // 创建MTC Task（使用选定的grasp_yaw和joint4_target）
+    mtc::Task task = create_grasp_task_mtc(cable_pose, grasp_yaw, joint4_target);
+    
+    // 测试预抓取位置是否可达（诊断用）
+    // 注意：必须使用与MTC Task相同的TCP偏移补偿计算
+    geometry_msgs::msg::PoseStamped test_pregrasp_center = cable_pose;
+    if (transform_pose_to_planning(test_pregrasp_center)) {
+      // 使用与MTC相同的clearance计算
+      double test_pregrasp_clearance = std::max(approach_offset_z_, 0.15);
+      test_pregrasp_center.pose.position.z += test_pregrasp_clearance;
+      test_pregrasp_center.pose.orientation = compute_downward_orientation_with_yaw(cable_yaw);
+      
+      // 补偿TCP偏移（与MTC Task中的计算完全一致）
+      tf2::Quaternion q_center;
+      tf2::fromMsg(test_pregrasp_center.pose.orientation, q_center);
+      tf2::Matrix3x3 R_center(q_center);
+      tf2::Vector3 offset_center_from_linkgg(tcp_offset_x_, tcp_offset_y_, tcp_offset_z_);
+      tf2::Vector3 offset_world = R_center * offset_center_from_linkgg;
+      
+      geometry_msgs::msg::PoseStamped test_pregrasp;
+      test_pregrasp.header.frame_id = planning_frame_;
+      test_pregrasp.pose.position.x = test_pregrasp_center.pose.position.x - offset_world.x();
+      test_pregrasp.pose.position.y = test_pregrasp_center.pose.position.y - offset_world.y();
+      test_pregrasp.pose.position.z = test_pregrasp_center.pose.position.z - offset_world.z();
+      test_pregrasp.pose.orientation = test_pregrasp_center.pose.orientation;
+      
+      RCLCPP_INFO(this->get_logger(), "[诊断] 测试预抓取位置是否可达（使用与MTC相同的TCP补偿）...");
+      RCLCPP_INFO(this->get_logger(), "[诊断] 预抓取位置（LinkGG）: pos=(%.3f, %.3f, %.3f)", 
+                  test_pregrasp.pose.position.x, test_pregrasp.pose.position.y, 
+                  test_pregrasp.pose.position.z);
+      
+      // 先测试IK是否可解，并检查Joint2/3可达性
+      // 注意：getCurrentState失败只是时间戳同步问题，不要误判为IK失败
+      moveit::core::RobotStatePtr test_state = getCurrentStateSafe(1.0);  // 增加超时到1.0s
+      if (test_state) {
+        const auto* jmg = test_state->getJointModelGroup("arm_group");
+        if (jmg) {
+          bool ik_solved = test_state->setFromIK(jmg, test_pregrasp.pose, eef_link_, 0.5);
+          if (ik_solved) {
+            RCLCPP_INFO(this->get_logger(), "[诊断] ✓ IK求解成功");
+            // 检查Joint2/3可达性
+            std::vector<double> joint2_3_values;
+            if (check_joint23_reachable(test_state, "arm_group", joint2_3_values)) {
+              RCLCPP_INFO(this->get_logger(), "[诊断] ✓ Joint2/3可达: Joint2=%.3f rad (%.1f°), Joint3=%.3f rad (%.1f°)",
+                         joint2_3_values[0], joint2_3_values[0] * 180.0 / M_PI,
+                         joint2_3_values[1], joint2_3_values[1] * 180.0 / M_PI);
+            } else {
+              RCLCPP_WARN(this->get_logger(), "[诊断] ✗ IK可解但Joint2/3不可达（这可能是规划失败的根本原因）");
+              RCLCPP_WARN(this->get_logger(), "[诊断] Joint2=%.3f rad (%.1f°), Joint3=%.3f rad (%.1f°)",
+                         joint2_3_values[0], joint2_3_values[0] * 180.0 / M_PI,
+                         joint2_3_values[1], joint2_3_values[1] * 180.0 / M_PI);
+              RCLCPP_WARN(this->get_logger(), "[诊断] 需要范围: [-2.97, 0] rad ([-170°, 0°])");
+            }
+          } else {
+            RCLCPP_WARN(this->get_logger(), "[诊断] ✗ IK求解失败（这可能是规划失败的根本原因）");
+          }
+        } else {
+          RCLCPP_WARN(this->get_logger(), "[诊断] 无法获取arm_group关节模型组");
+        }
+      } else {
+        RCLCPP_WARN(this->get_logger(), "[诊断] 无法获取当前状态（可能是时间戳同步问题），跳过IK测试");
+        RCLCPP_WARN(this->get_logger(), "[诊断] 注意：getCurrentState失败不代表IK无解，只是状态获取问题");
+      }
+      
+      // 诊断代码已禁用：move_group_interface_->plan() 可能阻塞，影响MTC规划
+      // 如果需要诊断，可以在MTC规划失败后再进行
+      RCLCPP_DEBUG(this->get_logger(), "[诊断] 诊断代码已禁用，直接进入MTC规划（避免阻塞）");
+    }
+    
+    // 执行Task
+    RCLCPP_INFO(this->get_logger(), "[MTC执行] 诊断完成，准备执行MTC Task...");
+    bool success = execute_mtc_task(task, "抓取");
+    
+    // 任务完成后清理场景对象
+    if (success) {
+      RCLCPP_INFO(this->get_logger(), "=== 任务完成：清理场景对象 ===");
+      scene_detach_and_remove(cable_attached_id, eef_link_);
+      scene_detach_and_remove(cable_world_id, eef_link_);
+    } else {
+      // 失败时也清理
+      scene_detach_and_remove(cable_world_id, eef_link_);
+      scene_detach_and_remove(cable_attached_id, eef_link_);
+    }
+    
+    return success;
+  }
+  
+  // 使用MTC库的放置函数
+  bool do_cable_place_mtc(const geometry_msgs::msg::PoseStamped& place_pose, double place_yaw)
+  {
+    RCLCPP_INFO(this->get_logger(), "========================================");
+    RCLCPP_INFO(this->get_logger(), "=== 开始执行MTC放置任务 ===");
+    RCLCPP_INFO(this->get_logger(), "目标位置: pos=(%.3f, %.3f, %.3f), frame=%s",
+                place_pose.pose.position.x, place_pose.pose.position.y, 
+                place_pose.pose.position.z, place_pose.header.frame_id.c_str());
+    RCLCPP_INFO(this->get_logger(), "原始yaw: %.3f rad (%.1f deg)",
+                place_yaw, place_yaw * 180.0 / M_PI);
+    RCLCPP_INFO(this->get_logger(), "========================================");
+    
+    if (!rclcpp::ok() || emergency_stop_) {
+      RCLCPP_WARN(this->get_logger(), "系统停止或急停，停止放置任务");
+      publish_state("急停:任务已停止");
+      return false;
+    }
+    
+    publish_state("已接收放置任务");
+    
+    // 创建MTC Task
+    mtc::Task task = create_place_task_mtc(place_pose, place_yaw);
+    
+    // 执行Task
+    bool success = execute_mtc_task(task, "放置");
+    
+    // 任务完成后清理场景对象
+    if (success) {
+      const std::string cable_world_id = cable_name_ + "_world";
+      const std::string cable_attached_id = cable_name_ + "_attached";
+      scene_detach_and_remove(cable_world_id, eef_link_);
+      scene_detach_and_remove(cable_attached_id, eef_link_);
+    }
+    
+    return success;
+  }
+
+  // 核心抓取函数（保持向后兼容，内部调用MTC实现）
   // cable_yaw: 视觉提供的原始yaw（缆绳切向方向），用于障碍物方向计算
   bool do_cable_grasp(const geometry_msgs::msg::PoseStamped& cable_pose, double cable_yaw)
   {
+    // 使用MTC实现
+    return do_cable_grasp_mtc(cable_pose, cable_yaw);
+  }
+
+  // 放置函数（保持向后兼容，内部调用MTC实现）
+  bool do_cable_place(const geometry_msgs::msg::PoseStamped& place_pose, double place_yaw)
+  {
+    // 使用MTC实现
+    return do_cable_place_mtc(place_pose, place_yaw);
+  }
+
+  // Pick-and-Place组合函数（使用MTC）
+  bool do_pick_and_place(
+      const geometry_msgs::msg::PoseStamped& grasp_pose, double grasp_yaw,
+      const geometry_msgs::msg::PoseStamped& place_pose, double place_yaw)
+  {
     RCLCPP_INFO(this->get_logger(), "========================================");
-    RCLCPP_INFO(this->get_logger(), "=== 开始执行抓取任务 ===");
+    RCLCPP_INFO(this->get_logger(), "=== 开始执行Pick-and-Place任务（MTC） ===");
+    RCLCPP_INFO(this->get_logger(), "========================================");
+    
+    // 先执行抓取
+    if (!do_cable_grasp_mtc(grasp_pose, grasp_yaw)) {
+      RCLCPP_ERROR(this->get_logger(), "抓取失败，Pick-and-Place任务终止");
+      publish_state("错误:抓取失败");
+      return false;
+    }
+    
+    // 再执行放置
+    if (!do_cable_place_mtc(place_pose, place_yaw)) {
+      RCLCPP_ERROR(this->get_logger(), "放置失败，Pick-and-Place任务终止");
+      publish_state("错误:放置失败");
+      // 注意：此时物体可能已经抓取，但没有放置成功
+      // 可以考虑添加恢复逻辑（如回到安全位置）
+      return false;
+    }
+    
+    RCLCPP_INFO(this->get_logger(), "Pick-and-Place任务完成");
+    publish_state("完成");
+    return true;
+  }
+
+  // 旧的抓取函数实现（保留作为参考，但不再使用）
+  bool do_cable_grasp_old(const geometry_msgs::msg::PoseStamped& cable_pose, double cable_yaw)
+  {
+    RCLCPP_INFO(this->get_logger(), "========================================");
+    RCLCPP_INFO(this->get_logger(), "=== 开始执行抓取任务（旧实现） ===");
     RCLCPP_INFO(this->get_logger(), "目标位置: pos=(%.3f, %.3f, %.3f), frame=%s",
                 cable_pose.pose.position.x, cable_pose.pose.position.y, 
                 cable_pose.pose.position.z, cable_pose.header.frame_id.c_str());
@@ -4997,6 +9001,8 @@ private:
     }
     
     publish_state("规划:预抓取");
+    // 预抓取使用IK→joint规划（避免Pilz PTP加速度限制问题）
+    RCLCPP_INFO(this->get_logger(), "[预抓取] 使用IK→joint规划");
     if (!plan_execute_pose_target(pregrasp_pose))
     {
       publish_state("错误:预抓取失败");
@@ -5013,7 +9019,12 @@ private:
       RCLCPP_INFO(this->get_logger(), "[4DOF姿态优化] 在pregrasp位置验证当前姿态");
       try {
         auto current_pose = getCurrentPoseSafe();
-        auto current_state = move_group_interface_->getCurrentState();
+        // 修复时间戳问题：使用Time(0)获取最新可用状态
+        auto current_state = move_group_interface_->getCurrentState(0.0);
+        if (!current_state) {
+          RCLCPP_WARN(this->get_logger(), "[4DOF姿态优化] 无法获取当前状态");
+          return false;
+        }
         std::vector<double> current_joint_values;
         const auto* jmg = current_state->getJointModelGroup("arm_group");
         if (jmg)
@@ -5072,41 +9083,72 @@ private:
     
     bool descend_success = false;
     
-    // 统一4DOF和非4DOF分支：都优先使用分段IK下压（唯一鲁棒方案）
-    if (is_4dof_)
+    // 三段式动作B：短距离笛卡尔直线下压（≤15cm）
+    // 计算下压距离
+    double descend_dist = std::sqrt(
+      std::pow(grasp_pose.pose.position.x - pregrasp_pose.pose.position.x, 2) +
+      std::pow(grasp_pose.pose.position.y - pregrasp_pose.pose.position.y, 2) +
+      std::pow(grasp_pose.pose.position.z - pregrasp_pose.pose.position.z, 2)
+    );
+
+    RCLCPP_INFO(this->get_logger(), "[下压] 下压距离: %.3f m", descend_dist);
+
+    // 读取pregrasp到位后的当前姿态，保持当前姿态进行下压（只改z坐标）
+    // 这是4DOF机械臂的关键：姿态不可独立控制，必须保持当前姿态
+    geometry_msgs::msg::PoseStamped current_pose_after_pregrasp = getCurrentPoseSafe();
+    geometry_msgs::msg::PoseStamped current_pose_planning = current_pose_after_pregrasp;
+    if (!transform_pose_to_planning(current_pose_planning))
     {
-      // 4DOF：使用分段下压（IK→joint target，唯一鲁棒方案）
-      RCLCPP_INFO(this->get_logger(), "[4DOF策略] 使用分段下压（IK→joint target）");
-      if (execute_segmented_descend(pregrasp_pose, grasp_pose, -1))  // -1表示自适应分段
-      {
-        descend_success = true;
-      }
-      else
-      {
-        // Fallback：普通规划（直接到目标点）
-        RCLCPP_WARN(this->get_logger(), "[4DOF策略] 分段下压失败，尝试普通规划fallback");
-        if (plan_execute_pose_target(grasp_pose))
-        {
-          descend_success = true;
-        }
-      }
+      RCLCPP_WARN(this->get_logger(), "[下压] 无法获取当前姿态，使用原始grasp_pose");
     }
     else
     {
-      // 非4DOF：同样优先使用分段下压（IK→joint target，更可靠）
-      RCLCPP_INFO(this->get_logger(), "[非4DOF策略] 优先使用分段下压（IK→joint target）");
-      if (execute_segmented_descend(pregrasp_pose, grasp_pose, -1))  // -1表示自适应分段
+      // 保持当前姿态，只改z坐标
+      grasp_pose.pose.orientation = current_pose_planning.pose.orientation;
+      RCLCPP_INFO(this->get_logger(), 
+                  "[下压] 保持当前姿态进行下压: orientation=(%.3f, %.3f, %.3f, %.3f)",
+                  grasp_pose.pose.orientation.x, grasp_pose.pose.orientation.y,
+                  grasp_pose.pose.orientation.z, grasp_pose.pose.orientation.w);
+    }
+
+    // 下压前移除缆绳碰撞体，避免规划器认为"夹到缆绳"是碰撞
+    if (add_collision_object_)
+    {
+      const std::string cable_world_id = cable_name_ + "_world";
+      std::vector<std::string> known_objects = planning_scene_interface_->getKnownObjectNames();
+      bool world_object_exists = false;
+      for (const auto& name : known_objects)
+      {
+        if (name == cable_world_id)
+        {
+          world_object_exists = true;
+          break;
+        }
+      }
+      
+      if (world_object_exists)
+      {
+        planning_scene_interface_->removeCollisionObjects({cable_world_id});
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));  // 等待场景更新
+        RCLCPP_INFO(this->get_logger(), "[下压] 已移除缆绳碰撞体 %s，避免规划冲突", cable_world_id.c_str());
+      }
+    }
+
+    // 三段式动作B：下压使用joint-space分段IK（跳过Pilz LIN，直接使用更可靠的方法）
+    // 注意：Pilz LIN对"严格直线 + 动力学约束"比较敏感，对于短距离下压（5cm），
+    // 直接使用joint-space分段插值更可靠，避免速度限制违反等问题
+    RCLCPP_INFO(this->get_logger(), "[下压] 使用joint-space分段IK下压（跳过Pilz LIN）");
+    if (execute_segmented_descend(pregrasp_pose, grasp_pose, -1))
+    {
+      descend_success = true;
+    }
+    else
+    {
+      // Fallback：普通规划
+      RCLCPP_WARN(this->get_logger(), "[下压] 分段IK下压失败，尝试普通规划fallback");
+      if (plan_execute_pose_target(grasp_pose))
       {
         descend_success = true;
-      }
-      else
-      {
-        // Fallback：普通规划（直接到目标点）
-        RCLCPP_WARN(this->get_logger(), "[非4DOF策略] 分段下压失败，尝试普通规划fallback");
-        if (plan_execute_pose_target(grasp_pose))
-        {
-          descend_success = true;
-        }
       }
     }
 
@@ -5211,97 +9253,23 @@ private:
     
     publish_grasp_viz("lift_target", cable_pose_planning, &pregrasp_pose, &grasp_pose, &lift_pose);
     
-    std::vector<geometry_msgs::msg::Pose> lift_waypoints;
-    // 注意：computeCartesianPath默认起点是current_state，不是waypoints[0]
-    // 抬起时current_state已经是grasp_pose（下压已完成），所以只放lift_pose
-    lift_waypoints.push_back(lift_pose.pose);   // 已经在planning_frame_中
-    
     bool lift_success = false;
     
-    if (is_4dof_)
+    // 三段式动作C：提拉使用普通规划（暂时不用LIN，避免姿态问题）
+    RCLCPP_INFO(this->get_logger(), "[提拉] 使用普通规划（IK→joint）");
+    if (plan_execute_pose_target(lift_pose))
     {
-      // 4DOF：优先分段提升（IK→joint target，更稳，避免OMPL constraint sampler问题）
-      RCLCPP_INFO(this->get_logger(), "[4DOF策略] 优先使用分段提升（IK→joint target）");
-      if (execute_segmented_lift(grasp_pose, lift_pose, 3))
-      {
-        lift_success = true;
-        RCLCPP_INFO(this->get_logger(), "[4DOF策略] 分段提升成功");
-      }
-      else
-      {
-        // Fallback 1: 尝试笛卡尔路径（如果启用）
-        if (use_cartesian_)
-        {
-          RCLCPP_WARN(this->get_logger(), "[4DOF策略] 分段提升失败，尝试笛卡尔路径fallback");
-          lift_success = execute_cartesian(lift_waypoints, false);  // false 表示 lift
-          if (lift_success)
-          {
-            RCLCPP_INFO(this->get_logger(), "[4DOF策略] 笛卡尔路径fallback成功");
-          }
-        }
-        
-        // Fallback 2: 普通规划（IK→joint target）
-        if (!lift_success)
-        {
-          RCLCPP_WARN(this->get_logger(), "[4DOF策略] 分段提升和笛卡尔路径都失败，尝试普通规划fallback");
-          if (plan_execute_pose_target(lift_pose))
-          {
-            lift_success = true;
-            RCLCPP_INFO(this->get_logger(), "[4DOF策略] 普通规划fallback成功");
-          }
-        }
-      }
+      lift_success = true;
+      RCLCPP_INFO(this->get_logger(), "[提拉] 普通规划成功");
     }
     else
     {
-      // 非4DOF：保持原逻辑（优先Cartesian，失败后fallback到分段提升）
-      if (use_cartesian_)
+      // Fallback：分段提升
+      RCLCPP_WARN(this->get_logger(), "[提拉] 普通规划失败，尝试分段提升fallback");
+      if (execute_segmented_lift(grasp_pose, lift_pose, 3))
       {
-        RCLCPP_INFO(this->get_logger(), "[非4DOF策略] 尝试笛卡尔路径");
-        lift_success = execute_cartesian(lift_waypoints, false);  // false 表示 lift
-        if (lift_success)
-        {
-          RCLCPP_INFO(this->get_logger(), "[非4DOF策略] 笛卡尔路径成功");
-        }
-        else
-        {
-          // Fallback 1: 分段提升（使用IK→joint target）
-          RCLCPP_WARN(this->get_logger(), "[非4DOF策略] 笛卡尔路径失败，尝试分段提升fallback（IK→joint target）");
-          if (execute_segmented_lift(grasp_pose, lift_pose, 3))
-          {
-            lift_success = true;
-            RCLCPP_INFO(this->get_logger(), "[非4DOF策略] 分段提升fallback成功");
-          }
-          else
-          {
-            // Fallback 2: 普通规划（直接到目标点）
-            RCLCPP_WARN(this->get_logger(), "[非4DOF策略] 分段提升失败，尝试普通规划fallback");
-            if (plan_execute_pose_target(lift_pose))
-            {
-              lift_success = true;
-              RCLCPP_INFO(this->get_logger(), "[非4DOF策略] 普通规划fallback成功");
-            }
-          }
-        }
-      }
-      else
-      {
-        // 不使用Cartesian，直接使用分段提升或普通规划
-        RCLCPP_INFO(this->get_logger(), "[非4DOF策略] 使用分段提升（IK→joint target）");
-        if (execute_segmented_lift(grasp_pose, lift_pose, 3))
-        {
-          lift_success = true;
-          RCLCPP_INFO(this->get_logger(), "[非4DOF策略] 分段提升成功");
-        }
-        else
-        {
-          RCLCPP_WARN(this->get_logger(), "[非4DOF策略] 分段提升失败，尝试普通规划fallback");
-          if (plan_execute_pose_target(lift_pose))
-          {
-            lift_success = true;
-            RCLCPP_INFO(this->get_logger(), "[非4DOF策略] 普通规划fallback成功");
-          }
-        }
+        lift_success = true;
+        RCLCPP_INFO(this->get_logger(), "[提拉] 分段提升成功");
       }
     }
 
@@ -5369,6 +9337,8 @@ private:
   // 成员变量
   rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr cable_pose_sub_;
   rclcpp::Subscription<m5_msgs::msg::CablePoseWithYaw>::SharedPtr cable_pose_with_yaw_sub_;
+  rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr place_pose_sub_;
+  rclcpp::Subscription<m5_msgs::msg::CablePoseWithYaw>::SharedPtr place_pose_with_yaw_sub_;
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr emergency_stop_sub_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr state_publisher_;
   
@@ -5444,6 +9414,18 @@ private:
   bool use_cartesian_;
   double eef_step_;
   double jump_threshold_;
+  
+  // Place parameters
+  double place_approach_offset_z_;
+  double place_descend_distance_;
+  double place_retreat_distance_;
+  double place_max_pos_error_;
+  double place_planning_time_;
+  int place_num_planning_attempts_;
+  double place_max_velocity_scaling_;
+  double place_max_acceleration_scaling_;
+  double place_goal_position_tolerance_;
+  double place_goal_orientation_tolerance_;
   double yaw_offset_{0.0};  // yaw偏移量（弧度）
   bool yaw_flip_{false};  // 是否翻转yaw 180度
   double grasp_yaw_add_{M_PI / 2.0};  // 线缆切向→夹持方向偏移（默认+90°横夹）
@@ -5460,14 +9442,44 @@ private:
   double joint4_yaw_search_range_{M_PI};  // Joint4-yaw搜索范围（默认±180度）
   double joint4_yaw_search_step_{0.0873};  // Joint4-yaw搜索步长（默认5度，约0.0873 rad）
   
+  // Joint约束参数（4DOF机器人控制）
+  double joint1_tolerance_{0.1745};  // Joint1容差（默认±10°，约0.1745 rad）
+  bool joint4_constraint_enabled_{false};  // 是否启用Joint4约束
+  double joint4_offset_{0.0};  // Joint4固定offset（零位标定）
+  double joint4_tolerance_{0.0873};  // Joint4容差（默认±5°，约0.0873 rad）
+  
   // 状态回滚参数
   bool enable_recovery_{true};  // 是否启用执行失败后的状态回滚
   double recovery_timeout_{5.0};  // 回滚操作的超时时间
+  
+  // yaw候选搜索参数
+  bool yaw_candidate_search_enabled_{true};  // 是否启用yaw候选搜索
+  double yaw_candidate_center_{0.0};  // 候选搜索中心yaw（仅xyz输入时使用）
+  double yaw_candidate_range_{M_PI};  // 搜索范围（±180°）
+  double yaw_candidate_step_{0.2618};  // 搜索步长（15°，约0.2618 rad）
+  
+  // 地面安全参数
+  double ground_height_{0.0};  // 地面高度
+  double ground_offset_below_base_{-0.05};  // 地面在基座下方的偏移（-5cm，基座下方5cm）
+  double camera_error_margin_{0.005};  // 相机标定误差余量（5mm）
+  double min_ground_clearance_{0.010};  // 最小离地安全距离（10mm）
+  bool add_ground_plane_{true};  // 是否添加地面碰撞对象
+  
+  // 下压距离限制
+  double max_cartesian_descend_distance_{0.15};  // 单次笛卡尔下压最大距离（15cm）
   
   // TCP偏移补偿参数（LinkGG到夹爪中心的偏移，在EEF frame中）
   double tcp_offset_x_{0.0};  // m  TCP偏移X（LinkGG→夹爪中心）
   double tcp_offset_y_{-0.024};  // m  TCP偏移Y（LinkGG→夹爪中心）
   double tcp_offset_z_{-0.0086};  // m  TCP偏移Z（LinkGG→夹爪中心）
+  
+  // 全零状态预运动参数
+  bool auto_move_to_ready_{true};  // 是否自动移动到预备位置
+  double ready_joint1_{0.0};  // rad  预备位置Joint1
+  double ready_joint2_{-0.5};  // rad  预备位置Joint2（约-30度）
+  double ready_joint3_{-0.5};  // rad  预备位置Joint3（约-30度）
+  double ready_joint4_{0.0};  // rad  预备位置Joint4
+  double near_zero_threshold_{0.1};  // rad  全零状态判断阈值
 
   std::string gripper_mode_;
   double gripper_open_width_;
@@ -5481,16 +9493,17 @@ private:
   bool add_collision_object_;
   std::vector<std::string> allow_touch_links_;
 
-  // 工作空间参数
-  double workspace_base_height_{0.141};
-  double workspace_link2_length_{0.264};
-  double workspace_link3_length_{0.143};
-  double workspace_link4_to_eef_{0.187};
-  double workspace_reach_radius_margin_{1.2};
-  double workspace_max_height_offset_{0.9};
-  double workspace_min_height_offset_{-0.3};
-  double workspace_safe_x_min_{0.20};
-  double workspace_safe_x_max_{0.35};
+  // 工作空间参数 (基于URDF精确计算)
+  double workspace_base_height_{0.2145};    // Joint2轴高度 (base原点+link1高度)
+  double workspace_link2_length_{0.264};    // 大臂长度
+  double workspace_link3_length_{0.143};    // 小臂长度  
+  double workspace_link4_to_eef_{0.187};    // 末端长度
+  double workspace_reach_radius_margin_{0.95}; // 最大半径裕度(略保守)
+  double workspace_max_height_offset_{0.60};   // 相对Joint2轴的最大高度偏移
+  double workspace_min_height_offset_{-0.10};  // 相对Joint2轴的最小高度偏移
+  double workspace_min_radius_{0.08};          // 最小半径(避免太靠近base)
+  double workspace_safe_x_min_{0.15};
+  double workspace_safe_x_max_{0.40};
   double workspace_safe_y_min_{-0.15};
   double workspace_safe_y_max_{0.15};
   double workspace_safe_z_min_{0.25};
