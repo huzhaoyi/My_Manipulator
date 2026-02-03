@@ -100,15 +100,17 @@
             height: 100vh;
         }
         
-        /* 左侧：关节值显示 */
+        /* 左侧：监控面板 */
         .left-panel {
-            width: 280px;
-            background: rgba(15, 20, 40, 0.85);
+            width: 300px;
+            min-width: 300px;
+            background: rgba(15, 20, 40, 0.9);
             backdrop-filter: blur(10px);
             border-right: 1px solid rgba(0, 255, 255, 0.2);
-            padding: 20px;
+            padding: 15px 18px;
             overflow-y: auto;
-            box-shadow: 0 0 30px rgba(0, 255, 255, 0.1);
+            box-shadow: 0 0 20px rgba(0, 255, 255, 0.08);
+            font-size: 14px;
         }
         
         /* 中间：3D机械臂显示 */
@@ -125,6 +127,63 @@
             height: 100%;
         }
         
+        /* 关节角度浮动面板（3D视图右上角） */
+        .joint-panel {
+            position: absolute;
+            top: 15px;
+            right: 15px;
+            background: rgba(20, 25, 35, 0.92);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(100, 120, 140, 0.2);
+            border-radius: 12px;
+            padding: 15px 18px;
+            min-width: 180px;
+            z-index: 100;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+        }
+        
+        .joint-panel h4 {
+            color: #a0b8c8;
+            font-size: 14px;
+            font-weight: 600;
+            margin: 0 0 12px 0;
+            padding-bottom: 8px;
+            border-bottom: 1px solid rgba(100, 120, 140, 0.2);
+        }
+        
+        .joint-panel .joint-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 6px 0;
+            font-size: 14px;
+            border-bottom: 1px solid rgba(100, 120, 140, 0.1);
+        }
+        
+        .joint-panel .joint-row:last-child {
+            border-bottom: none;
+        }
+        
+        .joint-panel .joint-name {
+            color: #b0b0b0;
+            font-size: 13px;
+        }
+        
+        .joint-panel .joint-value {
+            color: #4fc3f7;
+            font-family: 'Consolas', 'Courier New', monospace;
+            font-weight: 600;
+            font-size: 14px;
+        }
+        
+        .joint-panel .no-data {
+            color: #ff8a65;
+            font-size: 13px;
+            font-style: italic;
+            text-align: center;
+            padding: 10px 0;
+        }
+        
         /* 右侧：控制界面 */
         .right-panel {
             width: 350px;
@@ -138,36 +197,43 @@
         
         h1 {
             color: #a0b8c8;
-            margin-bottom: 20px;
-            font-size: 24px;
+            margin-bottom: 15px;
+            font-size: 18px;
             text-align: center;
             text-shadow: none;
             font-weight: 600;
             letter-spacing: 1px;
         }
         
+        .left-panel h1 {
+            font-size: 16px;
+            margin-bottom: 15px;
+            color: #a0b8c8;
+        }
+        
         .status-box {
-            background: rgba(15, 20, 28, 0.7);
-            border: 1px solid rgba(100, 120, 140, 0.2);
-            padding: 15px;
-            border-radius: 12px;
-            margin-bottom: 20px;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+            background: rgba(15, 20, 28, 0.6);
+            border: 1px solid rgba(100, 120, 140, 0.15);
+            padding: 12px 15px;
+            border-radius: 10px;
+            margin-bottom: 12px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
         }
         
         .status-box h3 {
             color: #a0b8c8;
-            margin-bottom: 12px;
-            font-size: 16px;
+            margin-bottom: 10px;
+            font-size: 14px;
             text-shadow: none;
         }
         
         .status-item {
             display: flex;
             justify-content: space-between;
-            padding: 10px 0;
+            padding: 8px 0;
             border-bottom: 1px solid rgba(100, 120, 140, 0.1);
-            transition: all 0.3s;
+            transition: all 0.2s;
+            font-size: 14px;
         }
         
         .status-item:hover {
@@ -182,21 +248,24 @@
         .status-label {
             font-weight: 500;
             color: #b0b0b0;
+            font-size: 13px;
         }
         
         .status-value {
             color: #a0b8c8;
-            font-family: 'Courier New', monospace;
+            font-family: 'Consolas', 'Courier New', monospace;
             font-weight: 600;
+            font-size: 13px;
             text-shadow: none;
         }
         
         .connection-status {
-            padding: 12px;
+            padding: 10px;
             border-radius: 8px;
-            margin-bottom: 20px;
+            margin-bottom: 12px;
             text-align: center;
             font-weight: bold;
+            font-size: 14px;
             border: 1px solid;
             transition: all 0.3s;
         }
@@ -271,11 +340,9 @@
             max-height: 80px;
             display: block;
             margin: 0 auto;
-            /* 柔和的背景 */
             background: rgba(255, 255, 255, 0.05);
             padding: 10px;
             border-radius: 8px;
-            /* 移除强烈的滤镜效果，保持LOGO原始颜色 */
             filter: none;
             transition: all 0.3s;
             opacity: 0.95;
@@ -294,37 +361,14 @@
             left: 20px;
             z-index: 100;
             max-height: 50px;
-            /* 柔和的背景，根据LOGO颜色调整 */
             background: rgba(255, 255, 255, 0.05);
             padding: 8px 15px;
             border-radius: 8px;
-            /* 移除边框和强烈发光 */
             border: none;
             box-shadow: none;
-            /* 移除强烈的滤镜效果，保持LOGO原始颜色 */
             filter: none;
             opacity: 0.95;
             transition: opacity 0.3s;
-        }
-        
-        /* 作者名字（右侧） */
-        .author-name {
-            position: absolute;
-            top: 15px;
-            right: 20px;
-            z-index: 100;
-            color: #e0e0e0;
-            font-size: 18px;
-            font-weight: 500;
-            background: rgba(255, 255, 255, 0.05);
-            padding: 8px 15px;
-            border-radius: 8px;
-            opacity: 0.95;
-            transition: opacity 0.3s;
-        }
-        
-        .author-name:hover {
-            opacity: 1;
         }
         
         .top-logo:hover {
@@ -386,6 +430,14 @@
         .input-row .input-group {
             flex: 1;
             margin-bottom: 0;
+            min-width: 0;  /* 允许flex item收缩 */
+        }
+        
+        .input-row .input-group input {
+            width: 100%;
+            box-sizing: border-box;
+            padding: 8px 6px;  /* 减小内边距让数字显示更完整 */
+            font-size: 13px;
         }
         
         .button-group {
@@ -516,27 +568,6 @@
             box-shadow: 0 2px 6px rgba(244, 67, 54, 0.15);
         }
         
-        .toggle-advanced {
-            margin-top: 10px;
-            font-size: 12px;
-            color: #a0b8c8;
-            cursor: pointer;
-            text-decoration: underline;
-            text-shadow: none;
-            transition: all 0.3s;
-        }
-        
-        .toggle-advanced:hover {
-            color: #c0d0e0;
-        }
-        
-        .advanced-controls {
-            display: none;
-            margin-top: 15px;
-            padding-top: 15px;
-            border-top: 1px solid rgba(100, 120, 140, 0.2);
-        }
-        
         /* 标签页样式 */
         .tabs-container {
             margin-bottom: 20px;
@@ -582,73 +613,493 @@
         .tab-content.active {
             display: block;
         }
+        
+        /* 节点状态指示器 */
+        .node-status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .node-indicator {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            display: inline-block;
+            transition: all 0.3s;
+        }
+        
+        .node-indicator.alive {
+            background: #4caf50;
+            box-shadow: 0 0 6px rgba(76, 175, 80, 0.6);
+        }
+        
+        .node-indicator.dead {
+            background: #f44336;
+            box-shadow: 0 0 6px rgba(244, 67, 54, 0.6);
+        }
+        
+        .node-indicator.unknown {
+            background: #9e9e9e;
+            box-shadow: 0 0 6px rgba(158, 158, 158, 0.4);
+        }
+        
+        /* 状态徽章 */
+        .status-badge {
+            display: inline-block;
+            padding: 3px 10px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+        
+        .status-badge.enabled {
+            background: rgba(76, 175, 80, 0.2);
+            color: #81c784;
+            border: 1px solid rgba(76, 175, 80, 0.4);
+        }
+        
+        .status-badge.disabled {
+            background: rgba(158, 158, 158, 0.2);
+            color: #9e9e9e;
+            border: 1px solid rgba(158, 158, 158, 0.4);
+        }
+        
+        .status-badge.error {
+            background: rgba(244, 67, 54, 0.2);
+            color: #e57373;
+            border: 1px solid rgba(244, 67, 54, 0.4);
+        }
+        
+        .status-badge.warning {
+            background: rgba(255, 152, 0, 0.2);
+            color: #ffb74d;
+            border: 1px solid rgba(255, 152, 0, 0.4);
+        }
+        
+        .status-badge.idle {
+            background: rgba(100, 181, 246, 0.2);
+            color: #64b5f6;
+            border: 1px solid rgba(100, 181, 246, 0.4);
+        }
+        
+        .status-badge.auto {
+            background: rgba(76, 175, 80, 0.2);
+            color: #81c784;
+            border: 1px solid rgba(76, 175, 80, 0.4);
+        }
+        
+        .status-badge.teleop {
+            background: rgba(156, 39, 176, 0.2);
+            color: #ce93d8;
+            border: 1px solid rgba(156, 39, 176, 0.4);
+        }
+        
+        /* 节点状态网格 */
+        .nodes-grid {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 8px;
+        }
+        
+        .node-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 5px 10px;
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 6px;
+            font-size: 12px;
+        }
+        
+        .node-item .node-name {
+            color: #b0b0b0;
+        }
+        
+        .node-indicator {
+            width: 10px;
+            height: 10px;
+        }
+        
+        /* 错误信息样式 */
+        .error-info {
+            margin-top: 10px;
+            padding: 8px 12px;
+            background: rgba(244, 67, 54, 0.1);
+            border: 1px solid rgba(244, 67, 54, 0.3);
+            border-radius: 6px;
+            font-size: 12px;
+            color: #e57373;
+            display: none;
+        }
+        
+        .error-info.visible {
+            display: block;
+        }
+        
+        /* 任务流程条 */
+        .task-flow {
+            margin-top: 10px;
+        }
+        
+        .task-flow-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+        
+        .task-flow-title {
+            font-size: 12px;
+            color: #a0b8c8;
+        }
+        
+        .task-flow-progress {
+            font-size: 11px;
+            color: #888;
+        }
+        
+        .step-bar {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+        
+        .step-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 8px;
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 6px;
+            font-size: 11px;
+            transition: all 0.3s;
+        }
+        
+        .step-item.active {
+            background: rgba(79, 195, 247, 0.15);
+            border: 1px solid rgba(79, 195, 247, 0.4);
+        }
+        
+        .step-item.completed {
+            background: rgba(76, 175, 80, 0.1);
+        }
+        
+        .step-item.failed {
+            background: rgba(244, 67, 54, 0.1);
+        }
+        
+        .step-item.pending {
+            opacity: 0.5;
+        }
+        
+        .step-indicator {
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 10px;
+            font-weight: bold;
+            flex-shrink: 0;
+        }
+        
+        .step-indicator.pending {
+            background: rgba(100, 120, 140, 0.3);
+            color: #888;
+        }
+        
+        .step-indicator.active {
+            background: #4fc3f7;
+            color: #000;
+            animation: pulse-step 1.5s infinite;
+        }
+        
+        .step-indicator.completed {
+            background: #4caf50;
+            color: #fff;
+        }
+        
+        .step-indicator.failed {
+            background: #f44336;
+            color: #fff;
+        }
+        
+        @keyframes pulse-step {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(79, 195, 247, 0.4); }
+            50% { box-shadow: 0 0 0 6px rgba(79, 195, 247, 0); }
+        }
+        
+        .step-content {
+            flex: 1;
+            min-width: 0;
+        }
+        
+        .step-name {
+            color: #b0b0b0;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        
+        .step-item.active .step-name {
+            color: #4fc3f7;
+        }
+        
+        .step-item.completed .step-name {
+            color: #81c784;
+        }
+        
+        .step-item.failed .step-name {
+            color: #e57373;
+        }
+        
+        .step-duration {
+            font-size: 10px;
+            color: #666;
+            flex-shrink: 0;
+        }
+        
+        .task-error {
+            margin-top: 8px;
+            padding: 6px 10px;
+            background: rgba(244, 67, 54, 0.1);
+            border: 1px solid rgba(244, 67, 54, 0.3);
+            border-radius: 6px;
+            font-size: 11px;
+            color: #e57373;
+            display: none;
+        }
+        
+        .task-error.visible {
+            display: block;
+        }
+        
+        /* 3D可视化控制面板 */
+        .viz-controls {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            background: rgba(15, 20, 40, 0.9);
+            border: 1px solid rgba(100, 120, 140, 0.3);
+            border-radius: 10px;
+            padding: 12px;
+            z-index: 100;
+            min-width: 180px;
+        }
+        
+        .viz-controls h4 {
+            margin: 0 0 10px 0;
+            color: #a0b8c8;
+            font-size: 13px;
+            border-bottom: 1px solid rgba(100, 120, 140, 0.2);
+            padding-bottom: 6px;
+        }
+        
+        .viz-btn {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 10px;
+            margin: 4px 0;
+            background: rgba(100, 120, 140, 0.1);
+            border: 1px solid rgba(100, 120, 140, 0.2);
+            border-radius: 6px;
+            color: #b0b0b0;
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.2s;
+            width: 100%;
+        }
+        
+        .viz-btn:hover {
+            background: rgba(100, 120, 140, 0.2);
+            color: #a0b8c8;
+        }
+        
+        .viz-btn.active {
+            background: rgba(100, 181, 246, 0.2);
+            border-color: rgba(100, 181, 246, 0.4);
+            color: #64b5f6;
+        }
+        
+        .viz-btn .icon {
+            font-size: 14px;
+        }
+        
+        /* IK状态指示面板 */
+        .ik-status-panel {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            background: rgba(15, 20, 40, 0.9);
+            border: 1px solid rgba(100, 120, 140, 0.3);
+            border-radius: 10px;
+            padding: 12px 16px;
+            z-index: 100;
+            min-width: 200px;
+            display: none;
+        }
+        
+        .ik-status-panel.visible {
+            display: block;
+        }
+        
+        .ik-status-panel h4 {
+            margin: 0 0 10px 0;
+            color: #a0b8c8;
+            font-size: 13px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .ik-status-panel .ik-indicator {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            display: inline-block;
+        }
+        
+        .ik-status-panel .ik-indicator.reachable {
+            background: #4caf50;
+            box-shadow: 0 0 8px rgba(76, 175, 80, 0.6);
+        }
+        
+        .ik-status-panel .ik-indicator.unreachable {
+            background: #f44336;
+            box-shadow: 0 0 8px rgba(244, 67, 54, 0.6);
+        }
+        
+        .ik-status-panel .ik-indicator.checking {
+            background: #ffeb3b;
+            box-shadow: 0 0 8px rgba(255, 235, 59, 0.6);
+            animation: pulse 1s infinite;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        .ik-status-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 4px 0;
+            font-size: 12px;
+            color: #b0b0b0;
+        }
+        
+        .ik-status-row .value {
+            color: #a0b8c8;
+            font-family: 'Courier New', monospace;
+        }
+        
+        .confidence-bar {
+            width: 100%;
+            height: 6px;
+            background: rgba(100, 120, 140, 0.2);
+            border-radius: 3px;
+            margin-top: 8px;
+            overflow: hidden;
+        }
+        
+        .confidence-bar .fill {
+            height: 100%;
+            background: linear-gradient(90deg, #f44336 0%, #ffeb3b 50%, #4caf50 100%);
+            border-radius: 3px;
+            transition: width 0.3s;
+        }
+        
+        /* 目标点信息面板 */
+        .target-info {
+            margin-top: 10px;
+            padding-top: 10px;
+            border-top: 1px solid rgba(100, 120, 140, 0.2);
+        }
+        
+        .target-info .coord {
+            display: inline-block;
+            margin-right: 10px;
+            font-size: 11px;
+        }
+        
+        .target-info .coord .label {
+            color: #888;
+        }
+        
+        .target-info .coord .value {
+            color: #a0b8c8;
+            font-family: 'Courier New', monospace;
+        }
+        
+        /* 消息框warning类型 */
+        .message-box.message-warning {
+            color: #ffb74d;
+            background: rgba(255, 152, 0, 0.1);
+            border-color: rgba(255, 152, 0, 0.3);
+        }
     </style>
 </head>
 <body>
     <div class="container">
-        <!-- 左侧：关节值显示 -->
+        <!-- 左侧：监控面板 -->
         <div class="left-panel">
             
-            <h1>📊 关节状态</h1>
+            <h1>监控面板</h1>
             
-            <div class="connection-status" id="connectionStatus">
-                <span id="statusText">连接中...</span>
+            <div class="status-box">
+                <h3>ROS2 连接状态</h3>
+                <div class="status-item">
+                    <span class="status-label">连接状态:</span>
+                    <span class="status-value" id="ros2-status">
+                        <span class="node-indicator unknown"></span>
+                        <span id="statusText">检测中</span>
+                    </span>
+                </div>
+                <div style="margin-top: 10px;">
+                    <span class="status-label">节点话题:</span>
+                    <div class="nodes-grid">
+                        <div class="node-item">
+                            <span class="node-indicator unknown" id="node-m5_grasp-indicator" title="主控: /heartbeat/m5_grasp"></span>
+                            <span class="node-name">主控</span>
+                        </div>
+                        <div class="node-item">
+                            <span class="node-indicator unknown" id="node-hardware-indicator" title="硬件: /joint_states"></span>
+                            <span class="node-name">硬件</span>
+                        </div>
+                    </div>
+                </div>
             </div>
             
-            <!-- 急停按钮 -->
-            <div style="margin-bottom: 20px;">
+            <div class="status-box">
+                <h3>任务状态</h3>
+                <div class="status-item">
+                    <span class="status-label">当前状态:</span>
+                    <span class="status-value" id="grasp-state">空闲</span>
+                </div>
+                
+                <!-- 任务流程条 -->
+                <div class="task-flow" id="task-flow" style="display: none;">
+                    <div class="task-flow-header">
+                        <span class="task-flow-title">执行流程</span>
+                        <span class="task-flow-progress" id="task-progress">0/0</span>
+                    </div>
+                    <div class="step-bar" id="step-bar">
+                        <!-- 步骤会动态生成 -->
+                    </div>
+                    <div class="task-error" id="task-error"></div>
+                </div>
+            </div>
+            
+            <!-- 急停按钮放在监控面板底部 -->
+            <div style="margin-top: 15px;">
                 <button id="emergency-stop-btn" class="btn-emergency" onclick="emergencyStop()">
                     ⚠️ 急停
                 </button>
-            </div>
-            
-            <div class="status-box">
-                <h3>关节角度</h3>
-                <div id="joint-values-container">
-                    <!-- 如果收到数据，显示关节值 -->
-                    <div id="joint-values" style="display: none;">
-                        <div class="status-item">
-                            <span class="status-label">Joint 1:</span>
-                            <span class="status-value" id="axis1-value">0.0°</span>
-                        </div>
-                        <div class="status-item">
-                            <span class="status-label">Joint 2:</span>
-                            <span class="status-value" id="axis2-value">0.0°</span>
-                        </div>
-                        <div class="status-item">
-                            <span class="status-label">Joint 3:</span>
-                            <span class="status-value" id="axis3-value">0.0°</span>
-                        </div>
-                        <div class="status-item">
-                            <span class="status-label">Joint 4:</span>
-                            <span class="status-value" id="axis4-value">0.0°</span>
-                        </div>
-                        <div class="status-item">
-                            <span class="status-label">夹爪 (Axis 5):</span>
-                            <span class="status-value" id="axis5-value">0.0°</span>
-                        </div>
-                    </div>
-                    <!-- 如果未收到数据，显示提示 -->
-                    <div id="no-data-message" class="status-item" style="color: #e57373; font-style: italic; text-shadow: none;">
-                        <span>⏳ 未收到机械臂数据</span>
-                    </div>
-                </div>
-            </div>
-            
-            <div class="status-box">
-                <h3>系统状态</h3>
-                <div class="status-item">
-                    <span class="status-label">硬件状态:</span>
-                    <span class="status-value" id="robot-status">正常</span>
-                </div>
-                <div class="status-item">
-                    <span class="status-label">运行状态:</span>
-                    <span class="status-value" id="robot-state">空闲</span>
-                </div>
-                <div class="status-item">
-                    <span class="status-label">抓取状态:</span>
-                    <span class="status-value" id="grasp-state">空闲</span>
-                </div>
             </div>
         </div>
         
@@ -658,172 +1109,111 @@
                  onerror="console.error('顶部LOGO加载失败，路径:', this.src); this.style.display='none';"
                  onload="console.log('顶部LOGO加载成功')">
             <canvas id="canvas"></canvas>
+            
+            <!-- 关节角度浮动面板 -->
+            <div class="joint-panel" id="joint-panel">
+                <h4>关节角度</h4>
+                <div id="joint-values-container">
+                    <div id="joint-values" style="display: none;">
+                        <div class="joint-row">
+                            <span class="joint-name">J1:</span>
+                            <span class="joint-value" id="axis1-value">0.0°</span>
+                        </div>
+                        <div class="joint-row">
+                            <span class="joint-name">J2:</span>
+                            <span class="joint-value" id="axis2-value">0.0°</span>
+                        </div>
+                        <div class="joint-row">
+                            <span class="joint-name">J3:</span>
+                            <span class="joint-value" id="axis3-value">0.0°</span>
+                        </div>
+                        <div class="joint-row">
+                            <span class="joint-name">J4:</span>
+                            <span class="joint-value" id="axis4-value">0.0°</span>
+                        </div>
+                        <div class="joint-row">
+                            <span class="joint-name">夹爪:</span>
+                            <span class="joint-value" id="axis5-value">0.0°</span>
+                        </div>
+                    </div>
+                    <div id="no-data-message" class="no-data">
+                        ⏳ 等待数据...
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 3D可视化控制面板 -->
+            <div class="viz-controls">
+                <h4>可视化控制</h4>
+                <button class="viz-btn" id="btn-workspace" onclick="toggleWorkspace()">
+                    <span class="icon">◎</span>
+                    <span>工作空间</span>
+                </button>
+                <button class="viz-btn" id="btn-trajectory" onclick="toggleTrajectory()">
+                    <span class="icon">⟿</span>
+                    <span>轨迹显示</span>
+                </button>
+                <button class="viz-btn" id="btn-target" onclick="toggleTarget()">
+                    <span class="icon">◉</span>
+                    <span>目标点</span>
+                </button>
+                <button class="viz-btn" id="btn-clear" onclick="clearAllVisualizations()">
+                    <span class="icon">✕</span>
+                    <span>清除显示</span>
+                </button>
+            </div>
+            
+            <!-- IK状态指示面板 -->
+            <div class="ik-status-panel" id="ik-status-panel">
+                <h4>
+                    <span class="ik-indicator checking" id="ik-indicator"></span>
+                    <span id="ik-status-text">IK状态检测</span>
+                </h4>
+                <div class="ik-status-row">
+                    <span>可达性:</span>
+                    <span class="value" id="ik-reachable">检测中...</span>
+                </div>
+                <div class="ik-status-row">
+                    <span>置信度:</span>
+                    <span class="value" id="ik-confidence">-</span>
+                </div>
+                <div class="confidence-bar">
+                    <div class="fill" id="confidence-fill" style="width: 50%;"></div>
+                </div>
+                <div class="target-info" id="target-info">
+                    <div class="coord">
+                        <span class="label">X:</span>
+                        <span class="value" id="target-x">-</span>
+                    </div>
+                    <div class="coord">
+                        <span class="label">Y:</span>
+                        <span class="value" id="target-y">-</span>
+                    </div>
+                    <div class="coord">
+                        <span class="label">Z:</span>
+                        <span class="value" id="target-z">-</span>
+                    </div>
+                    <div class="coord">
+                        <span class="label">Yaw:</span>
+                        <span class="value" id="target-yaw">-</span>
+                    </div>
+                </div>
+            </div>
         </div>
         
         <!-- 右侧：控制界面 -->
         <div class="right-panel">
-            <h1>🎮 控制面板</h1>
+            <h1>控制面板</h1>
             
             <!-- 标签页容器 -->
             <div class="tabs-container">
                 <div class="tabs">
-                    <div class="tab active" onclick="switchTab('pose', this)">坐标下发</div>
-                    <div class="tab" onclick="switchTab('joint', this)">关节角度控制</div>
-                    <div class="tab" onclick="switchTab('cable', this)">缆绳抓取</div>
-                    <div class="tab" onclick="switchTab('place', this)">放置功能</div>
-                    <div class="tab" onclick="switchTab('pickplace', this)">Pick-and-Place</div>
-                </div>
-                
-                <!-- 坐标下发标签页 -->
-                <div id="tab-pose" class="tab-content active">
-                    <div class="control-box">
-                        <h3>坐标下发</h3>
-                        <p style="font-size: 11px; color: #888; margin-bottom: 10px;">
-                            4DOF工作空间: 水平距离0.08~0.55m, 高度0.15~0.80m
-                        </p>
-                <div class="input-group">
-                    <label>位置 X (m):</label>
-                    <input type="number" id="pose-x" step="0.001" value="0.25" placeholder="0.25">
-                </div>
-                <div class="input-row">
-                    <div class="input-group">
-                        <label>位置 Y (m):</label>
-                        <input type="number" id="pose-y" step="0.001" value="0.0" placeholder="0.0">
-                    </div>
-                    <div class="input-group">
-                        <label>位置 Z (m):</label>
-                        <input type="number" id="pose-z" step="0.001" value="0.30" placeholder="0.30">
-                    </div>
-                </div>
-                
-                <div class="toggle-advanced" onclick="toggleAdvanced()">
-                    <span id="toggle-text">显示高级选项 (Orientation)</span>
-                </div>
-                
-                <div class="advanced-controls" id="advanced-controls">
-                    <div class="input-row">
-                        <div class="input-group">
-                            <label>Orientation QX:</label>
-                            <input type="number" id="pose-qx" step="0.001" value="0.0" placeholder="0.0">
-                        </div>
-                        <div class="input-group">
-                            <label>Orientation QY:</label>
-                            <input type="number" id="pose-qy" step="0.001" value="0.0" placeholder="0.0">
-                        </div>
-                    </div>
-                    <div class="input-row">
-                        <div class="input-group">
-                            <label>Orientation QZ:</label>
-                            <input type="number" id="pose-qz" step="0.001" value="0.0" placeholder="0.0">
-                        </div>
-                        <div class="input-group">
-                            <label>Orientation QW:</label>
-                            <input type="number" id="pose-qw" step="0.001" value="1.0" placeholder="1.0">
-                        </div>
-                    </div>
-                </div>
-                
-                <div class="button-group">
-                    <button class="btn-primary" onclick="publishPose()">发布位姿</button>
-                    <button class="btn-secondary" onclick="resetPose()">重置</button>
-                </div>
-                
-                <div class="message-box" id="pose-message"></div>
-                    </div>
-                </div>
-                
-                <!-- 关节角度控制标签页 -->
-                <div id="tab-joint" class="tab-content">
-                    <div class="control-box">
-                        <h3>关节角度控制</h3>
-                <div class="input-group">
-                    <label>Joint 1 (度): [-355°, 355°]</label>
-                    <input type="number" id="joint1-input" step="0.1" value="0.0" placeholder="0.0" min="-355" max="355">
-                </div>
-                <div class="input-group">
-                    <label>Joint 2 (度): [-170°, 0°]</label>
-                    <input type="number" id="joint2-input" step="0.1" value="0.0" placeholder="0.0" min="-170" max="0">
-                </div>
-                <div class="input-group">
-                    <label>Joint 3 (度): [-170°, 0°]</label>
-                    <input type="number" id="joint3-input" step="0.1" value="0.0" placeholder="0.0" min="-170" max="0">
-                </div>
-                <div class="input-group">
-                    <label>Joint 4 (度): [-355°, 355°]</label>
-                    <input type="number" id="joint4-input" step="0.1" value="0.0" placeholder="0.0" min="-355" max="355">
-                </div>
-                <div class="input-group">
-                    <label>夹爪 Axis 5 (度):</label>
-                    <input type="number" id="joint5-input" step="1.0" value="0.0" placeholder="0.0" min="-1100" max="0">
-                </div>
-                
-                <div class="button-group">
-                    <button class="btn-primary" onclick="sendJointCommand()">发送关节角度</button>
-                    <button class="btn-secondary" onclick="resetJoints()">重置</button>
-                </div>
-                
-                <div class="message-box" id="joint-message"></div>
-                    </div>
+                    <div class="tab active" onclick="switchTab('cable', this)">缆绳抓取</div>
+                    <div class="tab" onclick="switchTab('joint', this)">关节角度</div>
                 </div>
                 
                 <!-- 缆绳抓取标签页 -->
-                <div id="tab-cable" class="tab-content">
-                    <div class="control-box">
-                        <h3>缆绳抓取</h3>
-                        <p style="font-size: 11px; color: #888; margin-bottom: 10px;">
-                            4DOF工作空间: 水平距离0.08~0.55m, 高度0.15~0.80m
-                        </p>
-                        <div class="input-group">
-                            <label>缆绳位置 X (m):</label>
-                            <input type="number" id="cable-x" step="0.001" value="0.25" placeholder="0.25">
-                        </div>
-                        <div class="input-row">
-                            <div class="input-group">
-                                <label>缆绳位置 Y (m):</label>
-                                <input type="number" id="cable-y" step="0.001" value="0.0" placeholder="0.0">
-                            </div>
-                            <div class="input-group">
-                                <label>缆绳位置 Z (m):</label>
-                                <input type="number" id="cable-z" step="0.001" value="0.25" placeholder="0.25">
-                            </div>
-                        </div>
-                        
-                        <div class="toggle-advanced" onclick="toggleCableAdvanced()">
-                            <span id="toggle-cable-text">显示高级选项 (Orientation)</span>
-                        </div>
-                        
-                        <div class="advanced-controls" id="cable-advanced-controls">
-                            <div class="input-row">
-                                <div class="input-group">
-                                    <label>Orientation QX:</label>
-                                    <input type="number" id="cable-qx" step="0.001" value="0.0" placeholder="0.0">
-                                </div>
-                                <div class="input-group">
-                                    <label>Orientation QY:</label>
-                                    <input type="number" id="cable-qy" step="0.001" value="0.0" placeholder="0.0">
-                                </div>
-                            </div>
-                            <div class="input-row">
-                                <div class="input-group">
-                                    <label>Orientation QZ:</label>
-                                    <input type="number" id="cable-qz" step="0.001" value="0.0" placeholder="0.0">
-                                </div>
-                                <div class="input-group">
-                                    <label>Orientation QW:</label>
-                                    <input type="number" id="cable-qw" step="0.001" value="1.0" placeholder="1.0">
-                                </div>
-                            </div>
-                        </div>
-                        
-                        <div class="button-group">
-                            <button class="btn-primary" onclick="publishCablePose()">开始抓取</button>
-                            <button class="btn-secondary" onclick="resetCablePose()">重置</button>
-                        </div>
-                        
-                        <div class="message-box" id="cable-message"></div>
-                    </div>
-                    
-                    <!-- 新增：带yaw的缆绳抓取输入 -->
+                <div id="tab-cable" class="tab-content active">
                     <div class="control-box">
                         <h3>缆绳抓取（xyz + yaw）</h3>
                         <p style="font-size: 11px; color: #888; margin-bottom: 10px;">
@@ -844,131 +1234,75 @@
                                     <input type="number" id="cable-yaw-z" step="0.001" value="0.25" placeholder="0.25">
                                 </div>
                             </div>
-                            <div class="input-row">
+                            <div class="input-row" style="margin-top: 12px;">
                                 <div class="input-group">
                                     <label>Yaw (度):</label>
                                     <input type="number" id="cable-yaw-angle" step="0.1" value="0.0" placeholder="0.0">
-                                    <small>线缆切向方向（绕Z轴旋转）</small>
+                                    <small style="color: #888; font-size: 11px;">线缆切向方向（绕Z轴旋转）</small>
                                 </div>
                             </div>
                         </div>
                         
                         <div class="button-group">
-                            <button class="btn-primary" onclick="publishCablePoseWithYaw()">发布xyz+yaw</button>
+                            <button class="btn-primary" onclick="publishCablePoseWithYaw()">发送一次</button>
+                            <button class="btn-primary" id="btn-continuous" onclick="toggleContinuousSend()" style="background: #ff9800;">持续发送</button>
                             <button class="btn-secondary" onclick="resetCablePoseWithYaw()">重置</button>
+                        </div>
+                        <div style="font-size: 11px; color: #888; margin-top: 5px;">
+                            提示：FSM需要连续收到5帧稳定目标才会开始抓取
                         </div>
                         
                         <div class="message-box" id="cable-yaw-message"></div>
                     </div>
                 </div>
                 
-                <!-- 放置功能标签页 -->
-                <div id="tab-place" class="tab-content">
+                <!-- 关节角度控制标签页 -->
+                <div id="tab-joint" class="tab-content">
                     <div class="control-box">
-                        <h3>放置位置（xyz + yaw）</h3>
-                        <div class="input-row">
-                            <div class="input-group">
-                                <label>X (m):</label>
-                                <input type="number" id="place-yaw-x" step="0.001" value="0.20" placeholder="0.20">
-                            </div>
-                            <div class="input-group">
-                                <label>Y (m):</label>
-                                <input type="number" id="place-yaw-y" step="0.001" value="0.00" placeholder="0.00">
-                            </div>
-                            <div class="input-group">
-                                <label>Z (m):</label>
-                                <input type="number" id="place-yaw-z" step="0.001" value="0.30" placeholder="0.30">
-                            </div>
+                        <h3>关节角度控制</h3>
+                        <div class="input-group">
+                            <label>Joint 1 (度): [-355°, 355°]</label>
+                            <input type="number" id="joint1-input" step="0.1" value="0.0" placeholder="0.0" min="-355" max="355">
                         </div>
-                        <div class="input-row">
-                            <div class="input-group">
-                                <label>Yaw (度):</label>
-                                <input type="number" id="place-yaw-angle" step="0.1" value="0.0" placeholder="0.0">
-                                <small>放置方向（绕y轴旋转）</small>
-                            </div>
+                        <div class="input-group">
+                            <label>Joint 2 (度): [-170°, 0°]</label>
+                            <input type="number" id="joint2-input" step="0.1" value="0.0" placeholder="0.0" min="-170" max="0">
+                        </div>
+                        <div class="input-group">
+                            <label>Joint 3 (度): [-170°, 0°]</label>
+                            <input type="number" id="joint3-input" step="0.1" value="0.0" placeholder="0.0" min="-170" max="0">
+                        </div>
+                        <div class="input-group">
+                            <label>Joint 4 (度): [-355°, 355°]</label>
+                            <input type="number" id="joint4-input" step="0.1" value="0.0" placeholder="0.0" min="-355" max="355">
+                        </div>
+                        <div class="input-group">
+                            <label>夹爪 Axis 5 (度):</label>
+                            <input type="number" id="joint5-input" step="1.0" value="0.0" placeholder="0.0" min="-1100" max="0" title="夹爪范围 -1100(张开)～0(闭合)，厂家建议">
                         </div>
                         
                         <div class="button-group">
-                            <button class="btn-primary" onclick="publishPlacePoseWithYaw()">开始放置</button>
-                            <button class="btn-secondary" onclick="resetPlacePoseWithYaw()">重置</button>
+                            <button class="btn-primary" onclick="sendJointCommand()">发送关节角度</button>
+                            <button class="btn-secondary" onclick="resetJoints()">重置</button>
+                        </div>
+                        <div style="margin-top: 10px; font-size: 12px; color: #888;">预抓取与夹爪（与 cable_grasp 预抓取角度一致）</div>
+                        <div class="button-group" style="margin-top: 6px;">
+                            <button class="btn-primary" onclick="moveToPregrasp()" title="J1=0° J2=-30° J3=-30° J4=0° 夹爪张开">到达预抓取位置</button>
+                            <button class="btn-secondary" onclick="gripperOpen()" title="保持当前 J1~J4，夹爪张开">夹爪打开</button>
+                            <button class="btn-secondary" onclick="gripperClose()" title="保持当前 J1~J4，夹爪闭合">夹爪关闭</button>
                         </div>
                         
-                        <div class="message-box" id="place-yaw-message"></div>
-                    </div>
-                </div>
-                
-                <!-- Pick-and-Place组合标签页 -->
-                <div id="tab-pickplace" class="tab-content">
-                    <div class="control-box">
-                        <h3>Pick-and-Place组合任务</h3>
-                        <p style="font-size: 11px; color: #888; margin-bottom: 10px;">
-                            4DOF工作空间: 水平距离0.08~0.55m, 高度0.15~0.80m
-                        </p>
-                        <h4 style="color: #a0b8c8; margin-top: 15px; margin-bottom: 10px; font-size: 14px;">抓取位置</h4>
-                        <div class="input-row">
-                            <div class="input-group">
-                                <label>抓取 X (m):</label>
-                                <input type="number" id="pickplace-grasp-x" step="0.001" value="0.25" placeholder="0.25">
-                            </div>
-                            <div class="input-group">
-                                <label>抓取 Y (m):</label>
-                                <input type="number" id="pickplace-grasp-y" step="0.001" value="0.00" placeholder="0.00">
-                            </div>
-                            <div class="input-group">
-                                <label>抓取 Z (m):</label>
-                                <input type="number" id="pickplace-grasp-z" step="0.001" value="0.25" placeholder="0.25">
-                            </div>
-                        </div>
-                        <div class="input-row">
-                            <div class="input-group">
-                                <label>抓取 Yaw (度):</label>
-                                <input type="number" id="pickplace-grasp-yaw" step="0.1" value="0.0" placeholder="0.0">
-                            </div>
-                        </div>
-                        
-                        <h4 style="color: #a0b8c8; margin-top: 15px; margin-bottom: 10px; font-size: 14px;">放置位置</h4>
-                        <div class="input-row">
-                            <div class="input-group">
-                                <label>放置 X (m):</label>
-                                <input type="number" id="pickplace-place-x" step="0.001" value="0.20" placeholder="0.20">
-                            </div>
-                            <div class="input-group">
-                                <label>放置 Y (m):</label>
-                                <input type="number" id="pickplace-place-y" step="0.001" value="0.15" placeholder="0.15">
-                            </div>
-                            <div class="input-group">
-                                <label>放置 Z (m):</label>
-                                <input type="number" id="pickplace-place-z" step="0.001" value="0.30" placeholder="0.30">
-                            </div>
-                        </div>
-                        <div class="input-row">
-                            <div class="input-group">
-                                <label>放置 Yaw (度):</label>
-                                <input type="number" id="pickplace-place-yaw" step="0.1" value="0.0" placeholder="0.0">
-                            </div>
-                        </div>
-                        
-                        <div class="button-group">
-                            <button class="btn-primary" onclick="publishPickAndPlace()">执行Pick-and-Place</button>
-                            <button class="btn-secondary" onclick="resetPickAndPlace()">重置</button>
-                        </div>
-                        
-                        <div class="message-box" id="pickplace-message"></div>
+                        <div class="message-box" id="joint-message"></div>
                     </div>
                 </div>
             </div>
             
             <div class="info-box">
                 <strong>使用说明:</strong><br>
-                • 接收机械臂JSON反馈 (UDP端口7001)<br>
-                • 发送坐标到 /target_pose 话题<br>
-                • 发送缆绳位置到 /cable_pose 话题（抓取）<br>
-                • 发送放置位置到 /cable_place_pose 话题（放置）<br>
-                • Pick-and-Place组合任务<br>
-                • 直接控制5个自由度（关节角度）<br>
-                • 实时显示规划/执行状态<br>
-                • 实时显示抓取/放置状态（MTC）<br>
-                • 自动加载STL模型
+                • 缆绳抓取：发送xyz+yaw到 /cable_pose_with_yaw 话题<br>
+                • 关节角度：直接控制5个自由度<br>
+                • 实时显示抓取状态（MTC）<br>
+                • 自动加载STL模型显示机械臂状态
             </div>
         </div>
     </div>
@@ -977,6 +1311,7 @@
         // Three.js场景设置
         let scene, camera, renderer, robot, controls;
         let axes = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0};
+        let hasReceivedRobotData = false;  // 是否收到过真实的机械臂数据
         let stlLoader = null;
         let useSTLModel = false;
         let stlModelLoaded = false;
@@ -989,37 +1324,49 @@
         let isMouseDown = false;
         let mouseX = 0;
         let mouseY = 0;
-        // 初始相机位置: (1.2, 1.0, 1.2)，看向 (0, 0.2, 0)
-        // 计算初始旋转角度以匹配初始相机位置
-        let cameraDistance = Math.sqrt(1.2*1.2 + (1.0-0.2)*(1.0-0.2) + 1.2*1.2); // 约1.8
-        let cameraRotationY = Math.atan2(1.2, 1.2); // 水平角度，约45度 (π/4)
-        let cameraRotationX = Math.asin((1.0 - 0.2) / cameraDistance); // 垂直角度
-        let targetPosition = new THREE.Vector3(0, 0.2, 0); // 相机看向的目标点
+        let cameraDistance = Math.sqrt(1.2*1.2 + (1.0-0.2)*(1.0-0.2) + 1.2*1.2);
+        let cameraRotationY = Math.atan2(1.2, 1.2);
+        let cameraRotationX = Math.asin((1.0 - 0.2) / cameraDistance);
+        let targetPosition = new THREE.Vector3(0, 0.2, 0);
         
-        // 坐标系转换：ROS/URDF坐标系 → Three.js坐标系
-        // 根据workspace_reachable_positions.md：
-        //   ROS/URDF坐标系（右手系）：
-        //     X轴：前（forward）
-        //     Y轴：左（left）
-        //     Z轴：上（up）
-        // Three.js坐标系（右手系）：
-        //   X轴：右（right）
-        //   Y轴：上（up）
-        //   Z轴：前（forward，朝向屏幕外）
-        // 转换关系：ROS的(X,Y,Z) → Three.js的(-Y, Z, X)
-        // 实现方法：使用欧拉角旋转
-        // 方案1：绕X轴旋转-90度，然后绕Z轴旋转-90度
-        // 方案2：绕Y轴旋转90度，然后绕X轴旋转90度
-        // 根据m5_planning.cpp，Link2沿Z方向延伸，在ROS中Z是向上
-        // 在Three.js中，Y是向上，所以需要将ROS的Z轴映射到Three.js的Y轴
-        // 同时ROS的X轴（前）需要映射到Three.js的Z轴（前）
-        // ROS的Y轴（左）需要映射到Three.js的-X轴（右的相反方向）
+        // ========== 3D可视化对象 ==========
+        let targetMarker = null;           // 目标抓取点marker
+        let targetArrow = null;            // yaw方向箭头
+        let cableObject = null;            // 缆绳可视化对象
+        let trajectoryLine = null;         // 规划轨迹线
+        let executionLine = null;          // 执行轨迹线
+        let workspaceHelper = null;        // 工作空间可视化
+        let groundPlane = null;            // 地面平面
+        let ikStatusIndicator = null;      // IK状态指示器
+        
+        // 可视化状态数据
+        let visualizationData = {
+            targetPose: null,              // {x, y, z, yaw}
+            ikReachable: null,             // true/false/null
+            ikConfidence: 0,               // 0-1
+            plannedPath: [],               // [{x,y,z}, ...]
+            executedPath: [],              // [{x,y,z}, ...]
+            cablePose: null,               // {x, y, z, yaw, diameter}
+        };
+        
+        // 工作空间参数（来自cable_grasp.yaml）
+        // base_height: 0.141m, link2: 0.264m, link3: 0.143m, link4_to_eef: 0.187m
+        // max_reach = (0.264 + 0.143 + 0.187) * 1.2 = 0.7128m
+        // min_height = base_height + min_height_offset = 0.141 + (-0.3) = -0.159m (取0)
+        // max_height = base_height + max_height_offset = 0.141 + 0.9 = 1.041m
+        const workspaceParams = {
+            minRadius: 0.08,
+            maxRadius: 0.71,        // (link2 + link3 + link4_to_eef) * margin
+            minHeight: -0.15,       // base_height + min_offset, 但显示从略低于0开始
+            maxHeight: 1.04,        // base_height + max_offset
+            baseHeight: 0.141
+        };
+        
+        // 坐标系转换
         const rosToThreeJsRotation = {
-            // 将ROS坐标系转换为Three.js坐标系
-            // 使用欧拉角：先绕X轴旋转-90度（使Z→Y），再绕Z轴旋转-90度（使X→Z，Y→-X）
-            x: -Math.PI/2,  // 绕X轴旋转-90度：ROS的Z（上）→ Three.js的Y（上）
+            x: -Math.PI/2,
             y: 0,
-            z: -Math.PI/2   // 绕Z轴旋转-90度：ROS的X（前）→ Three.js的Z（前），ROS的Y（左）→ Three.js的-X（右的相反）
+            z: -Math.PI/2
         };
         
         function initScene() {
@@ -1027,20 +1374,15 @@
             const width = canvas.parentElement.clientWidth;
             const height = canvas.parentElement.clientHeight;
             
-            // 场景（高科技风格背景）
             scene = new THREE.Scene();
             scene.background = new THREE.Color(0x0a0a0a);
             
-            // 相机（调整位置和视野，让机械臂完整显示）
-            camera = new THREE.PerspectiveCamera(60, width / height, 0.01, 1000); // fov设为60，平衡显示大小
-            // 初始相机位置将通过updateCameraPosition()设置
+            camera = new THREE.PerspectiveCamera(60, width / height, 0.01, 1000);
             
-            // 渲染器
             renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true });
             renderer.setSize(width, height);
             renderer.shadowMap.enabled = true;
             
-            // 灯光
             const ambientLight = new THREE.AmbientLight(0x404040, 0.6);
             scene.add(ambientLight);
             
@@ -1049,77 +1391,67 @@
             directionalLight.castShadow = true;
             scene.add(directionalLight);
             
-            // 初始化STL加载器
             stlLoader = new STLLoader();
             
-            // 创建机械臂模型
             createRobot();
             
-            // 添加网格（根据新配色调整）
-            const gridHelper = new THREE.GridHelper(3, 20, 0x64748b, 0x1e293b); // 柔和的灰色网格
-            gridHelper.position.set(0, 0, 0); // 确保在原点
+            const gridHelper = new THREE.GridHelper(3, 20, 0x64748b, 0x1e293b);
+            gridHelper.position.set(0, 0, 0);
             scene.add(gridHelper);
             
-            // 添加坐标轴（在场景中心，更明显）
-            // 注意：坐标轴需要与机械臂模型使用相同的坐标系转换
-            // ROS/URDF坐标系：X前，Y左，Z上
-            // 根据实际渲染效果修正坐标轴方向：
-            // - 机械臂向前伸出（ROS +X）对应画面中的Three.js +X方向（向右偏前）
-            // - ROS +Z（上）对应Three.js +Y（上）
-            // - ROS +Y（左）对应Three.js -Z方向
-            // 
-            // 机械臂模型应用了旋转：rotation.x=-90°, rotation.z=-90°
-            // 坐标轴需要应用相同的旋转才能对齐
+            // 添加坐标轴（ROS坐标系）
+            // ROS坐标系：X前，Y左，Z上
+            // 当前视角：从右上方看向原点，前方是屏幕内侧
+            // 修正：X轴指向左侧（屏幕内侧偏左），Y轴指向右侧（屏幕内侧偏右）
             const axesSize = 0.8;
             const axesGroup = new THREE.Group();
             
-            // 创建一个临时组来承载坐标轴，然后应用与机械臂相同的旋转
-            const axesInnerGroup = new THREE.Group();
-            
-            // ROS X轴（红色）- 前（在ROS坐标系中沿X正方向）
+            // ROS X轴（红色）- 前方向
+            // +X 指向右侧（Three.js的+X方向）
             const xAxisPosGeometry = new THREE.BufferGeometry().setFromPoints([
                 new THREE.Vector3(0, 0, 0),
                 new THREE.Vector3(axesSize, 0, 0)
             ]);
             const xAxisPosMaterial = new THREE.LineBasicMaterial({ color: 0xff4444, linewidth: 3 });
             const xAxisPos = new THREE.Line(xAxisPosGeometry, xAxisPosMaterial);
-            axesInnerGroup.add(xAxisPos);
+            axesGroup.add(xAxisPos);
             
-            // X轴负方向
+            // -X 指向左侧
             const xAxisNegGeometry = new THREE.BufferGeometry().setFromPoints([
                 new THREE.Vector3(0, 0, 0),
                 new THREE.Vector3(-axesSize, 0, 0)
             ]);
             const xAxisNegMaterial = new THREE.LineBasicMaterial({ color: 0x884444, linewidth: 2, opacity: 0.6, transparent: true });
             const xAxisNeg = new THREE.Line(xAxisNegGeometry, xAxisNegMaterial);
-            axesInnerGroup.add(xAxisNeg);
+            axesGroup.add(xAxisNeg);
             
-            // ROS Y轴（绿色）- 左：在Three.js中沿-Z方向（Y正方向对应Three.js -Z）
+            // ROS Y轴（绿色）- 左方向
+            // 在当前视角下，Y轴应该指向屏幕前方（+Z方向在Three.js中）
             const yAxisPosGeometry = new THREE.BufferGeometry().setFromPoints([
                 new THREE.Vector3(0, 0, 0),
-                new THREE.Vector3(0, 0, -axesSize)
+                new THREE.Vector3(0, 0, axesSize)
             ]);
             const yAxisPosMaterial = new THREE.LineBasicMaterial({ color: 0x44ff44, linewidth: 3 });
             const yAxisPos = new THREE.Line(yAxisPosGeometry, yAxisPosMaterial);
-            axesInnerGroup.add(yAxisPos);
+            axesGroup.add(yAxisPos);
             
             // Y轴负方向
             const yAxisNegGeometry = new THREE.BufferGeometry().setFromPoints([
                 new THREE.Vector3(0, 0, 0),
-                new THREE.Vector3(0, 0, axesSize)
+                new THREE.Vector3(0, 0, -axesSize)
             ]);
             const yAxisNegMaterial = new THREE.LineBasicMaterial({ color: 0x448844, linewidth: 2, opacity: 0.6, transparent: true });
             const yAxisNeg = new THREE.Line(yAxisNegGeometry, yAxisNegMaterial);
-            axesInnerGroup.add(yAxisNeg);
+            axesGroup.add(yAxisNeg);
             
-            // ROS Z轴（蓝色）- 上：在Three.js中沿Y方向（因为ROS Z对应Three.js Y）
+            // ROS Z轴（蓝色）- 上方向
             const zAxisPosGeometry = new THREE.BufferGeometry().setFromPoints([
                 new THREE.Vector3(0, 0, 0),
                 new THREE.Vector3(0, axesSize, 0)
             ]);
             const zAxisPosMaterial = new THREE.LineBasicMaterial({ color: 0x4444ff, linewidth: 3 });
             const zAxisPos = new THREE.Line(zAxisPosGeometry, zAxisPosMaterial);
-            axesInnerGroup.add(zAxisPos);
+            axesGroup.add(zAxisPos);
             
             // Z轴负方向
             const zAxisNegGeometry = new THREE.BufferGeometry().setFromPoints([
@@ -1128,35 +1460,31 @@
             ]);
             const zAxisNegMaterial = new THREE.LineBasicMaterial({ color: 0x444488, linewidth: 2, opacity: 0.6, transparent: true });
             const zAxisNeg = new THREE.Line(zAxisNegGeometry, zAxisNegMaterial);
-            axesInnerGroup.add(zAxisNeg);
+            axesGroup.add(zAxisNeg);
             
             // 添加坐标轴箭头
             const arrowLength = 0.15;
             const arrowRadius = 0.03;
             
-            // ROS X轴箭头（红色）
+            // X轴箭头（指向+X方向，即右侧）
             const xArrowDir = new THREE.Vector3(1, 0, 0).normalize();
             const xArrowOrigin = new THREE.Vector3(axesSize, 0, 0);
             const xArrow = new THREE.ArrowHelper(xArrowDir, xArrowOrigin, arrowLength, 0xff4444, arrowLength * 0.6, arrowRadius);
-            axesInnerGroup.add(xArrow);
+            axesGroup.add(xArrow);
             
-            // ROS Y轴箭头（绿色）- 沿Three.js -Z方向
-            const yArrowDir = new THREE.Vector3(0, 0, -1).normalize();
-            const yArrowOrigin = new THREE.Vector3(0, 0, -axesSize);
+            // Y轴箭头（指向+Z方向）
+            const yArrowDir = new THREE.Vector3(0, 0, 1).normalize();
+            const yArrowOrigin = new THREE.Vector3(0, 0, axesSize);
             const yArrow = new THREE.ArrowHelper(yArrowDir, yArrowOrigin, arrowLength, 0x44ff44, arrowLength * 0.6, arrowRadius);
-            axesInnerGroup.add(yArrow);
+            axesGroup.add(yArrow);
             
-            // ROS Z轴箭头（蓝色）- 沿Three.js Y方向
+            // Z轴箭头（指向+Y方向）
             const zArrowDir = new THREE.Vector3(0, 1, 0).normalize();
             const zArrowOrigin = new THREE.Vector3(0, axesSize, 0);
             const zArrow = new THREE.ArrowHelper(zArrowDir, zArrowOrigin, arrowLength, 0x4444ff, arrowLength * 0.6, arrowRadius);
-            axesInnerGroup.add(zArrow);
+            axesGroup.add(zArrow);
             
-            // 不使用机械臂的旋转，直接将坐标轴添加到组中
-            // 下面会根据实际观测重新定义坐标轴方向
-            axesGroup.add(axesInnerGroup);
-            
-            // 添加坐标轴标签（X、Y、Z文字，对应ROS/URDF坐标系）
+            // 添加坐标轴标签
             function createAxisLabel(text, color) {
                 const canvas = document.createElement('canvas');
                 const context = canvas.getContext('2d');
@@ -1181,49 +1509,41 @@
                     alphaTest: 0.1
                 });
                 const sprite = new THREE.Sprite(spriteMaterial);
-                sprite.scale.set(0.15, 0.15, 1); // 调整标签大小
+                sprite.scale.set(0.15, 0.15, 1);
                 
                 return sprite;
             }
             
-            // 标签直接添加到axesInnerGroup中，使用ROS坐标系的位置
-            // 它们会随着axesInnerGroup一起旋转，自动对齐
-            const labelOffset = axesSize + arrowLength + 0.1;
-            
-            // +X标签：ROS X轴正方向
+            // X轴标签（+X在右侧，-X在左侧）
             const xPosLabel = createAxisLabel('+X', '#ff4444');
-            xPosLabel.position.set(labelOffset, 0, 0);
-            axesInnerGroup.add(xPosLabel);
+            xPosLabel.position.set(axesSize + arrowLength + 0.1, 0, 0);
+            axesGroup.add(xPosLabel);
             
-            // -X标签：ROS X轴负方向
             const xNegLabel = createAxisLabel('-X', '#884444');
             xNegLabel.position.set(-axesSize - 0.1, 0, 0);
-            axesInnerGroup.add(xNegLabel);
+            axesGroup.add(xNegLabel);
             
-            // +Y标签：ROS Y轴正方向（对应Three.js -Z方向）
+            // Y轴标签（+Y在前方，-Y在后方）
             const yPosLabel = createAxisLabel('+Y', '#44ff44');
-            yPosLabel.position.set(0, 0, -labelOffset);
-            axesInnerGroup.add(yPosLabel);
+            yPosLabel.position.set(0, 0, axesSize + arrowLength + 0.1);
+            axesGroup.add(yPosLabel);
             
-            // -Y标签：ROS Y轴负方向
             const yNegLabel = createAxisLabel('-Y', '#448844');
-            yNegLabel.position.set(0, 0, axesSize + 0.1);
-            axesInnerGroup.add(yNegLabel);
+            yNegLabel.position.set(0, 0, -axesSize - 0.1);
+            axesGroup.add(yNegLabel);
             
-            // +Z标签：ROS Z轴正方向（对应Three.js Y方向，向上）
+            // Z轴标签（+Z在上方，-Z在下方）
             const zPosLabel = createAxisLabel('+Z', '#4444ff');
-            zPosLabel.position.set(0, labelOffset, 0);
-            axesInnerGroup.add(zPosLabel);
+            zPosLabel.position.set(0, axesSize + arrowLength + 0.1, 0);
+            axesGroup.add(zPosLabel);
             
-            // -Z标签：ROS Z轴负方向
             const zNegLabel = createAxisLabel('-Z', '#444488');
             zNegLabel.position.set(0, -axesSize - 0.1, 0);
-            axesInnerGroup.add(zNegLabel);
+            axesGroup.add(zNegLabel);
             
-            axesGroup.position.set(0, 0, 0); // 确保在原点中心
+            axesGroup.position.set(0, 0, 0);
             scene.add(axesGroup);
             
-            // 窗口调整
             window.addEventListener('resize', () => {
                 const width = canvas.parentElement.clientWidth;
                 const height = canvas.parentElement.clientHeight;
@@ -1232,10 +1552,8 @@
                 renderer.setSize(width, height);
             });
             
-            // 初始化相机位置和旋转
             updateCameraPosition();
             
-            // 鼠标控制事件
             canvas.addEventListener('mousedown', (e) => {
                 isMouseDown = true;
                 mouseX = e.clientX;
@@ -1248,11 +1566,9 @@
                     const deltaX = e.clientX - mouseX;
                     const deltaY = e.clientY - mouseY;
                     
-                    // 旋转相机
-                    cameraRotationY += deltaX * 0.005; // 水平旋转
-                    cameraRotationX += deltaY * 0.005; // 垂直旋转
+                    cameraRotationY += deltaX * 0.005;
+                    cameraRotationX += deltaY * 0.005;
                     
-                    // 限制垂直旋转角度（避免翻转）
                     cameraRotationX = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, cameraRotationX));
                     
                     updateCameraPosition();
@@ -1272,7 +1588,6 @@
                 canvas.style.cursor = 'grab';
             });
             
-            // 鼠标滚轮缩放
             canvas.addEventListener('wheel', (e) => {
                 e.preventDefault();
                 const delta = e.deltaY * 0.001;
@@ -1280,15 +1595,623 @@
                 updateCameraPosition();
             });
             
-            // 设置鼠标样式
             canvas.style.cursor = 'grab';
             
-            // 动画循环
+            // 初始化3D可视化对象
+            initVisualizationObjects();
+            
             animate();
         }
         
+        // ========== 3D可视化对象初始化 ==========
+        function initVisualizationObjects() {
+            // 创建目标抓取点marker
+            createTargetMarker();
+            
+            // 创建工作空间可视化
+            createWorkspaceVisualization();
+            
+            // 创建轨迹线对象
+            createTrajectoryObjects();
+            
+            // 创建地面平面
+            createGroundPlane();
+        }
+        
+        // 创建目标抓取点marker（球体+方向箭头+环形表示yaw）
+        function createTargetMarker() {
+            // 目标点marker组 - 直接在Three.js坐标系下创建
+            const markerGroup = new THREE.Group();
+            markerGroup.name = 'targetMarkerGroup';
+            
+            // 球体（表示目标位置）
+            const sphereGeometry = new THREE.SphereGeometry(0.015, 16, 16);
+            const sphereMaterial = new THREE.MeshPhongMaterial({
+                color: 0x00ff00,
+                transparent: true,
+                opacity: 0.8,
+                emissive: 0x004400
+            });
+            targetMarker = new THREE.Mesh(sphereGeometry, sphereMaterial);
+            markerGroup.add(targetMarker);
+            
+            // yaw方向箭头（缆绳切向）
+            const arrowLength = 0.08;
+            const arrowDir = new THREE.Vector3(1, 0, 0);  // 初始沿X轴
+            const arrowOrigin = new THREE.Vector3(0, 0, 0);
+            targetArrow = new THREE.ArrowHelper(arrowDir, arrowOrigin, arrowLength, 0x00ffff, 0.02, 0.01);
+            markerGroup.add(targetArrow);
+            
+            // 环形表示yaw平面（水平面）
+            const ringGeometry = new THREE.RingGeometry(0.03, 0.035, 32);
+            const ringMaterial = new THREE.MeshBasicMaterial({
+                color: 0x00ffff,
+                transparent: true,
+                opacity: 0.5,
+                side: THREE.DoubleSide
+            });
+            const ring = new THREE.Mesh(ringGeometry, ringMaterial);
+            ring.rotation.x = -Math.PI / 2; // 水平放置（XZ平面）
+            markerGroup.add(ring);
+            
+            // 初始隐藏
+            markerGroup.visible = false;
+            markerGroup.name = 'targetVisualization';
+            
+            // 直接添加到场景，不再使用额外的坐标转换组
+            scene.add(markerGroup);
+        }
+        
+        // 更新目标marker位置和状态
+        // 输入: ROS坐标系 (rosX, rosY, rosZ, rosYaw)
+        function updateTargetMarker(rosX, rosY, rosZ, rosYaw, ikReachable, confidence) {
+            const markerGroup = scene.getObjectByName('targetVisualization');
+            if (!markerGroup) return;
+            
+            // ROS坐标转Three.js坐标
+            // 根据坐标轴定义：
+            // - ROS X轴(红) → Three.js +X（前方）
+            // - ROS Y轴(绿) → Three.js +Z（左方）
+            // - ROS Z轴(蓝) → Three.js +Y（上方）
+            const threeX = rosX;
+            const threeY = rosZ;
+            const threeZ = rosY;
+            
+            // 设置位置
+            markerGroup.position.set(threeX, threeY, threeZ);
+            
+            // ROS的yaw是绕Z轴(向上)旋转，在Three.js中对应绕Y轴旋转
+            // yaw=0 时指向ROS X正方向（前方），即Three.js的+X方向
+            if (targetArrow) {
+                const threeYaw = rosYaw;
+                const dir = new THREE.Vector3(
+                    Math.cos(threeYaw),   // X分量（yaw=0指向+X）
+                    0,                     // Y分量（水平面）
+                    Math.sin(threeYaw)    // Z分量
+                );
+                targetArrow.setDirection(dir.normalize());
+            }
+            
+            // 根据IK可达性和置信度设置颜色
+            if (targetMarker) {
+                let color, emissive;
+                if (ikReachable === null) {
+                    // 未知状态 - 黄色
+                    color = 0xffff00;
+                    emissive = 0x444400;
+                } else if (ikReachable) {
+                    // 可达 - 绿色，根据置信度调整亮度
+                    const intensity = 0.5 + confidence * 0.5;
+                    color = new THREE.Color().setHSL(0.33, 1, intensity * 0.5);
+                    emissive = new THREE.Color().setHSL(0.33, 1, intensity * 0.2);
+                } else {
+                    // 不可达 - 红色
+                    color = 0xff0000;
+                    emissive = 0x440000;
+                }
+                targetMarker.material.color.set(color);
+                targetMarker.material.emissive.set(emissive);
+            }
+            
+            markerGroup.visible = true;
+            visualizationData.targetPose = { x: rosX, y: rosY, z: rosZ, yaw: rosYaw };
+            visualizationData.ikReachable = ikReachable;
+            visualizationData.ikConfidence = confidence;
+        }
+        
+        // 隐藏目标marker
+        function hideTargetMarker() {
+            const markerGroup = scene.getObjectByName('targetVisualization');
+            if (markerGroup) {
+                markerGroup.visible = false;
+            }
+            visualizationData.targetPose = null;
+        }
+        
+        // 创建缆绳可视化对象
+        // 输入: ROS坐标系 (x=前, y=左, z=上)
+        // yaw: 绕ROS Z轴旋转角度（弧度）
+        function createCableObject(rosX, rosY, rosZ, rosYaw, diameter, length) {
+            // 移除旧的缆绳对象
+            if (cableObject) {
+                scene.remove(cableObject);
+                cableObject = null;
+            }
+            
+            // ROS坐标转Three.js坐标
+            // 根据坐标轴定义：
+            // - ROS X轴(红) → Three.js +X（前方）
+            // - ROS Y轴(绿) → Three.js +Z（左方）
+            // - ROS Z轴(蓝) → Three.js +Y（上方）
+            // 转换关系: threeX = rosX, threeY = rosZ, threeZ = rosY
+            const threeX = rosX;
+            const threeY = rosZ;
+            const threeZ = rosY;
+            
+            // ROS的yaw是绕Z轴(向上)旋转，在Three.js中对应绕Y轴旋转
+            // 同方向（俯视看，逆时针为正）
+            const threeYaw = rosYaw;
+            
+            const cableGroup = new THREE.Group();
+            cableGroup.name = 'cableGroup';
+            
+            // 缆绳圆柱体 - 默认沿Y轴（Three.js的上方向）
+            const radius = diameter / 2;
+            const cableGeometry = new THREE.CylinderGeometry(radius, radius, length, 16);
+            const cableMaterial = new THREE.MeshPhongMaterial({
+                color: 0x8b4513,
+                transparent: true,
+                opacity: 0.7
+            });
+            const cable = new THREE.Mesh(cableGeometry, cableMaterial);
+            
+            // 将圆柱体旋转到水平
+            // yaw=0时，缆绳应该垂直于ROS X轴（即沿ROS Y轴/Three.js Z轴方向）
+            // 这样夹爪从X轴方向接近时是垂直于缆绳的
+            // 圆柱体默认沿Y轴，旋转x=90度后沿Z轴
+            cable.rotation.x = Math.PI / 2;  // 旋转到沿Z轴水平（垂直于X轴）
+            
+            cableGroup.add(cable);
+            
+            // 缆绳方向指示线（沿缆绳轴向，即局部Z轴）
+            const lineGeometry = new THREE.BufferGeometry().setFromPoints([
+                new THREE.Vector3(0, 0, -length/2 - 0.03),
+                new THREE.Vector3(0, 0, length/2 + 0.03)
+            ]);
+            const lineMaterial = new THREE.LineBasicMaterial({ color: 0xffff00, linewidth: 2 });
+            const dirLine = new THREE.Line(lineGeometry, lineMaterial);
+            cableGroup.add(dirLine);
+            
+            // 夹爪接近方向指示箭头（沿X轴，表示夹爪从前方接近）
+            const arrowDir = new THREE.Vector3(1, 0, 0);  // 指向+X方向（夹爪接近方向）
+            const arrowHelper = new THREE.ArrowHelper(arrowDir, new THREE.Vector3(0, 0, 0), 0.06, 0x00ff00, 0.015, 0.01);
+            cableGroup.add(arrowHelper);
+            
+            // 设置yaw旋转（绕Three.js的Y轴）
+            // yaw=0时缆绳沿Z轴（垂直于X轴），yaw增加时缆绳绕Y轴旋转
+            cableGroup.rotation.y = threeYaw;
+            
+            // 设置位置
+            cableGroup.position.set(threeX, threeY, threeZ);
+            
+            cableGroup.name = 'cableVisualization';
+            scene.add(cableGroup);
+            cableObject = cableGroup;
+            
+            visualizationData.cablePose = { x: rosX, y: rosY, z: rosZ, yaw: rosYaw, diameter, length };
+            
+            console.log(`[缆绳可视化] ROS坐标: (${rosX.toFixed(3)}, ${rosY.toFixed(3)}, ${rosZ.toFixed(3)}), yaw=${(rosYaw*180/Math.PI).toFixed(1)}°`);
+            console.log(`[缆绳可视化] Three.js坐标: (${threeX.toFixed(3)}, ${threeY.toFixed(3)}, ${threeZ.toFixed(3)}), yaw=${(threeYaw*180/Math.PI).toFixed(1)}°`);
+        }
+        
+        // 隐藏缆绳
+        function hideCableObject() {
+            if (cableObject) {
+                scene.remove(cableObject);
+                cableObject = null;
+            }
+            visualizationData.cablePose = null;
+        }
+        
+        // 创建工作空间可视化
+        // 根据URDF实际参数计算真实的工作空间形状
+        // M5机械臂：4自由度，Joint2/3只能向下弯曲（-2.97~0 rad）
+        // 工作空间是一个不规则的环形区域，而非简单圆柱体
+        function createWorkspaceVisualization() {
+            const wsGroup = new THREE.Group();
+            wsGroup.name = 'workspaceGroup';
+            
+            // URDF实际参数
+            const baseHeight = 0.141;      // Joint1在base_link上的高度
+            const link2Length = 0.264;     // Joint2到Joint3的距离
+            const link3Length = 0.143;     // Joint3到Joint4的距离
+            const link4ToEef = 0.187;      // Joint4到夹爪的距离
+            const joint1Offset = {x: 0, y: 0.0525, z: 0.0735};  // Link1到Joint2的偏移
+            
+            // 关节限位
+            const joint2Min = -2.97;  // rad，向下弯曲最大
+            const joint2Max = 0;      // rad，水平
+            const joint3Min = -2.97;  // rad
+            const joint3Max = 0;      // rad
+            
+            // 计算不同配置下的末端位置，采样工作空间边界
+            const segments = 48;
+            const joint2Samples = 12;
+            const joint3Samples = 12;
+            
+            // 存储采样点
+            const workspaceBoundary = [];
+            const innerBoundary = [];
+            
+            // 计算正向运动学：给定joint2, joint3角度，计算末端在XZ平面的位置
+            // 简化模型：假设在某个joint1角度下的2D平面内
+            function forwardKinematics2D(j2, j3) {
+                // Joint2位置（相对于base原点，在joint1旋转后的平面内）
+                const j2Pos = {
+                    r: Math.sqrt(joint1Offset.x * joint1Offset.x + joint1Offset.y * joint1Offset.y),
+                    z: baseHeight + joint1Offset.z
+                };
+                
+                // Link2末端位置（Joint3位置）
+                const j3Pos = {
+                    r: j2Pos.r + link2Length * Math.sin(-j2),
+                    z: j2Pos.z + link2Length * Math.cos(-j2)
+                };
+                
+                // Link3末端位置（Joint4位置）
+                const j4Pos = {
+                    r: j3Pos.r + link3Length * Math.sin(-j2 - j3),
+                    z: j3Pos.z + link3Length * Math.cos(-j2 - j3)
+                };
+                
+                // 末端执行器位置
+                const eefPos = {
+                    r: j4Pos.r + link4ToEef * Math.sin(-j2 - j3),
+                    z: j4Pos.z + link4ToEef * Math.cos(-j2 - j3)
+                };
+                
+                return eefPos;
+            }
+            
+            // 采样工作空间边界点
+            // 外边界：joint2=0（水平伸展）的各种joint3配置
+            const outerProfile = [];
+            for (let i = 0; i <= joint3Samples; i++) {
+                const j3 = joint3Min + (joint3Max - joint3Min) * (i / joint3Samples);
+                const pos = forwardKinematics2D(0, j3);
+                outerProfile.push(pos);
+            }
+            
+            // 中间边界：joint2=-1.5的各种joint3配置
+            const midProfile = [];
+            for (let i = 0; i <= joint3Samples; i++) {
+                const j3 = joint3Min + (joint3Max - joint3Min) * (i / joint3Samples);
+                const pos = forwardKinematics2D(-1.5, j3);
+                midProfile.push(pos);
+            }
+            
+            // 内边界/下边界：joint2=-2.97（最大向下弯曲）的各种joint3配置
+            const innerProfile = [];
+            for (let i = 0; i <= joint3Samples; i++) {
+                const j3 = joint3Min + (joint3Max - joint3Min) * (i / joint3Samples);
+                const pos = forwardKinematics2D(joint2Min, j3);
+                innerProfile.push(pos);
+            }
+            
+            // 材质定义
+            const outerMaterial = new THREE.LineBasicMaterial({ 
+                color: 0x4488ff, transparent: true, opacity: 0.5 
+            });
+            const innerMaterial = new THREE.LineBasicMaterial({ 
+                color: 0xff8844, transparent: true, opacity: 0.5 
+            });
+            const midMaterial = new THREE.LineBasicMaterial({ 
+                color: 0x88ff44, transparent: true, opacity: 0.3 
+            });
+            const vertMaterial = new THREE.LineBasicMaterial({ 
+                color: 0x4488ff, transparent: true, opacity: 0.25 
+            });
+            
+            // 为每个joint1角度绘制工作空间剖面
+            const numSlices = 16;
+            for (let slice = 0; slice < numSlices; slice++) {
+                const theta = (slice / numSlices) * Math.PI * 2;  // joint1角度
+                const cosT = Math.cos(theta);
+                const sinT = Math.sin(theta);
+                
+                // 绘制外边界剖面线
+                const outerPoints = outerProfile.map(p => new THREE.Vector3(
+                    p.r * cosT,
+                    p.z,
+                    p.r * sinT
+                ));
+                const outerGeom = new THREE.BufferGeometry().setFromPoints(outerPoints);
+                wsGroup.add(new THREE.Line(outerGeom, outerMaterial));
+                
+                // 绘制中间剖面线
+                const midPoints = midProfile.map(p => new THREE.Vector3(
+                    p.r * cosT,
+                    p.z,
+                    p.r * sinT
+                ));
+                const midGeom = new THREE.BufferGeometry().setFromPoints(midPoints);
+                wsGroup.add(new THREE.Line(midGeom, midMaterial));
+                
+                // 绘制内边界剖面线
+                const innerPoints = innerProfile.map(p => new THREE.Vector3(
+                    p.r * cosT,
+                    p.z,
+                    p.r * sinT
+                ));
+                const innerGeom = new THREE.BufferGeometry().setFromPoints(innerPoints);
+                wsGroup.add(new THREE.Line(innerGeom, innerMaterial));
+            }
+            
+            // 绘制水平环形参考线（在几个关键高度）
+            const heights = [0.0, baseHeight, 0.3, 0.5];
+            heights.forEach((h, idx) => {
+                // 找出该高度对应的最大和最小半径
+                let maxR = 0, minR = Infinity;
+                
+                // 遍历所有joint配置找边界
+                for (let j2 = joint2Min; j2 <= joint2Max; j2 += 0.3) {
+                    for (let j3 = joint3Min; j3 <= joint3Max; j3 += 0.3) {
+                        const pos = forwardKinematics2D(j2, j3);
+                        if (Math.abs(pos.z - h) < 0.05) {  // 在该高度附近
+                            if (pos.r > maxR) maxR = pos.r;
+                            if (pos.r < minR && pos.r > 0.05) minR = pos.r;
+                        }
+                    }
+                }
+                
+                if (maxR > 0) {
+                    // 绘制外圈
+                    const ringPoints = [];
+                    for (let i = 0; i <= segments; i++) {
+                        const angle = (i / segments) * Math.PI * 2;
+                        ringPoints.push(new THREE.Vector3(
+                            maxR * Math.cos(angle),
+                            h,
+                            maxR * Math.sin(angle)
+                        ));
+                    }
+                    const ringGeom = new THREE.BufferGeometry().setFromPoints(ringPoints);
+                    const ringMat = new THREE.LineBasicMaterial({ 
+                        color: idx === 1 ? 0xffff44 : 0x44aaff,  // 基座高度用黄色
+                        transparent: true, 
+                        opacity: 0.4 
+                    });
+                    wsGroup.add(new THREE.Line(ringGeom, ringMat));
+                    
+                    // 如果有内圈
+                    if (minR < maxR - 0.1) {
+                        const innerRingPoints = [];
+                        for (let i = 0; i <= segments; i++) {
+                            const angle = (i / segments) * Math.PI * 2;
+                            innerRingPoints.push(new THREE.Vector3(
+                                minR * Math.cos(angle),
+                                h,
+                                minR * Math.sin(angle)
+                            ));
+                        }
+                        const innerRingGeom = new THREE.BufferGeometry().setFromPoints(innerRingPoints);
+                        wsGroup.add(new THREE.Line(innerRingGeom, new THREE.LineBasicMaterial({ 
+                            color: 0xff8844, transparent: true, opacity: 0.3 
+                        })));
+                    }
+                }
+            });
+            
+            // 绘制底部地面投影（半透明填充）
+            // 计算地面高度(z=0)的可达范围
+            let groundMaxR = 0, groundMinR = Infinity;
+            for (let j2 = joint2Min; j2 <= joint2Max; j2 += 0.2) {
+                for (let j3 = joint3Min; j3 <= joint3Max; j3 += 0.2) {
+                    const pos = forwardKinematics2D(j2, j3);
+                    if (pos.z >= -0.05 && pos.z <= 0.1) {
+                        if (pos.r > groundMaxR) groundMaxR = pos.r;
+                        if (pos.r < groundMinR && pos.r > 0.05) groundMinR = pos.r;
+                    }
+                }
+            }
+            
+            if (groundMaxR > groundMinR) {
+                const floorRingGeometry = new THREE.RingGeometry(groundMinR, groundMaxR, 48);
+                const floorRingMaterial = new THREE.MeshBasicMaterial({
+                    color: 0x44ff88,
+                    transparent: true,
+                    opacity: 0.06,
+                    side: THREE.DoubleSide
+                });
+                const floorRing = new THREE.Mesh(floorRingGeometry, floorRingMaterial);
+                floorRing.rotation.x = -Math.PI / 2;
+                floorRing.position.y = 0.002;
+                wsGroup.add(floorRing);
+            }
+            
+            // 添加基座标记
+            const baseMarkerGeometry = new THREE.CylinderGeometry(0.03, 0.03, baseHeight, 16);
+            const baseMarkerMaterial = new THREE.MeshBasicMaterial({
+                color: 0xffaa00,
+                transparent: true,
+                opacity: 0.3
+            });
+            const baseMarker = new THREE.Mesh(baseMarkerGeometry, baseMarkerMaterial);
+            baseMarker.position.y = baseHeight / 2;
+            wsGroup.add(baseMarker);
+            
+            // 初始隐藏（可通过UI切换显示）
+            wsGroup.visible = false;
+            workspaceHelper = wsGroup;
+            
+            scene.add(wsGroup);
+        }
+        
+        // 切换工作空间显示
+        function toggleWorkspaceVisibility() {
+            if (workspaceHelper) {
+                workspaceHelper.visible = !workspaceHelper.visible;
+            }
+        }
+        
+        // 创建地面平面
+        function createGroundPlane() {
+            const planeGeometry = new THREE.PlaneGeometry(2, 2);
+            const planeMaterial = new THREE.MeshBasicMaterial({
+                color: 0x1a1a2e,
+                transparent: true,
+                opacity: 0.5,
+                side: THREE.DoubleSide
+            });
+            groundPlane = new THREE.Mesh(planeGeometry, planeMaterial);
+            groundPlane.rotation.x = -Math.PI / 2;
+            groundPlane.position.y = 0;
+            groundPlane.receiveShadow = true;
+            groundPlane.visible = false; // 默认隐藏，已有网格
+            scene.add(groundPlane);
+        }
+        
+        // 创建轨迹线对象
+        function createTrajectoryObjects() {
+            // 规划轨迹（粗线，青色）
+            const plannedGeometry = new THREE.BufferGeometry();
+            const plannedMaterial = new THREE.LineBasicMaterial({
+                color: 0x00ffff,
+                linewidth: 3,
+                transparent: true,
+                opacity: 0.8
+            });
+            trajectoryLine = new THREE.Line(plannedGeometry, plannedMaterial);
+            trajectoryLine.name = 'plannedTrajectory';
+            trajectoryLine.visible = false;
+            
+            // 坐标转换
+            const trajGroup = new THREE.Group();
+            trajGroup.add(trajectoryLine);
+            trajGroup.rotation.z = rosToThreeJsRotation.z;
+            trajGroup.rotation.x = rosToThreeJsRotation.x;
+            trajGroup.name = 'trajectoryVisualization';
+            scene.add(trajGroup);
+            
+            // 执行轨迹（细线，绿色）
+            const execGeometry = new THREE.BufferGeometry();
+            const execMaterial = new THREE.LineBasicMaterial({
+                color: 0x00ff00,
+                linewidth: 1,
+                transparent: true,
+                opacity: 0.6
+            });
+            executionLine = new THREE.Line(execGeometry, execMaterial);
+            executionLine.name = 'executedTrajectory';
+            executionLine.visible = false;
+            trajGroup.add(executionLine);
+        }
+        
+        // 更新规划轨迹
+        function updatePlannedTrajectory(waypoints) {
+            if (!trajectoryLine || waypoints.length < 2) {
+                if (trajectoryLine) trajectoryLine.visible = false;
+                return;
+            }
+            
+            const points = waypoints.map(wp => new THREE.Vector3(wp.x, wp.y, wp.z));
+            trajectoryLine.geometry.dispose();
+            trajectoryLine.geometry = new THREE.BufferGeometry().setFromPoints(points);
+            trajectoryLine.visible = true;
+            
+            visualizationData.plannedPath = waypoints;
+        }
+        
+        // 更新执行轨迹
+        function updateExecutedTrajectory(waypoints) {
+            if (!executionLine || waypoints.length < 2) {
+                if (executionLine) executionLine.visible = false;
+                return;
+            }
+            
+            const points = waypoints.map(wp => new THREE.Vector3(wp.x, wp.y, wp.z));
+            executionLine.geometry.dispose();
+            executionLine.geometry = new THREE.BufferGeometry().setFromPoints(points);
+            executionLine.visible = true;
+            
+            visualizationData.executedPath = waypoints;
+        }
+        
+        // 清除轨迹显示
+        function clearTrajectories() {
+            if (trajectoryLine) {
+                trajectoryLine.visible = false;
+            }
+            if (executionLine) {
+                executionLine.visible = false;
+            }
+            visualizationData.plannedPath = [];
+            visualizationData.executedPath = [];
+        }
+        
+        // 检查点是否在工作空间内（基于简化的运动学模型）
+        function checkWorkspaceReachability(x, y, z) {
+            const horizontalDist = Math.sqrt(x * x + y * y);
+            const height = z;
+            const reasons = [];
+            
+            // URDF参数
+            const baseHeight = 0.141;
+            const link2Length = 0.264;
+            const link3Length = 0.143;
+            const link4ToEef = 0.187;
+            const totalReach = link2Length + link3Length + link4ToEef;  // 0.594m
+            
+            // 基本检查
+            // 1. 最大伸展半径（水平）
+            const maxHorizontalReach = totalReach * 0.95;  // 考虑结构约束
+            if (horizontalDist > maxHorizontalReach) {
+                reasons.push('超出最大水平距离');
+            }
+            
+            // 2. 最小半径（太靠近基座会自碰撞）
+            const minRadius = 0.08;
+            if (horizontalDist < minRadius) {
+                reasons.push('太靠近基座');
+            }
+            
+            // 3. 高度检查 - 基于实际可达性
+            // 最高点：手臂完全伸直向上
+            const maxHeight = baseHeight + totalReach * 0.9;  // ~0.68m
+            // 最低点：手臂向下弯曲
+            const minHeight = -0.15;  // 可以到达地面以下
+            
+            if (height > maxHeight) {
+                reasons.push('超出最大高度');
+            }
+            if (height < minHeight) {
+                reasons.push('低于最小高度');
+            }
+            
+            // 4. 联合约束：不能同时达到最大水平距离和很高/很低的高度
+            // 这是球形工作空间的特征
+            const distFromShoulder = Math.sqrt(horizontalDist * horizontalDist + 
+                                              (height - baseHeight) * (height - baseHeight));
+            if (distFromShoulder > totalReach) {
+                reasons.push('超出总可达距离');
+            }
+            
+            // 5. Joint2/3只能向下弯曲的约束
+            // 如果高度太高且水平距离太大，可能不可达
+            if (height > baseHeight + 0.4 && horizontalDist > 0.3) {
+                reasons.push('该高度水平距离受限');
+            }
+            
+            return {
+                reachable: reasons.length === 0,
+                horizontalDist,
+                height,
+                distFromShoulder,
+                reasons
+            };
+        }
+        
         function updateCameraPosition() {
-            // 根据球坐标系计算相机位置
             const x = cameraDistance * Math.cos(cameraRotationX) * Math.sin(cameraRotationY);
             const y = cameraDistance * Math.sin(cameraRotationX) + targetPosition.y;
             const z = cameraDistance * Math.cos(cameraRotationX) * Math.cos(cameraRotationY);
@@ -1307,7 +2230,6 @@
             linkGroups = {};
             jointMap = {};
             
-            // 加载URDF并解析，然后加载多link STL模型
             loadURDFAndSTLModels();
         }
         
@@ -1318,7 +2240,7 @@
                 .then(urdfText => {
                     console.log('URDF文件加载成功');
                     urdfData = parseURDF(urdfText);
-                    console.log('URDF解析完成，links:', Object.keys(urdfData.links).length, 'joints:', Object.keys(urdfData.joints).length);
+                    console.log('URDF解析完成');
                     loadAllSTLModels();
                 })
                 .catch(error => {
@@ -1334,14 +2256,12 @@
             const links = {};
             const joints = {};
             
-            // 解析所有link
             const linkElements = xmlDoc.getElementsByTagName('link');
             for (let i = 0; i < linkElements.length; i++) {
                 const link = linkElements[i];
                 const linkName = link.getAttribute('name');
                 if (!linkName || linkName === 'world_link') continue;
                 
-                // 获取visual中的mesh文件
                 const visual = link.getElementsByTagName('visual')[0];
                 if (visual) {
                     const geometry = visual.getElementsByTagName('geometry')[0];
@@ -1350,7 +2270,6 @@
                         if (mesh) {
                             const filename = mesh.getAttribute('filename');
                             if (filename) {
-                                // 提取STL文件名 (package://m5/meshes/base_link.STL -> base_link.STL)
                                 const stlName = filename.split('/').pop();
                                 links[linkName] = {
                                     name: linkName,
@@ -1363,7 +2282,6 @@
                 }
             }
             
-            // 解析所有joint
             const jointElements = xmlDoc.getElementsByTagName('joint');
             for (let i = 0; i < jointElements.length; i++) {
                 const joint = jointElements[i];
@@ -1427,7 +2345,6 @@
                 stlLoader.load(
                     `/meshes/${stlFile}`,
                     function(geometry) {
-                        // STL加载成功
                         const material = new THREE.MeshPhongMaterial({ 
                             color: 0x888888,
                             specular: 0x111111,
@@ -1439,20 +2356,15 @@
                         mesh.castShadow = true;
                         mesh.receiveShadow = true;
                         
-                        // 检测单位并缩放（STL通常是毫米）
                         geometry.computeBoundingBox();
                         const size = new THREE.Vector3();
                         geometry.boundingBox.getSize(size);
                         const maxDimension = Math.max(size.x, size.y, size.z);
                         if (maxDimension > 100) {
-                            mesh.scale.set(0.001, 0.001, 0.001); // 毫米转米
-                            geometry.computeBoundingBox(); // 重新计算边界框
+                            mesh.scale.set(0.001, 0.001, 0.001);
+                            geometry.computeBoundingBox();
                         }
                         
-                        // 注意：不要自动居中STL模型，因为URDF中已经定义了正确的位置
-                        // STL模型应该保持其原始坐标系，与URDF定义一致
-                        
-                        // 应用visual origin（如果有）
                         if (link.visualOrigin) {
                             const origin = link.visualOrigin.xyz;
                             if (origin && (origin[0] !== 0 || origin[1] !== 0 || origin[2] !== 0)) {
@@ -1466,10 +2378,6 @@
                             }
                         }
                         
-                        // 注意：不再对单个link应用方向校正
-                        // 坐标系转换已经在robot group级别统一处理
-                        
-                        // 创建link group用于变换
                         const linkGroup = new THREE.Group();
                         linkGroup.name = linkName;
                         linkGroup.add(mesh);
@@ -1481,7 +2389,6 @@
                         console.log(`已加载 ${linkName}: ${stlFile} (${loadedCount}/${totalLinks})`);
                         
                         if (loadedCount === totalLinks) {
-                            // 所有STL加载完成，组装模型
                             assembleRobotModel();
                         }
                     },
@@ -1511,47 +2418,38 @@
             const joints = urdfData.joints;
             const links = urdfData.links;
             
-            // 创建link的层次结构
             const linkHierarchy = {};
             const rootLinks = [];
             
-            // 找出所有root links（没有parent的link）
             Object.keys(links).forEach(linkName => {
                 if (!joints[linkName] || joints[linkName].parent === 'world_link' || joints[linkName].parent === 'base_link') {
                     rootLinks.push(linkName);
                 }
             });
             
-            // 如果没有找到root，使用base_link
             if (rootLinks.length === 0 && linkGroups['base_link']) {
                 rootLinks.push('base_link');
             }
             
-            // 从root开始递归添加子link
             function addLinkToParent(childLinkName, parentGroup) {
                 const linkGroup = linkGroups[childLinkName];
                 if (!linkGroup) return;
                 
                 const joint = joints[childLinkName];
                 if (joint) {
-                    // 应用joint的origin变换（位置和初始旋转）
                     const origin = joint.origin;
                     if (origin) {
                         linkGroup.position.set(origin.xyz[0], origin.xyz[1], origin.xyz[2]);
-                        // 初始旋转会在updateURDFRobot中与关节角度结合
                         if (origin.rpy) {
-                            // 存储初始旋转，但不直接设置（因为需要与关节角度结合）
                             joint.initialRpy = origin.rpy;
                         }
                     }
                     
-                    // 存储joint信息用于后续更新
                     jointMap[childLinkName] = joint;
                 }
                 
                 parentGroup.add(linkGroup);
                 
-                // 递归添加子link
                 Object.keys(joints).forEach(linkName => {
                     if (joints[linkName].parent === childLinkName) {
                         addLinkToParent(linkName, linkGroup);
@@ -1559,12 +2457,10 @@
                 });
             }
             
-            // 从root links开始组装
             rootLinks.forEach(rootLinkName => {
                 const rootGroup = linkGroups[rootLinkName];
                 if (rootGroup) {
                     robot.add(rootGroup);
-                    // 添加子link
                     Object.keys(joints).forEach(linkName => {
                         if (joints[linkName].parent === rootLinkName) {
                             addLinkToParent(linkName, rootGroup);
@@ -1573,12 +2469,9 @@
                 }
             });
             
-            // 如果base_link存在，确保它是root
             if (linkGroups['base_link'] && !rootLinks.includes('base_link')) {
-                // 查找base_link的parent
                 const baseJoint = Object.values(joints).find(j => j.child === 'base_link');
                 if (!baseJoint || baseJoint.parent === 'world_link') {
-                    // base_link应该是root
                     if (!robot.children.includes(linkGroups['base_link'])) {
                         robot.add(linkGroups['base_link']);
                         Object.keys(joints).forEach(linkName => {
@@ -1590,28 +2483,10 @@
                 }
             }
             
-            // 应用ROS到Three.js的坐标系转换
-            // ROS坐标系：X前，Y左，Z上
-            // Three.js坐标系：X右，Y上，Z前
-            // 转换关系：ROS的(X,Y,Z) → Three.js的(-Y, Z, X)
-            // 在Three.js中，欧拉角的旋转顺序是XYZ
-            // 需要先绕Z轴旋转，再绕X轴旋转
-            // 但Three.js的rotation是累积的，所以顺序很重要
-            // 先设置Z轴旋转，再设置X轴旋转
-            robot.rotation.z = rosToThreeJsRotation.z;  // 先绕Z轴旋转-90度
-            robot.rotation.x = rosToThreeJsRotation.x;  // 再绕X轴旋转-90度
+            robot.rotation.z = rosToThreeJsRotation.z;
+            robot.rotation.x = rosToThreeJsRotation.x;
             robot.rotation.y = rosToThreeJsRotation.y;
-            
-            // 稍微放大机械臂模型（适中的大小）
-            robot.scale.set(1.0, 1.0, 1.0); // 整体放大1.2倍（从1.5改为1.2）
-            
-            console.log('应用ROS到Three.js坐标系转换:', rosToThreeJsRotation);
-            console.log('最终旋转角度:', {
-                x: THREE.MathUtils.radToDeg(robot.rotation.x),
-                y: THREE.MathUtils.radToDeg(robot.rotation.y),
-                z: THREE.MathUtils.radToDeg(robot.rotation.z)
-            });
-            console.log('模型缩放:', robot.scale);
+            robot.scale.set(1.0, 1.0, 1.0);
             
             scene.add(robot);
             stlModelLoaded = true;
@@ -1620,14 +2495,12 @@
         }
         
         function createDefaultRobot() {
-            // 基座
             const baseGeometry = new THREE.CylinderGeometry(0.15, 0.15, 0.1, 32);
             const baseMaterial = new THREE.MeshPhongMaterial({ color: 0x4a4a4a });
             const base = new THREE.Mesh(baseGeometry, baseMaterial);
             base.position.y = 0.05;
             robot.add(base);
             
-            // Link1 (可旋转)
             const link1Group = new THREE.Group();
             const link1Geometry = new THREE.BoxGeometry(0.1, 0.3, 0.1);
             const link1Material = new THREE.MeshPhongMaterial({ color: 0x667eea });
@@ -1637,7 +2510,6 @@
             link1Group.name = 'link1';
             robot.add(link1Group);
             
-            // Link2
             const link2Group = new THREE.Group();
             link2Group.position.set(0, 0.35, 0);
             const link2Geometry = new THREE.BoxGeometry(0.08, 0.25, 0.08);
@@ -1648,7 +2520,6 @@
             link2Group.name = 'link2';
             link1Group.add(link2Group);
             
-            // Link3
             const link3Group = new THREE.Group();
             link3Group.position.set(0, 0.25, 0);
             const link3Geometry = new THREE.BoxGeometry(0.08, 0.25, 0.08);
@@ -1659,7 +2530,6 @@
             link3Group.name = 'link3';
             link2Group.add(link3Group);
             
-            // Link4 (末端)
             const link4Geometry = new THREE.BoxGeometry(0.06, 0.15, 0.06);
             const link4Material = new THREE.MeshPhongMaterial({ color: 0xff6b6b });
             const link4 = new THREE.Mesh(link4Geometry, link4Material);
@@ -1673,62 +2543,40 @@
         function updateRobot() {
             if (!robot) return;
             
+            // 如果没有收到真实数据，不更新3D模型（保持初始姿态）
+            if (!hasReceivedRobotData) {
+                return;
+            }
+            
             if (useSTLModel && stlModelLoaded && urdfData) {
-                // 使用URDF多link模型，根据关节角度更新
                 updateURDFRobot();
             } else {
-                // 使用默认几何体模型
                 updateDefaultRobot();
             }
         }
         
         function updateURDFRobot() {
-            // 根据URDF的joint信息更新每个link的旋转
-            // 参考m5_planning.cpp中的处理方式
-            // Joint2和Joint3的范围是-2.97到0（-170°到0°），0度时应该是垂直向上
-            // 注意：URDF中的axis定义的是旋转轴方向，正角度表示绕该轴正方向旋转
-            
             function setRotationByAxis(group, axis, angleRad, initialRpy, linkName) {
                 if (!group) return;
                 
-                // 获取初始旋转（来自joint origin的rpy）
                 const baseRpy = initialRpy || [0, 0, 0];
-                
-                // 先设置初始旋转（来自joint origin）
                 group.rotation.set(baseRpy[0], baseRpy[1], baseRpy[2]);
                 
-                // 然后根据axis添加关节角度（使用弧度）
-                // 注意：Three.js中rotation的顺序是XYZ（欧拉角）
-                // URDF中axis (1,0,0)表示绕X轴正方向旋转
-                // 在Three.js中，绕X轴正方向旋转会使物体向下倾斜（符合右手定则）
-                // 但根据URDF，Joint2和Joint3的0度应该是垂直向上，所以可能需要调整方向
-                
                 if (Math.abs(axis[2] - 1) < 0.1) {
-                    // 绕Z轴旋转（正方向）
                     group.rotation.z += angleRad;
                 } else if (Math.abs(axis[2] + 1) < 0.1) {
-                    // 绕-Z轴旋转（负方向）
                     group.rotation.z -= angleRad;
                 } else if (Math.abs(axis[0] - 1) < 0.1) {
-                    // 绕X轴旋转（正方向）
-                    // 对于Joint2和Joint3，需要确保0度时是垂直的
-                    // 如果STL模型初始是垂直的，直接加上角度
-                    // 如果STL模型初始是水平的，需要先旋转-90度，再加上角度
                     group.rotation.x += angleRad;
                 } else if (Math.abs(axis[0] + 1) < 0.1) {
-                    // 绕-X轴旋转（负方向）
                     group.rotation.x -= angleRad;
                 } else if (Math.abs(axis[1] - 1) < 0.1) {
-                    // 绕Y轴旋转（正方向）
                     group.rotation.y += angleRad;
                 } else if (Math.abs(axis[1] + 1) < 0.1) {
-                    // 绕-Y轴旋转（负方向）
                     group.rotation.y -= angleRad;
                 }
             }
             
-            // 将角度从度转换为弧度
-            // Joint1: base_link -> Link1, axis (0, 0, 1), 绕Z轴旋转
             const joint1 = jointMap['Link1'];
             if (joint1 && linkGroups['Link1']) {
                 const initialRpy = joint1.initialRpy || (joint1.origin ? joint1.origin.rpy : [0, 0, 0]);
@@ -1736,21 +2584,13 @@
                 setRotationByAxis(linkGroups['Link1'], joint1.axis, angleRad, initialRpy);
             }
             
-            // Joint2: Link1 -> Link2, axis (1, 0, 0), 绕X轴旋转
-            // 范围：-170°到0°，0°时垂直向上
-            // 注意：如果STL模型初始方向不对，可能需要调整
             const joint2 = jointMap['Link2'];
             if (joint2 && linkGroups['Link2']) {
                 const initialRpy = joint2.initialRpy || (joint2.origin ? joint2.origin.rpy : [0, 0, 0]);
                 const angleRad = THREE.MathUtils.degToRad(axes[2]);
-                // 如果STL模型初始是水平的，需要先旋转到垂直
-                // 根据URDF，axis (1,0,0)表示绕X轴，0度应该是垂直向上
-                // 如果STL模型初始沿Y轴（水平），需要先绕X轴旋转-90度（或90度，取决于模型方向）
                 setRotationByAxis(linkGroups['Link2'], joint2.axis, angleRad, initialRpy, 'Link2');
             }
             
-            // Joint3: Link2 -> Link3, axis (1, 0, 0), 绕X轴旋转
-            // 范围：-170°到0°，0°时垂直向上
             const joint3 = jointMap['Link3'];
             if (joint3 && linkGroups['Link3']) {
                 const initialRpy = joint3.initialRpy || (joint3.origin ? joint3.origin.rpy : [0, 0, 0]);
@@ -1758,35 +2598,67 @@
                 setRotationByAxis(linkGroups['Link3'], joint3.axis, angleRad, initialRpy, 'Link3');
             }
             
-            // Joint4: Link3 -> Link4, axis (0, 0, 1), 绕Z轴旋转
             const joint4 = jointMap['Link4'];
             if (joint4 && linkGroups['Link4']) {
                 const initialRpy = joint4.initialRpy || (joint4.origin ? joint4.origin.rpy : [0, 0, 0]);
                 const angleRad = THREE.MathUtils.degToRad(axes[4]);
                 setRotationByAxis(linkGroups['Link4'], joint4.axis, angleRad, initialRpy);
             }
+            
+            // ========== 夹爪关节更新 ==========
+            // axes[5] 是夹爪值，范围 [-1100, 0]（厂家实际）
+            // axis5 = 0 -> 闭合，axis5 = -1100 -> 打开
+            const axis5Value = axes[5] || 0;
+            const axis5Min = -1100.0;  // 完全打开（厂家建议）
+            const axis5Max = 0.0;      // 完全闭合
+            
+            // 线性映射到角度范围 [0.9, -0.9]
+            // axis5大(闭合) -> 角度负(视觉闭合)
+            // axis5小(打开) -> 角度正(视觉打开)
+            const clampedAxis5 = Math.max(axis5Min, Math.min(axis5Max, axis5Value));
+            const t = (clampedAxis5 - axis5Min) / (axis5Max - axis5Min);  // 0(打开)到1(闭合)
+            const jointGLAngle = 0.9 - t * 1.8;  // 0.9(打开) -> -0.9(闭合)
+            // JointGR是JointGL的镜像（左右夹爪相向运动）
+            const jointGRAngle = -jointGLAngle;
+            
+            // 更新LinkGL（左夹爪）
+            const jointGL = jointMap['LinkGL'];
+            if (jointGL && linkGroups['LinkGL']) {
+                const initialRpy = jointGL.initialRpy || (jointGL.origin ? jointGL.origin.rpy : [0, 0, 0]);
+                setRotationByAxis(linkGroups['LinkGL'], jointGL.axis, jointGLAngle, initialRpy, 'LinkGL');
+            } else {
+                // 调试：检查为什么夹爪没有更新
+                if (!jointGL) console.log('[夹爪调试] jointMap中没有LinkGL，可用key:', Object.keys(jointMap));
+                if (!linkGroups['LinkGL']) console.log('[夹爪调试] linkGroups中没有LinkGL，可用key:', Object.keys(linkGroups));
+            }
+            
+            // 更新LinkGR（右夹爪）
+            const jointGR = jointMap['LinkGR'];
+            if (jointGR && linkGroups['LinkGR']) {
+                const initialRpy = jointGR.initialRpy || (jointGR.origin ? jointGR.origin.rpy : [0, 0, 0]);
+                setRotationByAxis(linkGroups['LinkGR'], jointGR.axis, jointGRAngle, initialRpy, 'LinkGR');
+            } else {
+                if (!jointGR) console.log('[夹爪调试] jointMap中没有LinkGR');
+                if (!linkGroups['LinkGR']) console.log('[夹爪调试] linkGroups中没有LinkGR');
+            }
         }
         
         function updateDefaultRobot() {
-            // 更新Link1旋转 (Axis 1)
             const link1 = robot.getObjectByName('link1');
             if (link1) {
                 link1.rotation.y = THREE.MathUtils.degToRad(axes[1]);
             }
             
-            // 更新Link2旋转 (Axis 2)
             const link2 = robot.getObjectByName('link2');
             if (link2) {
                 link2.rotation.x = THREE.MathUtils.degToRad(axes[2]);
             }
             
-            // 更新Link3旋转 (Axis 3)
             const link3 = robot.getObjectByName('link3');
             if (link3) {
                 link3.rotation.x = THREE.MathUtils.degToRad(axes[3]);
             }
             
-            // 更新Link4旋转 (Axis 4)
             const link4 = robot.getObjectByName('link4');
             if (link4) {
                 link4.rotation.z = THREE.MathUtils.degToRad(axes[4]);
@@ -1799,234 +2671,404 @@
             renderer.render(scene, camera);
         }
         
+        // ========== FSM状态定义（在状态更新之前，确保可用）==========
+        // FSM状态到中文名称的映射
+        const FSM_STATE_NAMES = {
+            'IDLE': '空闲',
+            'WAIT_TARGET_STABLE': '等待目标稳定',
+            '等待目标稳定': '等待目标稳定',
+            'OPEN_GRIPPER': '打开夹爪',
+            '打开夹爪': '打开夹爪',
+            'PREGRASP': '预抓取位置',
+            '移动到预抓取位置': '预抓取位置',
+            'ALIGN': '对齐姿态',
+            '对齐姿态': '对齐姿态',
+            'DESCEND': '下探',
+            '下探': '下探',
+            'CLOSE_GRIPPER': '闭合夹爪',
+            '闭合夹爪': '闭合夹爪',
+            'LIFT': '抬升',
+            '抬升': '抬升',
+            'DONE': '完成',
+            '完成': '完成',
+            'ABORT_SAFE': '安全中止',
+            '安全中止': '安全中止',
+            '中止完成': '中止完成',
+            'RETRY_BACKOFF': '重试回退'
+        };
+        
         // 状态更新
-        let lastRobotState = 'idle';  // 保存上一次的状态，用于超时显示
-        let lastGraspState = 'idle';  // 保存上一次的抓取状态
+        let lastGraspState = 'idle';
         function updateStatus(data) {
-            // 检查是否收到过机械臂数据
             const hasReceivedData = data.has_received_robot_data || false;
             const jointValuesContainer = document.getElementById('joint-values');
             const noDataMessage = document.getElementById('no-data-message');
             
-            // 更新上一次的状态（如果不是超时状态）
-            if (data.robot_state && data.robot_state !== '__timeout__') {
-                lastRobotState = data.robot_state;
-            }
+            // 更新全局数据接收标志（用于3D模型更新）
+            hasReceivedRobotData = hasReceivedData;
             
             if (hasReceivedData) {
-                // 已收到数据，显示关节值
                 if (jointValuesContainer) jointValuesContainer.style.display = 'block';
                 if (noDataMessage) noDataMessage.style.display = 'none';
                 
                 axes = data.axes || axes;
                 
-                // 更新显示（axis1-4和axis5夹爪）
                 for (let i = 1; i <= 5; i++) {
                     const value = axes[i] || 0;
                     const element = document.getElementById(`axis${i}-value`);
                     if (element) {
-                        // axis5（夹爪）的范围是-1100°到0°，显示格式与其他轴相同
                         element.textContent = value.toFixed(1) + '°';
                     }
                 }
             } else {
-                // 未收到数据，显示提示
                 if (jointValuesContainer) jointValuesContainer.style.display = 'none';
                 if (noDataMessage) noDataMessage.style.display = 'block';
             }
             
-            // 更新系统状态
-            const statusElement = document.getElementById('robot-status');
-            if (statusElement) {
-                // status: -1=未知, -2=超时, 0=正常, 其他=异常
-                let statusText = '正常';
-                let statusColor = '#a0b8c8'; // 默认主题色
-                
-                if (data.status === -1) {
-                    statusText = '未知';
-                    statusColor = '#b0b0b0'; // 灰色
-                } else if (data.status === -2) {
-                    statusText = '超时';
-                    statusColor = '#ffb74d'; // 橙色（警告）
-                } else if (data.status === 0) {
-                    statusText = '正常';
-                    statusColor = '#81c784'; // 绿色
+            // ========== 更新ROS2连接状态 ==========
+            const ros2StatusEl = document.getElementById('ros2-status');
+            if (ros2StatusEl) {
+                const indicator = ros2StatusEl.querySelector('.node-indicator');
+                const text = ros2StatusEl.querySelector('span:last-child');
+                if (data.ros2_connected) {
+                    indicator.className = 'node-indicator alive';
+                    text.textContent = '已连接';
+                    text.style.color = '#81c784';
                 } else {
-                    statusText = '异常';
-                    statusColor = '#e57373'; // 红色
+                    indicator.className = 'node-indicator dead';
+                    text.textContent = '未连接';
+                    text.style.color = '#e57373';
                 }
-                
-                statusElement.textContent = statusText;
-                statusElement.style.color = statusColor;
             }
             
-            // 更新运行状态
-            const stateMap = {
-                'idle': '空闲',
-                'received': '已接收',
-                'planning': '规划中',
-                'executing': '执行中',
-                'rejected': '已拒绝',
-                'invalid': '无效',
-                'error': '错误',
-                '__unknown__': '未知',
-                '__timeout__': '超时'
-            };
-            const robotState = data.robot_state || '__unknown__';
-            const plannerName = data.planner_name || '';  // 获取规划器名称
-            const stateElement = document.getElementById('robot-state');
-            if (stateElement) {
-                let stateText = stateMap[robotState] || robotState;
-                let stateColor = '#a0b8c8'; // 默认主题色
-                
-                // 根据状态改变颜色（使用柔和的配色）
-                if (robotState === '__unknown__') {
-                    stateText = '未知';
-                    stateColor = '#b0b0b0'; // 灰色
-                } else if (robotState === '__timeout__') {
-                    // 显示详细的超时信息，包括规划器名称和状态
-                    if (plannerName) {
-                        // 如果有规划器信息，显示"规划器名称 状态超时"
-                        const lastStateText = stateMap[lastRobotState] || lastRobotState;
-                        stateText = `${plannerName} ${lastStateText}超时`;
-                    } else {
-                        stateText = '超时';
-                    }
-                    stateColor = '#ffb74d'; // 橙色（警告）
-                } else if (robotState === 'planning' && plannerName) {
-                    // 规划中时，如果有规划器信息，显示规划器名称
-                    stateText = `${plannerName} 规划中`;
-                } else if (robotState === 'error' && plannerName) {
-                    // 错误时，如果有规划器信息，显示规划器名称
-                    stateText = `${plannerName} 规划失败`;
-                } else if (robotState === 'received') {
-                    stateColor = '#64b5f6'; // 柔和的蓝色
-                } else if (robotState === 'planning') {
-                    stateColor = '#ffb74d'; // 柔和的橙色
-                } else if (robotState === 'executing') {
-                    stateColor = '#81c784'; // 柔和的绿色
-                } else if (robotState === 'rejected') {
-                    stateColor = '#ffa726'; // 柔和的橙黄色（警告）
-                } else if (robotState === 'invalid') {
-                    stateColor = '#ef5350'; // 柔和的红色（警告）
-                } else if (robotState === 'error') {
-                    stateColor = '#e57373'; // 柔和的红色
+            // ========== 按接口返回的真实在线/离线显示，不做假UI ==========
+            const nodeHeartbeats = data.node_heartbeats || {};
+            ['m5_grasp', 'hardware'].forEach(function(key) {
+                const indicator = document.getElementById('node-' + key + '-indicator');
+                const nodeInfo = nodeHeartbeats[key];
+                if (!indicator) return;
+                if (nodeInfo && nodeInfo.alive === true) {
+                    indicator.className = 'node-indicator alive';
+                    indicator.title = '在线（有收到数据）';
+                } else if (nodeInfo && nodeInfo.last_time != null) {
+                    indicator.className = 'node-indicator dead';
+                    indicator.title = '离线（超时未收到数据）';
+                } else {
+                    indicator.className = 'node-indicator unknown';
+                    indicator.title = '未检测到（尚未收到数据）';
                 }
-                
-                stateElement.textContent = stateText;
-                stateElement.style.color = stateColor;
-            }
+            });
             
-            // 更新抓取状态
-            const graspStateMap = {
-                'idle': '空闲',
-                '已接收': '已接收',
-                '规划中:抓取': 'MTC规划中',
-                '规划成功:执行中': 'MTC执行中',
-                '规划:预抓取': '规划预抓取',
-                '执行:预抓取': '执行预抓取',
-                '执行:下压': '执行下压',
-                '夹爪:打开中': '夹爪打开中',
-                '夹爪:闭合中': '夹爪闭合中',
-                '夹爪:保持中': '夹爪保持中',
-                '夹爪:释放中': '夹爪释放中',
-                '执行:抬起': '执行抬起',
-                '场景:附着': '附着物体',
-                '完成': '完成',
-                '__unknown__': '未知',
-                '__timeout__': '超时',
-                // MTC相关状态
-                '规划中:放置': 'MTC规划中（放置）',
-                '已接收放置任务': '已接收放置任务',
-                // 错误状态
-                '错误:未就绪': '错误:未就绪',
-                '错误:异常': '错误:异常',
-                '错误:规划异常': '错误:规划异常',
-                '错误:规划失败': '错误:规划失败',
-                '错误:执行异常': '错误:执行异常',
-                '错误:执行失败': '错误:执行失败',
-                '错误:打开夹爪失败': '错误:打开夹爪失败',
-                '错误:预抓取位姿转换失败': '错误:预抓取位姿转换失败',
-                '错误:抓取位姿转换失败': '错误:抓取位姿转换失败',
-                '错误:缆绳位姿转换失败': '错误:缆绳位姿转换失败',
-                '错误:放置位姿转换失败': '错误:放置位姿转换失败',
-                '错误:预抓取失败': '错误:预抓取失败',
-                '错误:添加物体失败': '错误:添加物体失败',
-                '错误:下压失败': '错误:下压失败',
-                '错误:闭合夹爪失败': '错误:闭合夹爪失败',
-                '错误:抓取失败': '错误:抓取失败',
-                '错误:放置失败': '错误:放置失败',
-                // 急停状态
-                '急停:已停止': '急停:已停止',
-                '急停:已重置': '急停:已重置',
-                '急停:任务已取消': '急停:任务已取消',
-                '急停:任务已停止': '急停:任务已停止',
-                // 兼容旧状态（如果还有）
-                'received': '已接收',
-                'planning:pregrasp': '规划预抓取',
-                'executing:pregrasp': '执行预抓取',
-                'executing:descend': '执行下压',
-                'gripper:closing': '夹爪闭合中',
-                'gripper:holding': '夹爪保持中',
-                'executing:lift': '执行抬起',
-                'scene:attach': '附着物体',
-                'completed': '完成',
-                'gripper:opening': '夹爪打开中'
-            };
+            // ========== 更新抓取状态和任务流程 ==========
             const graspState = data.grasp_state || '__unknown__';
             const graspStateDetail = data.grasp_state_detail || '';
             const graspStateElement = document.getElementById('grasp-state');
+            const taskFlowEl = document.getElementById('task-flow');
+            
             if (graspStateElement) {
-                let graspStateText = graspStateMap[graspState] || graspState;
-                let graspStateColor = '#a0b8c8'; // 默认主题色
+                let graspStateText = graspState;
+                let graspStateColor = '#a0b8c8';
                 
-                // 根据状态改变颜色
-                if (graspState === '__unknown__') {
-                    graspStateText = '未知';
+                // ========== FSM状态处理 ==========
+                if (graspState.startsWith('FSM:')) {
+                    const fsmState = graspState.substring(4);
+                    // 获取中文名称
+                    graspStateText = FSM_STATE_NAMES[fsmState] || fsmState;
+                    
+                    // 设置颜色
+                    if (fsmState === '空闲' || fsmState === 'IDLE') {
+                        graspStateColor = '#b0b0b0';
+                    } else if (fsmState === '等待目标稳定' || fsmState === 'WAIT_TARGET_STABLE') {
+                        graspStateColor = '#ffb74d';  // 橙色 - 等待中
+                    } else if (fsmState === '完成' || fsmState === 'DONE') {
+                        graspStateColor = '#4caf50';  // 绿色 - 完成
+                    } else if (fsmState.includes('中止') || fsmState.includes('ABORT')) {
+                        graspStateColor = '#f44336';  // 红色 - 中止
+                    } else {
+                        graspStateColor = '#81c784';  // 浅绿色 - 执行中
+                    }
+                    
+                    // 添加FSM标识
+                    graspStateText = '🔄 ' + graspStateText;
+                }
+                // ========== 旧模式状态处理 ==========
+                else if (graspState === '__unknown__' || graspState === 'idle') {
+                    graspStateText = '空闲';
                     graspStateColor = '#b0b0b0';
                 } else if (graspState === '__timeout__') {
                     graspStateText = '超时';
                     graspStateColor = '#ffb74d';
                 } else if (graspState.startsWith('急停:')) {
-                    // 急停状态
-                    graspStateText = graspState;
-                    graspStateColor = '#f44336';  // 红色
+                    graspStateColor = '#f44336';
                 } else if (graspState.startsWith('错误:')) {
-                    // 中文错误状态直接显示
-                    graspStateText = graspState;
                     graspStateColor = '#e57373';
-                } else if (graspState.startsWith('error:')) {
-                    // 兼容旧格式错误状态
-                    graspStateText = '错误: ' + graspState.split(':')[1];
-                    graspStateColor = '#e57373';
-                } else if (graspState === '已接收' || graspState === 'received') {
+                } else if (graspState === '已接收') {
                     graspStateColor = '#64b5f6';
-                } else if (graspState.startsWith('规划中:') || graspState.startsWith('规划:') || graspState.startsWith('planning:')) {
+                } else if (graspState.startsWith('规划中:')) {
                     graspStateColor = '#ffb74d';
-                } else if (graspState.startsWith('规划成功:') || graspState.startsWith('执行:') || graspState.startsWith('executing:')) {
+                } else if (graspState.startsWith('规划成功:') || graspState.startsWith('执行:')) {
                     graspStateColor = '#81c784';
-                } else if (graspState.startsWith('夹爪:') || graspState.startsWith('gripper:')) {
-                    graspStateColor = '#ba68c8';
-                } else if (graspState === '场景:附着' || graspState === 'scene:attach') {
+                } else if (graspState === '完成') {
                     graspStateColor = '#4caf50';
-                } else if (graspState === '完成' || graspState === 'completed') {
-                    graspStateColor = '#4caf50';
-                } else if (graspState.startsWith('已接收放置任务')) {
-                    graspStateColor = '#64b5f6';
-                }
-                
-                // 如果有详情，显示详情
-                if (graspStateDetail) {
-                    graspStateText += ' (' + graspStateDetail + ')';
                 }
                 
                 graspStateElement.textContent = graspStateText;
                 graspStateElement.style.color = graspStateColor;
                 
-                // 更新lastGraspState（如果不是超时状态）
                 if (graspState !== '__timeout__') {
                     lastGraspState = graspState;
                 }
+            }
+            
+            // 更新任务流程条
+            updateTaskFlow(graspState, graspStateDetail);
+        }
+        
+        // 任务流程状态
+        let taskFlowState = {
+            steps: [],
+            currentStep: -1,
+            maxReachedStep: -1,    // 记录到达过的最大步骤
+            isRunning: false,
+            error: null,
+            startTime: null,
+            lastUpdateTime: null,
+            completedTime: null    // 完成时间，用于延迟隐藏
+        };
+        
+        const FSM_GRASP_STEPS = [
+            { id: 'wait_stable', name: '等待目标稳定', state: 'WAIT_TARGET_STABLE' },
+            { id: 'open_gripper', name: '打开夹爪', state: 'OPEN_GRIPPER' },
+            { id: 'pregrasp', name: '预抓取位置', state: 'PREGRASP' },
+            { id: 'align', name: '对齐姿态', state: 'ALIGN' },
+            { id: 'descend', name: '下探', state: 'DESCEND' },
+            { id: 'close_gripper', name: '闭合夹爪', state: 'CLOSE_GRIPPER' },
+            { id: 'lift', name: '抬升', state: 'LIFT' }
+        ];
+        
+        // 更新任务流程显示
+        function updateTaskFlow(state, detail) {
+            const taskFlowEl = document.getElementById('task-flow');
+            const stepBarEl = document.getElementById('step-bar');
+            const taskProgressEl = document.getElementById('task-progress');
+            const taskErrorEl = document.getElementById('task-error');
+            
+            if (!taskFlowEl || !stepBarEl) return;
+            
+            const now = Date.now();
+            
+            // 解析状态
+            let currentStepName = '';
+            let currentStepIndex = -1;
+            let totalSteps = 0;
+            let isError = false;
+            let isComplete = false;
+            let isRunning = false;
+            
+            if (state.startsWith('FSM:')) {
+                const fsmState = state.substring(4);  // 去掉 "FSM:" 前缀
+                
+                // 映射FSM状态到步骤
+                if (fsmState === '空闲' || fsmState === 'IDLE') {
+                    // FSM空闲
+                    if (taskFlowState.completedTime && (now - taskFlowState.completedTime) < 5000) {
+                        return;
+                    }
+                    taskFlowEl.style.display = 'none';
+                    taskFlowState.isRunning = false;
+                    taskFlowState.steps = [];
+                    taskFlowState.currentStep = -1;
+                    taskFlowState.maxReachedStep = -1;
+                    taskFlowState.completedTime = null;
+                    return;
+                } else if (fsmState === '完成' || fsmState === 'DONE') {
+                    isComplete = true;
+                    isRunning = false;
+                    if (!taskFlowState.completedTime) {
+                        taskFlowState.completedTime = now;
+                    }
+                } else if (fsmState === '安全中止' || fsmState === '中止完成' || fsmState.includes('ABORT')) {
+                    isError = true;
+                    isRunning = false;
+                } else {
+                    // 正在执行某个步骤
+                    isRunning = true;
+                    currentStepName = FSM_STATE_NAMES[fsmState] || fsmState;
+                    
+                    // 查找步骤索引
+                    for (let i = 0; i < FSM_GRASP_STEPS.length; i++) {
+                        if (FSM_GRASP_STEPS[i].name === currentStepName ||
+                            FSM_GRASP_STEPS[i].state === fsmState ||
+                            fsmState.includes(FSM_GRASP_STEPS[i].name)) {
+                            currentStepIndex = i;
+                            break;
+                        }
+                    }
+                }
+            } else if (state.startsWith('执行:')) {
+                currentStepName = state.substring(3);
+                isRunning = true;
+                
+                // 从detail解析进度 "2/5"
+                if (detail) {
+                    const match = detail.match(/(\d+)\/(\d+)/);
+                    if (match) {
+                        currentStepIndex = parseInt(match[1]) - 1;
+                        totalSteps = parseInt(match[2]);
+                    }
+                }
+            } else if (state === '规划成功:执行中') {
+                isRunning = true;
+                currentStepIndex = 0;
+            } else if (state.startsWith('规划中:')) {
+                isRunning = true;
+                currentStepIndex = -1;  // 规划阶段
+            } else if (state === '已接收' || state === '预运动') {
+                isRunning = true;
+                currentStepIndex = -1;
+            } else if (state === '完成') {
+                isComplete = true;
+                isRunning = false;
+                // 记录完成时间
+                if (!taskFlowState.completedTime) {
+                    taskFlowState.completedTime = now;
+                }
+            } else if (state.startsWith('错误:') || state.startsWith('急停:')) {
+                isError = true;
+                isRunning = false;
+            } else if (state === 'idle' || state === '__unknown__' || state === '空闲') {
+                // 空闲状态
+                // 如果刚完成，延迟5秒后再隐藏流程条
+                if (taskFlowState.completedTime && (now - taskFlowState.completedTime) < 5000) {
+                    // 保持显示完成状态
+                    return;
+                }
+                // 隐藏流程条并重置状态
+                taskFlowEl.style.display = 'none';
+                taskFlowState.isRunning = false;
+                taskFlowState.steps = [];
+                taskFlowState.currentStep = -1;
+                taskFlowState.maxReachedStep = -1;
+                taskFlowState.completedTime = null;
+                return;
+            }
+            
+            // 显示流程条
+            if (isRunning || isComplete || isError) {
+                taskFlowEl.style.display = 'block';
+            }
+            
+            // 如果刚开始运行，初始化
+            if (isRunning && !taskFlowState.isRunning) {
+                taskFlowState.isRunning = true;
+                taskFlowState.startTime = now;
+                taskFlowState.currentStep = -1;
+                taskFlowState.maxReachedStep = -1;
+                taskFlowState.error = null;
+                taskFlowState.completedTime = null;
+            }
+            
+            const steps = FSM_GRASP_STEPS;
+            totalSteps = totalSteps || steps.length;
+            
+            // 根据当前步骤名称匹配索引
+            if (currentStepName && currentStepIndex < 0) {
+                for (let i = 0; i < steps.length; i++) {
+                    if (steps[i].name === currentStepName || 
+                        currentStepName.includes(steps[i].name)) {
+                        currentStepIndex = i;
+                        break;
+                    }
+                }
+            }
+            
+            // 防止步骤回退（除非是新任务）
+            // 只允许步骤前进，不允许从高步骤跳回低步骤
+            if (isRunning && currentStepIndex >= 0) {
+                if (currentStepIndex > taskFlowState.maxReachedStep) {
+                    taskFlowState.maxReachedStep = currentStepIndex;
+                }
+                // 如果当前步骤小于已达到的最大步骤，保持在最大步骤
+                if (currentStepIndex < taskFlowState.maxReachedStep) {
+                    currentStepIndex = taskFlowState.maxReachedStep;
+                }
+            }
+            
+            taskFlowState.currentStep = currentStepIndex;
+            taskFlowState.lastUpdateTime = now;
+            
+            // 更新进度显示
+            if (taskProgressEl) {
+                if (isComplete) {
+                    taskProgressEl.textContent = '完成';
+                    taskProgressEl.style.color = '#4caf50';
+                } else if (isError) {
+                    taskProgressEl.textContent = '失败';
+                    taskProgressEl.style.color = '#f44336';
+                } else if (currentStepIndex >= 0) {
+                    taskProgressEl.textContent = `${currentStepIndex + 1}/${totalSteps}`;
+                    taskProgressEl.style.color = '#888';
+                } else {
+                    taskProgressEl.textContent = state.startsWith('规划中:') ? '规划中...' : '准备中...';
+                    taskProgressEl.style.color = '#ffb74d';
+                }
+            }
+            
+            // 生成步骤条HTML
+            let stepsHtml = '';
+            for (let i = 0; i < steps.length; i++) {
+                let stepClass = 'pending';
+                let indicatorClass = 'pending';
+                let indicatorContent = i + 1;
+                
+                if (isComplete) {
+                    stepClass = 'completed';
+                    indicatorClass = 'completed';
+                    indicatorContent = '✓';
+                } else if (isError && i <= (currentStepIndex >= 0 ? currentStepIndex : 0)) {
+                    if (i === (currentStepIndex >= 0 ? currentStepIndex : 0)) {
+                        stepClass = 'failed';
+                        indicatorClass = 'failed';
+                        indicatorContent = '✕';
+                    } else {
+                        stepClass = 'completed';
+                        indicatorClass = 'completed';
+                        indicatorContent = '✓';
+                    }
+                } else if (i < currentStepIndex) {
+                    stepClass = 'completed';
+                    indicatorClass = 'completed';
+                    indicatorContent = '✓';
+                } else if (i === currentStepIndex) {
+                    stepClass = 'active';
+                    indicatorClass = 'active';
+                }
+                
+                stepsHtml += `
+                    <div class="step-item ${stepClass}">
+                        <div class="step-indicator ${indicatorClass}">${indicatorContent}</div>
+                        <div class="step-content">
+                            <div class="step-name">${steps[i].name}</div>
+                        </div>
+                    </div>
+                `;
+            }
+            stepBarEl.innerHTML = stepsHtml;
+            
+            // 显示错误信息
+            if (taskErrorEl) {
+                if (isError) {
+                    taskErrorEl.textContent = state;
+                    taskErrorEl.classList.add('visible');
+                } else {
+                    taskErrorEl.classList.remove('visible');
+                }
+            }
+            
+            // 更新状态
+            taskFlowState.currentStep = currentStepIndex;
+            if (isComplete || isError) {
+                taskFlowState.isRunning = false;
             }
         }
         
@@ -2036,77 +3078,60 @@
                 .then(response => response.json())
                 .then(data => {
                     updateStatus(data);
-                    document.getElementById('connectionStatus').className = 'connection-status connected';
-                    document.getElementById('statusText').textContent = '已连接';
+                    // 更新ROS2连接状态显示
+                    const statusText = document.getElementById('statusText');
+                    const ros2Status = document.getElementById('ros2-status');
+                    if (statusText) statusText.textContent = '已连接';
+                    if (ros2Status) {
+                        const indicator = ros2Status.querySelector('.node-indicator');
+                        if (indicator) indicator.className = 'node-indicator alive';
+                    }
                 })
                 .catch(error => {
-                    document.getElementById('connectionStatus').className = 'connection-status disconnected';
-                    document.getElementById('statusText').textContent = '未连接';
+                    const statusText = document.getElementById('statusText');
+                    const ros2Status = document.getElementById('ros2-status');
+                    if (statusText) statusText.textContent = '未连接';
+                    if (ros2Status) {
+                        const indicator = ros2Status.querySelector('.node-indicator');
+                        if (indicator) indicator.className = 'node-indicator dead';
+                    }
                 });
         }
         
-        // 坐标下发功能
-        function toggleAdvanced() {
-            const controls = document.getElementById('advanced-controls');
-            const text = document.getElementById('toggle-text');
-            if (controls.style.display === 'none' || controls.style.display === '') {
-                controls.style.display = 'block';
-                text.textContent = '隐藏高级选项 (Orientation)';
-            } else {
-                controls.style.display = 'none';
-                text.textContent = '显示高级选项 (Orientation)';
-            }
-        }
+        // 预抓取角度（度，与 cable_grasp grasp.pregrasp_joint*_deg 一致）
+        const PREGRASP_DEG = { 1: 0, 2: -30, 3: -30, 4: 0 };
+        const GRIPPER_OPEN = -1100;   // 夹爪张开（axis5，厂家建议）
+        const GRIPPER_CLOSE = 0;       // 夹爪闭合（axis5）
         
-        function publishPose() {
-            const x = parseFloat(document.getElementById('pose-x').value);
-            const y = parseFloat(document.getElementById('pose-y').value);
-            const z = parseFloat(document.getElementById('pose-z').value);
-            const qx = parseFloat(document.getElementById('pose-qx').value) || 0.0;
-            const qy = parseFloat(document.getElementById('pose-qy').value) || 0.0;
-            const qz = parseFloat(document.getElementById('pose-qz').value) || 0.0;
-            const qw = parseFloat(document.getElementById('pose-qw').value) || 1.0;
-            
-            if (isNaN(x) || isNaN(y) || isNaN(z)) {
-                showMessage('请输入有效的坐标值', 'error');
-                return;
-            }
-            
-            const data = {
-                x: x,
-                y: y,
-                z: z,
-                qx: qx,
-                qy: qy,
-                qz: qz,
-                qw: qw
-            };
-            
-            // 添加调试日志
-            console.log('[网页调试] 发送位姿数据:', data);
-            
-            fetch('/api/publish_pose', {
+        // 关节角度控制：按给定五个轴值发送
+        function sendJointCommandWithValues(axis1, axis2, axis3, axis4, axis5) {
+            const messageBox = document.getElementById('joint-message');
+            messageBox.textContent = '发送中...';
+            messageBox.style.display = 'block';
+            messageBox.className = 'message-box';
+            messageBox.style.color = '#a0b8c8';
+            fetch('/api/send_joint_command', {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify(data)
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    axis1: axis1, axis2: axis2, axis3: axis3, axis4: axis4, axis5: axis5
+                })
             })
-            .then(response => {
-                console.log('[网页调试] 收到响应状态:', response.status, response.statusText);
-                return response.json();
-            })
-            .then(result => {
-                console.log('[网页调试] 收到响应数据:', result);
-                if (result.success) {
-                    showMessage(result.message, 'success');
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    messageBox.textContent = data.message || '命令发送成功';
+                    messageBox.className = 'message-box message-success';
                 } else {
-                    showMessage(result.message || '发布失败', 'error');
+                    messageBox.textContent = data.message || '命令发送失败';
+                    messageBox.className = 'message-box message-error';
                 }
+                messageBox.style.display = 'block';
             })
             .catch(error => {
-                console.error('[网页调试] 请求错误:', error);
-                showMessage('网络错误: ' + error.message, 'error');
+                messageBox.textContent = '发送失败: ' + error.message;
+                messageBox.className = 'message-box message-error';
+                messageBox.style.display = 'block';
             });
         }
         
@@ -2116,38 +3141,32 @@
             const axis3 = parseFloat(document.getElementById('joint3-input').value) || 0.0;
             const axis4 = parseFloat(document.getElementById('joint4-input').value) || 0.0;
             const axis5 = parseFloat(document.getElementById('joint5-input').value) || 0.0;
-            
-            const messageBox = document.getElementById('joint-message');
-            messageBox.textContent = '发送中...';
-            messageBox.style.color = '#a0b8c8';
-            
-            fetch('/api/send_joint_command', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    axis1: axis1,
-                    axis2: axis2,
-                    axis3: axis3,
-                    axis4: axis4,
-                    axis5: axis5
-                })
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data.success) {
-                    messageBox.textContent = data.message || '命令发送成功';
-                    messageBox.style.color = '#4caf50';
-                } else {
-                    messageBox.textContent = data.message || '命令发送失败';
-                    messageBox.style.color = '#f44336';
-                }
-            })
-            .catch(error => {
-                messageBox.textContent = '发送失败: ' + error.message;
-                messageBox.style.color = '#f44336';
-            });
+            sendJointCommandWithValues(axis1, axis2, axis3, axis4, axis5);
+        }
+        
+        function moveToPregrasp() {
+            document.getElementById('joint1-input').value = String(PREGRASP_DEG[1]);
+            document.getElementById('joint2-input').value = String(PREGRASP_DEG[2]);
+            document.getElementById('joint3-input').value = String(PREGRASP_DEG[3]);
+            document.getElementById('joint4-input').value = String(PREGRASP_DEG[4]);
+            document.getElementById('joint5-input').value = String(GRIPPER_OPEN);
+            sendJointCommandWithValues(PREGRASP_DEG[1], PREGRASP_DEG[2], PREGRASP_DEG[3], PREGRASP_DEG[4], GRIPPER_OPEN);
+        }
+        
+        function gripperOpen() {
+            const a1 = parseFloat(document.getElementById('joint1-input').value) || 0;
+            const a2 = parseFloat(document.getElementById('joint2-input').value) || 0;
+            const a3 = parseFloat(document.getElementById('joint3-input').value) || 0;
+            const a4 = parseFloat(document.getElementById('joint4-input').value) || 0;
+            sendJointCommandWithValues(a1, a2, a3, a4, GRIPPER_OPEN);
+        }
+        
+        function gripperClose() {
+            const a1 = parseFloat(document.getElementById('joint1-input').value) || 0;
+            const a2 = parseFloat(document.getElementById('joint2-input').value) || 0;
+            const a3 = parseFloat(document.getElementById('joint3-input').value) || 0;
+            const a4 = parseFloat(document.getElementById('joint4-input').value) || 0;
+            sendJointCommandWithValues(a1, a2, a3, a4, GRIPPER_CLOSE);
         }
         
         function resetJoints() {
@@ -2156,120 +3175,65 @@
             document.getElementById('joint3-input').value = '0.0';
             document.getElementById('joint4-input').value = '0.0';
             document.getElementById('joint5-input').value = '0.0';
-            document.getElementById('joint-message').textContent = '';
+            document.getElementById('joint-message').style.display = 'none';
         }
         
-        function resetPose() {
-            document.getElementById('pose-x').value = '0.25';
-            document.getElementById('pose-y').value = '0.0';
-            document.getElementById('pose-z').value = '0.30';
-            document.getElementById('pose-qx').value = '0.0';
-            document.getElementById('pose-qy').value = '0.0';
-            document.getElementById('pose-qz').value = '0.0';
-            document.getElementById('pose-qw').value = '1.0';
-            showMessage('', 'success');
-        }
+        // 持续发送控制
+        let continuousSendInterval = null;
+        let continuousSendCount = 0;
         
-        function toggleCableAdvanced() {
-            const controls = document.getElementById('cable-advanced-controls');
-            const text = document.getElementById('toggle-cable-text');
-            if (controls.style.display === 'none' || controls.style.display === '') {
-                controls.style.display = 'block';
-                text.textContent = '隐藏高级选项 (Orientation)';
+        function toggleContinuousSend() {
+            const btn = document.getElementById('btn-continuous');
+            if (continuousSendInterval) {
+                // 停止发送
+                clearInterval(continuousSendInterval);
+                continuousSendInterval = null;
+                btn.textContent = '持续发送';
+                btn.style.background = '#ff9800';
+                showCableYawMessage(`已停止持续发送，共发送了 ${continuousSendCount} 次`, 'info');
+                continuousSendCount = 0;
             } else {
-                controls.style.display = 'none';
-                text.textContent = '显示高级选项 (Orientation)';
+                // 开始持续发送（每200ms发送一次，满足5帧稳定要求）
+                continuousSendCount = 0;
+                btn.textContent = '停止发送';
+                btn.style.background = '#f44336';
+                showCableYawMessage('开始持续发送目标坐标...', 'info');
+                
+                // 立即发送一次
+                publishCablePoseWithYaw(true);
+                
+                // 每200ms发送一次
+                continuousSendInterval = setInterval(() => {
+                    publishCablePoseWithYaw(true);
+                }, 200);
             }
         }
         
-        function publishCablePose() {
-            const x = parseFloat(document.getElementById('cable-x').value);
-            const y = parseFloat(document.getElementById('cable-y').value);
-            const z = parseFloat(document.getElementById('cable-z').value);
-            const qx = parseFloat(document.getElementById('cable-qx').value) || 0.0;
-            const qy = parseFloat(document.getElementById('cable-qy').value) || 0.0;
-            const qz = parseFloat(document.getElementById('cable-qz').value) || 0.0;
-            const qw = parseFloat(document.getElementById('cable-qw').value) || 1.0;
-            
-            if (isNaN(x) || isNaN(y) || isNaN(z)) {
-                showCableMessage('请输入有效的坐标值', 'error');
-                return;
-            }
-            
-            const data = {
-                x: x,
-                y: y,
-                z: z,
-                qx: qx,
-                qy: qy,
-                qz: qz,
-                qw: qw
-            };
-            
-            // 添加调试日志
-            console.log('[网页调试] 发送缆绳位置数据:', data);
-            
-            fetch('/api/publish_cable_pose', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify(data)
-            })
-            .then(response => {
-                console.log('[网页调试] 收到响应状态:', response.status, response.statusText);
-                return response.json();
-            })
-            .then(result => {
-                console.log('[网页调试] 收到响应数据:', result);
-                if (result.success) {
-                    showCableMessage(result.message, 'success');
-                } else {
-                    showCableMessage(result.message || '发布失败', 'error');
-                }
-            })
-            .catch(error => {
-                console.error('[网页调试] 请求错误:', error);
-                showCableMessage('网络错误: ' + error.message, 'error');
-            });
-        }
-        
-        function resetCablePose() {
-            document.getElementById('cable-x').value = '0.25';
-            document.getElementById('cable-y').value = '0.0';
-            document.getElementById('cable-z').value = '0.25';
-            document.getElementById('cable-qx').value = '0.0';
-            document.getElementById('cable-qy').value = '0.0';
-            document.getElementById('cable-qz').value = '0.0';
-            document.getElementById('cable-qw').value = '1.0';
-            showCableMessage('', 'success');
-        }
-        
-        function publishCablePoseWithYaw() {
+        // 缆绳抓取（xyz+yaw）
+        function publishCablePoseWithYaw(silent = false) {
             const x = parseFloat(document.getElementById('cable-yaw-x').value);
             const y = parseFloat(document.getElementById('cable-yaw-y').value);
             const z = parseFloat(document.getElementById('cable-yaw-z').value);
             const yawDeg = parseFloat(document.getElementById('cable-yaw-angle').value);
             
             if (isNaN(x) || isNaN(y) || isNaN(z) || isNaN(yawDeg)) {
-                showCableYawMessage('请输入有效的坐标值和yaw角度', 'error');
+                if (!silent) showCableYawMessage('请输入有效的坐标值和yaw角度', 'error');
                 return;
             }
             
-            // 将yaw从度转换为弧度
-            const yawRad = yawDeg * Math.PI / 180.0;
-            
-            const data = {
-                x: x,
-                y: y,
-                z: z,
-                yaw: yawRad
-            };
-            
-            // 添加调试日志
-            console.log('[网页调试] 发送xyz+yaw数据:', data);
-            
-            fetch('/api/publish_cable_pose_with_yaw', {
+            // 非静默（用户点击发送）时：先检查是否处于“空闲且关节静止”，否则弹框提示并不发送
+            function doPublish() {
+                if (continuousSendInterval) continuousSendCount++;
+                const yawRad = yawDeg * Math.PI / 180.0;
+                const reachability = checkWorkspaceReachability(x, y, z);
+                updateTargetMarker(x, y, z, yawRad, reachability.reachable ? null : false, 0.5);
+                createCableObject(x, y, z, yawRad, 0.05, 0.10);
+                if (!reachability.reachable && !silent) {
+                    showCableYawMessage(`警告: 目标点可能超出工作空间 (水平距离: ${reachability.horizontalDist.toFixed(3)}m, 高度: ${reachability.height.toFixed(3)}m)`, 'warning');
+                }
+                const data = { x: x, y: y, z: z, yaw: yawRad };
+                if (!silent) console.log('[网页调试] 发送xyz+yaw数据:', data);
+                fetch('/api/publish_cable_pose_with_yaw', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
@@ -2281,17 +3245,46 @@
                 return response.json();
             })
             .then(result => {
-                console.log('[网页调试] 收到响应数据:', result);
+                if (!silent) {
+                    console.log('[网页调试] 收到响应数据:', result);
+                }
                 if (result.success) {
-                    showCableYawMessage(result.message, 'success');
+                    if (!silent) {
+                        showCableYawMessage(result.message, 'success');
+                    } else if (continuousSendCount % 10 === 0) {
+                        // 持续发送模式下每10次更新一次消息
+                        showCableYawMessage(`持续发送中... 已发送 ${continuousSendCount} 次`, 'info');
+                    }
+                    // 更新marker颜色为"等待IK结果"
+                    updateTargetMarker(x, y, z, yawRad, null, 0.5);
                 } else {
-                    showCableYawMessage(result.message || '发布失败', 'error');
+                    if (!silent) {
+                        showCableYawMessage(result.message || '发布失败', 'error');
+                    }
+                    // 更新marker颜色为红色
+                    updateTargetMarker(x, y, z, yawRad, false, 0);
                 }
             })
             .catch(error => {
-                console.error('[网页调试] 请求错误:', error);
-                showCableYawMessage('网络错误: ' + error.message, 'error');
+                if (!silent) {
+                    console.error('[网页调试] 请求错误:', error);
+                    showCableYawMessage('网络错误: ' + error.message, 'error');
+                }
+                updateTargetMarker(x, y, z, yawRad, false, 0);
             });
+            }
+            // 用户点击发送时先检查“空闲且关节静止”，否则弹框并不发送
+            if (!silent) {
+                fetch('/api/status').then(r => r.json()).then(function(status) {
+                    if (!status.can_accept_new_target) {
+                        showCableYawMessage('机械臂未处于空闲静止状态，请等待后再发送坐标', 'error');
+                        return;
+                    }
+                    doPublish();
+                }).catch(function() { doPublish(); });
+            } else {
+                doPublish();
+            }
         }
         
         function resetCablePoseWithYaw() {
@@ -2313,212 +3306,6 @@
             messageBox.className = 'message-box message-' + type;
             messageBox.style.display = 'block';
             
-            // 3秒后自动隐藏成功消息
-            if (type === 'success') {
-                setTimeout(() => {
-                    messageBox.style.display = 'none';
-                }, 3000);
-            }
-        }
-        
-        // ========== 放置功能（Place）相关函数 ==========
-        function publishPlacePoseWithYaw() {
-            const x = parseFloat(document.getElementById('place-yaw-x').value);
-            const y = parseFloat(document.getElementById('place-yaw-y').value);
-            const z = parseFloat(document.getElementById('place-yaw-z').value);
-            const yawDeg = parseFloat(document.getElementById('place-yaw-angle').value);
-            
-            if (isNaN(x) || isNaN(y) || isNaN(z) || isNaN(yawDeg)) {
-                showPlaceYawMessage('请输入有效的坐标值和yaw角度', 'error');
-                return;
-            }
-            
-            // 将yaw从度转换为弧度
-            const yawRad = yawDeg * Math.PI / 180.0;
-            
-            const data = {
-                x: x,
-                y: y,
-                z: z,
-                yaw: yawRad
-            };
-            
-            console.log('[网页调试] 发送放置位置数据:', data);
-            
-            fetch('/api/publish_place_pose_with_yaw', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify(data)
-            })
-            .then(response => response.json())
-            .then(result => {
-                console.log('[网页调试] 放置响应:', result);
-                if (result.success) {
-                    showPlaceYawMessage(result.message, 'success');
-                } else {
-                    showPlaceYawMessage(result.message || '发布失败', 'error');
-                }
-            })
-            .catch(error => {
-                console.error('[网页调试] 放置请求错误:', error);
-                showPlaceYawMessage('网络错误: ' + error.message, 'error');
-            });
-        }
-        
-        function resetPlacePoseWithYaw() {
-            document.getElementById('place-yaw-x').value = '0.20';
-            document.getElementById('place-yaw-y').value = '0.00';
-            document.getElementById('place-yaw-z').value = '0.30';
-            document.getElementById('place-yaw-angle').value = '0.0';
-            showPlaceYawMessage('', 'success');
-        }
-        
-        function showPlaceYawMessage(message, type) {
-            const messageBox = document.getElementById('place-yaw-message');
-            if (!message) {
-                messageBox.style.display = 'none';
-                return;
-            }
-            
-            messageBox.textContent = message;
-            messageBox.className = 'message-box message-' + type;
-            messageBox.style.display = 'block';
-            
-            if (type === 'success') {
-                setTimeout(() => {
-                    messageBox.style.display = 'none';
-                }, 3000);
-            }
-        }
-        
-        // ========== Pick-and-Place组合任务相关函数 ==========
-        function publishPickAndPlace() {
-            // 获取抓取位置
-            const graspX = parseFloat(document.getElementById('pickplace-grasp-x').value);
-            const graspY = parseFloat(document.getElementById('pickplace-grasp-y').value);
-            const graspZ = parseFloat(document.getElementById('pickplace-grasp-z').value);
-            const graspYawDeg = parseFloat(document.getElementById('pickplace-grasp-yaw').value);
-            
-            // 获取放置位置
-            const placeX = parseFloat(document.getElementById('pickplace-place-x').value);
-            const placeY = parseFloat(document.getElementById('pickplace-place-y').value);
-            const placeZ = parseFloat(document.getElementById('pickplace-place-z').value);
-            const placeYawDeg = parseFloat(document.getElementById('pickplace-place-yaw').value);
-            
-            // 验证输入
-            if (isNaN(graspX) || isNaN(graspY) || isNaN(graspZ) || isNaN(graspYawDeg)) {
-                showPickPlaceMessage('请输入有效的抓取坐标值和yaw角度', 'error');
-                return;
-            }
-            if (isNaN(placeX) || isNaN(placeY) || isNaN(placeZ) || isNaN(placeYawDeg)) {
-                showPickPlaceMessage('请输入有效的放置坐标值和yaw角度', 'error');
-                return;
-            }
-            
-            // 将yaw从度转换为弧度
-            const graspYawRad = graspYawDeg * Math.PI / 180.0;
-            const placeYawRad = placeYawDeg * Math.PI / 180.0;
-            
-            const data = {
-                grasp_x: graspX,
-                grasp_y: graspY,
-                grasp_z: graspZ,
-                grasp_yaw: graspYawRad,
-                place_x: placeX,
-                place_y: placeY,
-                place_z: placeZ,
-                place_yaw: placeYawRad
-            };
-            
-            console.log('[网页调试] 发送Pick-and-Place数据:', data);
-            
-            fetch('/api/publish_pick_and_place', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify(data)
-            })
-            .then(response => response.json())
-            .then(result => {
-                console.log('[网页调试] Pick-and-Place响应:', result);
-                if (result.success) {
-                    showPickPlaceMessage(result.message, 'success');
-                } else {
-                    showPickPlaceMessage(result.message || '发布失败', 'error');
-                }
-            })
-            .catch(error => {
-                console.error('[网页调试] Pick-and-Place请求错误:', error);
-                showPickPlaceMessage('网络错误: ' + error.message, 'error');
-            });
-        }
-        
-        function resetPickAndPlace() {
-            // 重置抓取位置
-            document.getElementById('pickplace-grasp-x').value = '0.25';
-            document.getElementById('pickplace-grasp-y').value = '0.00';
-            document.getElementById('pickplace-grasp-z').value = '0.25';
-            document.getElementById('pickplace-grasp-yaw').value = '0.0';
-            // 重置放置位置
-            document.getElementById('pickplace-place-x').value = '0.20';
-            document.getElementById('pickplace-place-y').value = '0.15';
-            document.getElementById('pickplace-place-z').value = '0.30';
-            document.getElementById('pickplace-place-yaw').value = '0.0';
-            showPickPlaceMessage('', 'success');
-        }
-        
-        function showPickPlaceMessage(message, type) {
-            const messageBox = document.getElementById('pickplace-message');
-            if (!message) {
-                messageBox.style.display = 'none';
-                return;
-            }
-            
-            messageBox.textContent = message;
-            messageBox.className = 'message-box message-' + type;
-            messageBox.style.display = 'block';
-            
-            if (type === 'success') {
-                setTimeout(() => {
-                    messageBox.style.display = 'none';
-                }, 5000);  // Pick-and-Place消息显示5秒
-            }
-        }
-        
-        function showCableMessage(message, type) {
-            const messageBox = document.getElementById('cable-message');
-            if (!message) {
-                messageBox.style.display = 'none';
-                return;
-            }
-            
-            messageBox.textContent = message;
-            messageBox.className = 'message-box message-' + type;
-            messageBox.style.display = 'block';
-            
-            // 3秒后自动隐藏成功消息
-            if (type === 'success') {
-                setTimeout(() => {
-                    messageBox.style.display = 'none';
-                }, 3000);
-            }
-        }
-        
-        function showMessage(message, type) {
-            const messageBox = document.getElementById('pose-message');
-            if (!message) {
-                messageBox.style.display = 'none';
-                return;
-            }
-            
-            messageBox.textContent = message;
-            messageBox.className = 'message-box message-' + type;
-            messageBox.style.display = 'block';
-            
-            // 3秒后自动隐藏成功消息
             if (type === 'success') {
                 setTimeout(() => {
                     messageBox.style.display = 'none';
@@ -2532,7 +3319,6 @@
             const originalText = btn.textContent;
             const originalClass = btn.className;
             
-            // 立即更新按钮状态，提供视觉反馈
             btn.textContent = '急停中...';
             btn.disabled = true;
             
@@ -2545,18 +3331,15 @@
             .then(response => response.json())
             .then(data => {
                 if (data.success) {
-                    // 成功：显示已急停状态
                     btn.textContent = '✓ 已急停';
                     btn.className = 'btn-emergency stopped';
                     btn.disabled = false;
                     
-                    // 2秒后恢复按钮
                     setTimeout(() => {
                         btn.textContent = originalText;
                         btn.className = originalClass;
                     }, 2000);
                 } else {
-                    // 失败：恢复按钮并显示错误
                     btn.textContent = '✗ 急停失败';
                     btn.disabled = false;
                     
@@ -2567,7 +3350,6 @@
             })
             .catch(error => {
                 console.error('急停请求错误:', error);
-                // 网络错误：恢复按钮
                 btn.textContent = '✗ 网络错误';
                 btn.disabled = false;
                 
@@ -2579,31 +3361,181 @@
         
         // 标签页切换
         function switchTab(tabName, tabElement) {
-            // 隐藏所有标签页内容
             document.querySelectorAll('.tab-content').forEach(content => {
                 content.classList.remove('active');
             });
             
-            // 移除所有标签的active类
             document.querySelectorAll('.tab').forEach(tab => {
                 tab.classList.remove('active');
             });
             
-            // 显示选中的标签页内容
             const selectedContent = document.getElementById('tab-' + tabName);
             if (selectedContent) {
                 selectedContent.classList.add('active');
             }
             
-            // 激活选中的标签
             if (tabElement) {
                 tabElement.classList.add('active');
             }
         }
         
-        // 初始化
+        // ========== 3D可视化控制函数 ==========
+        let vizStates = {
+            workspace: false,
+            trajectory: true,
+            target: true
+        };
+        
+        function toggleWorkspace() {
+            vizStates.workspace = !vizStates.workspace;
+            const btn = document.getElementById('btn-workspace');
+            btn.classList.toggle('active', vizStates.workspace);
+            
+            if (workspaceHelper) {
+                workspaceHelper.visible = vizStates.workspace;
+            }
+        }
+        
+        function toggleTrajectory() {
+            vizStates.trajectory = !vizStates.trajectory;
+            const btn = document.getElementById('btn-trajectory');
+            btn.classList.toggle('active', vizStates.trajectory);
+            
+            if (trajectoryLine) {
+                trajectoryLine.visible = vizStates.trajectory && visualizationData.plannedPath.length > 0;
+            }
+            if (executionLine) {
+                executionLine.visible = vizStates.trajectory && visualizationData.executedPath.length > 0;
+            }
+        }
+        
+        function toggleTarget() {
+            vizStates.target = !vizStates.target;
+            const btn = document.getElementById('btn-target');
+            btn.classList.toggle('active', vizStates.target);
+            
+            const visualGroup = scene.getObjectByName('targetVisualization');
+            if (visualGroup) {
+                const markerGroup = visualGroup.getObjectByName('targetMarkerGroup');
+                if (markerGroup && visualizationData.targetPose) {
+                    markerGroup.visible = vizStates.target;
+                }
+            }
+            
+            const cableViz = scene.getObjectByName('cableVisualization');
+            if (cableViz) {
+                cableViz.visible = vizStates.target;
+            }
+            
+            // 显示/隐藏IK状态面板
+            const ikPanel = document.getElementById('ik-status-panel');
+            if (ikPanel) {
+                ikPanel.classList.toggle('visible', vizStates.target && visualizationData.targetPose !== null);
+            }
+        }
+        
+        function clearAllVisualizations() {
+            // 清除目标marker
+            hideTargetMarker();
+            
+            // 清除缆绳
+            hideCableObject();
+            
+            // 清除轨迹
+            clearTrajectories();
+            
+            // 隐藏IK面板
+            const ikPanel = document.getElementById('ik-status-panel');
+            if (ikPanel) {
+                ikPanel.classList.remove('visible');
+            }
+        }
+        
+        // 更新IK状态面板
+        function updateIKStatusPanel(reachable, confidence, targetPose) {
+            const panel = document.getElementById('ik-status-panel');
+            const indicator = document.getElementById('ik-indicator');
+            const statusText = document.getElementById('ik-status-text');
+            const reachableEl = document.getElementById('ik-reachable');
+            const confidenceEl = document.getElementById('ik-confidence');
+            const confidenceFill = document.getElementById('confidence-fill');
+            
+            if (!panel || !vizStates.target) return;
+            
+            panel.classList.add('visible');
+            
+            if (reachable === null) {
+                indicator.className = 'ik-indicator checking';
+                statusText.textContent = 'IK检测中...';
+                reachableEl.textContent = '检测中...';
+                reachableEl.style.color = '#ffeb3b';
+            } else if (reachable) {
+                indicator.className = 'ik-indicator reachable';
+                statusText.textContent = 'IK可达';
+                reachableEl.textContent = '可达';
+                reachableEl.style.color = '#4caf50';
+            } else {
+                indicator.className = 'ik-indicator unreachable';
+                statusText.textContent = 'IK不可达';
+                reachableEl.textContent = '不可达';
+                reachableEl.style.color = '#f44336';
+            }
+            
+            confidenceEl.textContent = (confidence * 100).toFixed(0) + '%';
+            confidenceFill.style.width = (confidence * 100) + '%';
+            
+            // 更新目标坐标显示
+            if (targetPose) {
+                document.getElementById('target-x').textContent = targetPose.x.toFixed(3) + 'm';
+                document.getElementById('target-y').textContent = targetPose.y.toFixed(3) + 'm';
+                document.getElementById('target-z').textContent = targetPose.z.toFixed(3) + 'm';
+                document.getElementById('target-yaw').textContent = (targetPose.yaw * 180 / Math.PI).toFixed(1) + '°';
+            }
+        }
+        
+        // 扩展updateTargetMarker以更新IK面板
+        const originalUpdateTargetMarker = updateTargetMarker;
+        updateTargetMarker = function(x, y, z, yaw, ikReachable, confidence) {
+            originalUpdateTargetMarker(x, y, z, yaw, ikReachable, confidence);
+            updateIKStatusPanel(ikReachable, confidence, {x, y, z, yaw});
+        };
+        
+        // 从后端获取可视化数据（轨迹、IK状态等）
+        function fetchVisualizationData() {
+            fetch('/api/visualization')
+                .then(response => response.json())
+                .then(data => {
+                    // 更新规划轨迹
+                    if (data.planned_trajectory && data.planned_trajectory.length > 0) {
+                        updatePlannedTrajectory(data.planned_trajectory);
+                    }
+                    
+                    // 更新执行轨迹
+                    if (data.executed_trajectory && data.executed_trajectory.length > 0) {
+                        updateExecutedTrajectory(data.executed_trajectory);
+                    }
+                    
+                    // 更新IK状态
+                    if (data.ik_status && visualizationData.targetPose) {
+                        const tp = visualizationData.targetPose;
+                        updateTargetMarker(tp.x, tp.y, tp.z, tp.yaw, 
+                            data.ik_status.reachable, 
+                            data.ik_status.confidence || 0.5);
+                    }
+                })
+                .catch(error => {
+                    // 静默处理，API可能尚未实现
+                });
+        }
+        
+        // 初始化（状态轮询 50ms，角度显示更跟手）
         initScene();
-        setInterval(pollStatus, 100); // 每100ms更新一次状态
+        setInterval(pollStatus, 50);
+        setInterval(fetchVisualizationData, 500);  // 每500ms获取一次可视化数据
+        
+        // 初始化按钮状态
+        document.getElementById('btn-trajectory').classList.add('active');
+        document.getElementById('btn-target').classList.add('active');
     </script>
 </body>
 </html>

@@ -69,14 +69,17 @@ def generate_launch_description():
         )
     )
     
-    # 启动 ros2_control_node
+    # 启动 ros2_control_node（QoS 由 ros2_controllers.yaml 内 qos_overrides 统一配置）
+    # use_sim_time 必须 False，否则 joint_states header.stamp 会为 0，MoveIt 报 "latest received state has time 0.000000"
+    # robot_description 改为从 robot_state_publisher 的 /robot_description 话题获取，避免 Deprecated 提示及未来版本移除参数导致启动失败
     ros2_control_node = Node(
         package="controller_manager",
         executable="ros2_control_node",
         parameters=[
-            moveit_config.robot_description,
             os.path.join(m5_moveit_config_dir, "config", "ros2_controllers.yaml"),
+            {"use_sim_time": False},
         ],
+        remappings=[("~/robot_description", "/robot_description")],
         output="screen",
     )
     
@@ -93,7 +96,7 @@ def generate_launch_description():
                     }
                 }
     
-    # 构建 move_group 参数列表
+    # 构建 move_group 参数列表（与上一版 607e1b8 一致，不叠加超时/QoS 等“修复”参数）
     # 注意：启用MTC的execute_task_solution capability，用于执行MTC规划的任务
     move_group_configuration = {
         "publish_robot_description_semantic": True,
@@ -107,7 +110,7 @@ def generate_launch_description():
         "publish_state_updates": True,
         "publish_transforms_updates": True,
         "monitor_dynamics": False,
-        "planning_scene_monitor.octomap_resolution": 0.0,
+        "planning_scene_monitor.octomap_resolution": 0.1,  # 显式设置，消除「Resolution not specified for Octomap」WARN（无 3D 传感器时仍会报 No 3D sensor plugin，已用 sensors: [] 缓解）
         "planning_scene_monitor.publish_planning_scene": True,
         "planning_scene_monitor.publish_geometry_updates": True,
         "planning_scene_monitor.publish_state_updates": True,
@@ -158,7 +161,8 @@ def generate_launch_description():
     #     ],
     # )
     
-    # 创建 m5_grasp 节点，加载配置文件
+    # 创建 m5_grasp 节点，加载配置文件（与上一版 607e1b8 一致，不传额外超时参数）
+    # 显式 use_sim_time: False，与 ros2_control/move_group 一致，避免 joint_states 时间戳被当成 0
     m5_grasp = Node(
         package="m5_grasp",
         executable="m5_grasp_node",
@@ -169,12 +173,15 @@ def generate_launch_description():
             moveit_config.robot_description_semantic,
             moveit_config.robot_description_kinematics,
             os.path.join(m5_grasp_dir, "config", "cable_grasp.yaml"),  # 加载缆绳抓取配置
+            {"use_sim_time": False},
         ],
         arguments=[
             '--ros-args',
             '--log-level', 'm5_grasp:=debug',
             '--log-level', 'moveit_task_constructor:=debug',
             '--log-level', 'moveit_task_constructor.core:=debug',
+            # 静默「Publisher already registered」：同一节点被 MoveGroupInterface/PlanningSceneInterface 等多处使用时 rcl 会打 WARN
+            '--log-level', 'rcl.logging_rosout:=error',
         ],
     )
     

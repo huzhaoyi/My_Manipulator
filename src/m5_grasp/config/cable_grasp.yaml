@@ -4,33 +4,32 @@
       name: "cable_1"
       diameter: 0.050          # m  缆绳直径（47mm）
       length: 0.020             # m  用于碰撞近似的长度（可以只取局部一段）
-      frame_id: "world"        # 缆绳pose所在坐标系（如果你的视觉输出不同就填视觉frame）
-      shape: "cylinder"        # cylinder 或 capsule（如果你实现）
       center_offset_z: 0.0     # m  cable_pose到圆柱中心的Z偏移（默认0.0表示cable_pose是中心，如需从底部推中心可设为length*0.5）
 
     grasp:
       approach_offset_z: 0.10  # m  预抓取点：目标上方10cm
       descend_distance: 0.08   # m  下压距离（用于cartesian path）
-      lift_distance: 0.06      # m  抬起确认高度
-      max_pos_error: 0.01      # m  抓取允许位置误差
+      lift_distance: 0.06      # m  抬起确认高度（IK 抬升时用于目标位姿 Z 偏移）
+      # 抬升方式：4-DOF 仅用关节/IK，不用笛卡尔。IK 无解时用关节空间偏移（J2/J3 开臂抬升）
+      lift_joint_delta_J2: 0.10   # rad  IK 无解时 Joint2 偏移量（正=抬升方向，约 5.7°）
+      lift_joint_delta_J3: 0.10   # rad  IK 无解时 Joint3 偏移量（正=抬升方向）
       use_cartesian: true
-      eef_step: 0.005          # m  cartesian步长
+      eef_step: 0.015          # m  笛卡尔步长（厂家建议：点要散一点，不要过密，减少抖动；原 0.005 过密）
       jump_threshold: 1.0      # 跳跃阈值（0表示关闭检查，建议使用1.0或2.0以确保安全）
       
-      # MoveIt规划参数
-      planning_time: 15.0      # s  默认规划时间
-      num_planning_attempts: 30 # 规划尝试次数
-      max_velocity_scaling: 0.9  # 最大速度缩放因子
-      max_acceleration_scaling: 0.9  # 最大加速度缩放因子
+      # MoveIt规划参数（优先稳定性和平滑度，不追求速度）
+      planning_time: 30.0      # s  默认规划时间（增加到30秒，确保找到高质量解）
+      num_planning_attempts: 50 # 规划尝试次数（增加到50次，提高成功率）
+      max_velocity_scaling: 0.3  # 最大速度缩放因子（降到30%，更平滑）
+      max_acceleration_scaling: 0.2  # 最大加速度缩放因子（降到20%，减少抖动）
       goal_position_tolerance: 0.01  # m  目标位置容差
       goal_orientation_tolerance: 0.5  # rad  目标姿态容差
-      fallback_planning_time: 2.0  # s  fallback策略的规划时间
+      fallback_planning_time: 5.0  # s  fallback策略的规划时间（增加到5秒）
       
-      # yaw调整参数（用于xyz+yaw抓取模式）
+      # yaw调整参数（用于xyz+yaw抓取模式）；yaw 等同于 joint4（发 90 即 90）
       yaw_offset: 0.0  # rad  yaw偏移量，用于微调夹爪方向
       yaw_flip: false  # bool  是否翻转yaw 180度（遇到方向反了时使用）
-      grasp_yaw_add: 0.0  # rad  线缆切向→夹持方向偏移：yaw=0度时，orientation的Yaw分量=0度，期望joint 4=90度
-      orientation_yaw_offset: -1.5708  # rad  orientation的Yaw分量偏移（-90度）：用于调整Yaw=0度时joint 4的角度，使得joint 4=-90度
+      grasp_yaw_add: 0.0  # rad  默认0：yaw=joint4。若需“夹爪垂直于缆绳”等固定偏移可设为 1.5708（90°）
       z_clearance: 0.002  # m  抓取高度安全余量（默认2mm），避免下压过猛
       
       # yaw合法性检查参数
@@ -62,10 +61,16 @@
       # 全零状态预运动参数（避免从奇异点附近规划）
       auto_move_to_ready: true  # 是否自动移动到预备位置
       ready_joint1: 0.0         # rad  预备位置Joint1
-      ready_joint2: -0.5        # rad  预备位置Joint2（约-30度）
-      ready_joint3: -0.5        # rad  预备位置Joint3（约-30度）
-      ready_joint4: 0.0         # rad  预备位置Joint4
+      ready_joint2: -0.5       # rad  预备位置Joint2（约-30度）
+      ready_joint3: -0.5       # rad  预备位置Joint3（约-30度）
+      ready_joint4: 0.0        # rad  预备位置Joint4
       near_zero_threshold: 0.1  # rad  全零状态判断阈值
+      
+      # 预抓取角度（度，用于网页「到达预抓取位置」按钮，与 ready_joint 一致）
+      pregrasp_joint1_deg: 0.0
+      pregrasp_joint2_deg: -30.0
+      pregrasp_joint3_deg: -30.0
+      pregrasp_joint4_deg: 0.0
       
       # 状态回滚参数
       enable_recovery: true  # 是否启用执行失败后的状态回滚
@@ -88,67 +93,108 @@
       state_sync_wait: 0.1             # s  执行前状态同步等待时间（等待current_state更新，经验值0.1s）
       
       # 机械臂控制频率
-      control_frequency: 20.0          # Hz  机械臂控制频率（发送命令频率）
-      read_frequency: 20.0             # Hz  机械臂状态读取频率
       main_loop_frequency: 20.0        # Hz  main循环频率
+
+    fsm:
+      # 夹爪开/闭后等待时间（ms），应 ≥ 夹爪范围执行时间 7.5s，避免未完成就进入下一状态
+      gripper_wait_ms: 8000   # 8s（夹爪全行程 7.5s，见 trajectory.range_execution_time.gripper）
+      # 闭合后最小停留 (ms)，再允许转 LIFT；2~4s 更保守，避免未夹紧就抬
+      gripper_close_min_dwell_ms: 2500
+      # 打开后最小停留 (ms)，再允许转 PREGRASP，避免臂动时夹爪仍在张开
+      gripper_open_min_dwell_ms: 1500
+      # 机械臂每步完成后按关节角度+速度稳定再进入下一步（超时=失败，不继续）
+      # 放宽阈值以适配 descend 后收敛抖动/速度噪声，避免 10s 判不稳→ABORT_SAFE
+      arm_stable_timeout_ms: 15000   # 最大等待 (ms)，超时则 ABORT_SAFE
+      arm_stable_threshold_rad: 0.004  # 关节角度变化阈值 (rad)，约 0.23°（原 0.002 过紧）
+      arm_stable_window: 8           # 连续满足 pos+vel 的采样次数（8~10 更易达稳）
+      arm_stable_velocity_eps_rad_s: 0.012  # 速度判稳 (rad/s)，max(|vel|) 小于此值（原 0.005 过敏感）
+      arm_stable_min_dwell_ms: 800   # 稳定后最小停留 (ms)，再允许进入下一步
+      # 关节（臂）执行超时：在 task_runner 中 MIN_TIMEOUT=35s（≥ Joint1 全行程 30s），
+      # 执行超时 = max(MIN_TIMEOUT, 轨迹估算时间*1.5)，无需在此单独配置
 
     place:
       approach_offset_z: 0.10  # m  预放置点：目标上方10cm
       descend_distance: 0.08   # m  下压距离（用于放置）
       retreat_distance: 0.06   # m  后退距离（放置后向上移动）
-      max_pos_error: 0.01      # m  放置允许位置误差
-      
-      # MoveIt规划参数（继承grasp的参数，可单独配置）
-      planning_time: 15.0      # s  默认规划时间
-      num_planning_attempts: 30 # 规划尝试次数
-      max_velocity_scaling: 0.9  # 最大速度缩放因子
-      max_acceleration_scaling: 0.9  # 最大加速度缩放因子
-      goal_position_tolerance: 0.01  # m  目标位置容差
-      goal_orientation_tolerance: 0.5  # rad  目标姿态容差
 
     trajectory:
+      # =========================================
+      # 范围执行时间（全行程时间，用于超时/速度估算）
+      # =========================================
+      range_execution_time:
+        joint1: 30.0   # s  Joint1 全行程
+        joint2: 13.0   # s  Joint2 全行程
+        joint3: 13.0   # s  Joint3 全行程
+        joint4: 21.0   # s  Joint4 全行程
+        gripper: 7.5   # s  夹爪全行程（JointGL/JointGR）
+
+      # =========================================
+      # 轨迹规划配置（优先稳定性和平滑度）
+      # =========================================
+      
       # 笛卡尔空间直线插补配置
       use_linear_interpolation: true  # 是否使用精确直线插补（使用TrajectoryPlanner）
-      linear_velocity: 0.1            # m/s  直线插补的默认速度
-      linear_min_duration: 1.0        # s  线性插补最小持续时间
-      linear_step_scale: 0.5          # 线性插补时步长缩放因子（相对于eef_step）
+      linear_velocity: 0.05           # m/s  直线插补的默认速度（降到5cm/s，更平滑）
+      linear_min_duration: 2.0        # s  线性插补最小持续时间（增加到2秒）
+      linear_step_scale: 0.3          # 线性插补时步长缩放因子（更小步长=更多点）
       
       # 笛卡尔路径规划参数
-      cartesian_timeout: 3.0          # s  笛卡尔路径计算默认超时时间（向后兼容）
-      cartesian_timeout_descend: 5.0  # s  下压专用超时时间（默认5.0秒，下压需要更长时间）
-      cartesian_timeout_lift: 3.0     # s  抬起专用超时时间（默认3.0秒）
+      cartesian_timeout: 10.0         # s  笛卡尔路径计算默认超时时间（增加到10秒）
+      cartesian_timeout_descend: 15.0 # s  下压专用超时时间（增加到15秒）
+      cartesian_timeout_lift: 10.0    # s  抬起专用超时时间（增加到10秒）
       cartesian_descend_threshold: 0.95  # descend（下压）路径成功率阈值
       cartesian_lift_threshold: 0.90     # lift（抬起）路径成功率阈值
       cartesian_retry_on_timeout: true  # 超时后是否重试（减少waypoints后重试）
       
-      # 自适应分段参数
+      # 自适应分段参数（增加分段数=更多waypoints=更平滑）
       adaptive_segments: true         # 是否启用自适应分段（根据距离动态调整）
-      min_segments: 2                 # 最小分段数（默认2，生成3个waypoints）
-      max_segments: 4                 # 最大分段数（默认4，生成5个waypoints）
+      min_segments: 5                 # 最小分段数（增加到5，生成6个waypoints）
+      max_segments: 10                # 最大分段数（增加到10，生成11个waypoints）
       
       # 关节空间多项式插值配置
       use_polynomial_interpolation: true  # 是否启用多项式插值轨迹规划
-      polynomial_type: "cubic"             # "cubic" 或 "quintic"
-      polynomial_duration: 2.0            # s  多项式轨迹持续时间
-      polynomial_dt: 0.01                 # s  多项式轨迹时间步长
+      polynomial_type: "quintic"          # "cubic" 或 "quintic"（quintic更平滑，保证加速度连续）
+      polynomial_duration: 5.0            # s  多项式轨迹持续时间（增加到5秒，非常平滑）
+      polynomial_dt: 0.05                 # s  多项式轨迹时间步长（20Hz，匹配机械臂控制频率）
       
       # B样条曲线轨迹规划配置
       use_bspline: true        # 是否启用B样条曲线轨迹规划
       bspline_degree: 3         # B样条阶数（3或4）
-      bspline_duration: 3.0     # s  B样条轨迹持续时间
-      bspline_dt: 0.01         # s  B样条轨迹时间步长
+      bspline_duration: 6.0     # s  B样条轨迹持续时间（增加到6秒，非常平滑）
+      bspline_dt: 0.05         # s  B样条轨迹时间步长（20Hz，匹配机械臂控制频率）
+      
+      # 时间参数化配置（MoveIt Time Parameterization）
+      # 对轨迹进行时间最优重参数化，考虑关节速度/加速度限制
+      use_time_parameterization: true       # 是否启用时间参数化
+      time_param_algorithm: "iterative_spline"  # 算法类型：totg/iterative_spline/iterative_parabolic
+                                            # - totg: 时间最优，速度快但可能轻微偏离路径
+                                            # - iterative_spline: 迭代样条，更平滑（推荐，减少抖动）
+                                            # - iterative_parabolic: 迭代抛物线，梯形速度曲线
+      time_param_velocity_scaling: 0.3      # 速度缩放因子（降到30%，优先平滑）
+      time_param_acceleration_scaling: 0.2  # 加速度缩放因子（降到20%，优先平滑）
+      
+      # 轨迹重采样与步长（厂家建议：机械臂+夹爪所有关节轨迹步长不要太短如1度，约10度发一点，点要散一点减少抖动）
+      use_trajectory_resampling: true       # 是否启用轨迹重采样
+      control_frequency: 10.0               # Hz  降低密度，点更散（原20Hz过密易抖）
+      min_joint_step_deg: 5.0               # 度  相邻点最小步长（3~5° 更平滑，减少末端冲量/判稳过早）
 
     gripper:
-      mode: "position"         # 仅支持位置控制（不支持力控）
-      open_width: 0.030        # m  张开宽度（两指之间）
-      close_width: 0.010       # m  目标闭合宽度（抓细缆绳要小）
-      close_extra: 0.002       # m  额外压紧量（避免夹不住）
-      hold_time_ms: 200        # ms  闭合后保持一下
-      
-      # 夹爪角度映射参数
-      angle_min: 1.01          # rad  闭合时的关节角度（对应axis5=0°）
-      angle_max: -1.01         # rad  张开时的关节角度（对应axis5=-1100°）
-      width_min: 0.0           # m   最小宽度（完全闭合）
+      # 夹爪控制：开/关。实机 axis5 范围 -1100～0（闭合=0，张开=-1100）；JointGL/JointGR 弧度 [-1.01, 1.01] 与 axis5 线性对应
+      open_width: 0.030        # m  张开宽度（用于 widthToJointAngle）
+      close_width: 0.0         # m  闭合时宽度=0 → angle_min
+      close_extra: 0.0         # m  闭合不需额外压紧
+      angle_min: 1.01          # rad  闭合（axis5=0）
+      angle_max: -1.01         # rad  张开（axis5=-1100）
+      width_min: 0.0           # m   最小宽度
+      stable_samples: 10        # 打开/闭合验证：连续采样次数（提高以减少未到位就判稳）
+      stable_threshold_rad: 0.008 # 相邻采样变化小于此(rad)视为不变，约 0.46°
+      stable_velocity_eps_rad_s: 0.01  # 速度判稳 (rad/s)，max(|vel|) 小于此值并持续 N 次才判“到位”
+      stable_interval_ms: 80     # 采样间隔 ms
+      post_execute_wait_ms: 2000 # 写目标后等待 ms，再判“运动开始/数值不变”
+      # 两阶段判稳：先等“数值在变化”（运动开始），再等“数值不变”=到位/夹到（0=闭合 -1100=全开）
+      motion_start_threshold_rad: 0.008  # 判定“开始运动”的最小变化 (rad)，约 0.46°
+      motion_start_timeout_ms: 3000      # 等待运动开始最大 ms，超时仍进入判稳（如已在目标）
+      stable_timeout_ms: 8000            # 等待数值不变最大 ms，闭合超时=未夹到/失败，打开超时仍成功
 
     scene:
       add_collision_object: true
@@ -165,22 +211,6 @@
       reach_radius_margin: 1.2  # 最大伸展半径的余量系数（20%）
       max_height_offset: 0.9     # m  最大高度偏移（base_height + offset）
       min_height_offset: -0.3   # m  最小高度偏移（base_height + offset）
-      
-      # 安全区域（高成功率区域）
-      safe_x_min: 0.20
-      safe_x_max: 0.35
-      safe_y_min: -0.15
-      safe_y_max: 0.15
-      safe_z_min: 0.25
-      safe_z_max: 0.35
-      
-      # 中等成功率区域
-      medium_x_min: 0.15
-      medium_x_max: 0.45
-      medium_y_min: -0.20
-      medium_y_max: 0.20
-      medium_z_min: 0.20
-      medium_z_max: 0.40
       
     tolerance:
       # 浮点数比较阈值

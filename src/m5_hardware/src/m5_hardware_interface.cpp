@@ -10,7 +10,10 @@
 #include <cstring>
 #include <errno.h>
 #include <fcntl.h>
+#include <fstream>
 #include <iomanip>
+#include <sys/stat.h>
+#include <ctime>
 
 #include "hardware_interface/types/hardware_interface_type_values.hpp"
 #include "rclcpp/rclcpp.hpp"
@@ -141,6 +144,8 @@ hardware_interface::CallbackReturn M5HardwareInterface::on_init(
       RCLCPP_INFO_COLOR(rclcpp::get_logger("M5HardwareInterface"), COLOR_CYAN,
         "映射关节 " << joint_name << " -> axis" << joint_axis_mapping[joint_name]);
     }
+    if (joint_name == "JointGL") joint_gl_idx_ = i;
+    else if (joint_name == "JointGR") joint_gr_idx_ = i;
   }
 
   // 安全参数
@@ -178,27 +183,38 @@ hardware_interface::CallbackReturn M5HardwareInterface::on_configure(
 
 std::vector<hardware_interface::StateInterface> M5HardwareInterface::export_state_interfaces()
 {
+  // 按固定顺序导出，使 /joint_states 的 name 为 Joint1, Joint2, Joint3, Joint4, JointGL, JointGR（避免 2,3,1,4 乱序）
+  const std::vector<std::string> desired_order = {"Joint1", "Joint2", "Joint3", "Joint4", "JointGL", "JointGR"};
   std::vector<hardware_interface::StateInterface> state_interfaces;
-  for (size_t i = 0; i < info_.joints.size(); ++i)
+  for (const auto & name : desired_order)
   {
-    state_interfaces.emplace_back(hardware_interface::StateInterface(
-      info_.joints[i].name, hardware_interface::HW_IF_POSITION, &hw_positions_[i]));
-    state_interfaces.emplace_back(hardware_interface::StateInterface(
-      info_.joints[i].name, hardware_interface::HW_IF_VELOCITY, &hw_velocities_[i]));
+    for (size_t i = 0; i < info_.joints.size(); ++i)
+    {
+      if (info_.joints[i].name != name) continue;
+      state_interfaces.emplace_back(hardware_interface::StateInterface(
+        name, hardware_interface::HW_IF_POSITION, &hw_positions_[i]));
+      state_interfaces.emplace_back(hardware_interface::StateInterface(
+        name, hardware_interface::HW_IF_VELOCITY, &hw_velocities_[i]));
+      break;
+    }
   }
-
   return state_interfaces;
 }
 
 std::vector<hardware_interface::CommandInterface> M5HardwareInterface::export_command_interfaces()
 {
+  const std::vector<std::string> desired_order = {"Joint1", "Joint2", "Joint3", "Joint4", "JointGL", "JointGR"};
   std::vector<hardware_interface::CommandInterface> command_interfaces;
-  for (size_t i = 0; i < info_.joints.size(); ++i)
+  for (const auto & name : desired_order)
   {
-    command_interfaces.emplace_back(hardware_interface::CommandInterface(
-      info_.joints[i].name, hardware_interface::HW_IF_POSITION, &hw_commands_[i]));
+    for (size_t i = 0; i < info_.joints.size(); ++i)
+    {
+      if (info_.joints[i].name != name) continue;
+      command_interfaces.emplace_back(hardware_interface::CommandInterface(
+        name, hardware_interface::HW_IF_POSITION, &hw_commands_[i]));
+      break;
+    }
   }
-
   return command_interfaces;
 }
 
@@ -260,47 +276,28 @@ hardware_interface::CallbackReturn M5HardwareInterface::on_deactivate(
 hardware_interface::return_type M5HardwareInterface::read(
   const rclcpp::Time & /*time*/, const rclcpp::Duration & /*period*/)
 {
-  std::lock_guard<std::mutex> lock(data_mutex_);
-  
-  // 从反馈数据更新状态
-  // 如果没有收到反馈，使用命令值作为位置（用于接口验证）
-  
+  // Stamp 说明：joint_states 的 header.stamp 由 joint_state_broadcaster 在 update() 里设为
+  // controller_manager 传入的 time（=本周期“当前时间”）。本接口只提供 position/velocity，不写 stamp。
+  // 若 stamp 停住，多为：(1) read() 持锁过久拖慢 control cycle；(2) 勿用 UDP 包内/对端时间。
+  // UDP→state 处从未用对端时间，仅解析关节位置（见 parse_feedback_json）。
+  //
+  // 持锁尽量短：只复制“最近一帧”和命令快照，在锁外写 hw_positions_，避免长时间阻塞 UDP 写入。
+  std::vector<double> fb_snapshot;
+  std::vector<double> cmd_snapshot;
+  bool has_fb = false;
+  {
+    std::lock_guard<std::mutex> lock(data_mutex_);
+    fb_snapshot = feedback_positions_;
+    cmd_snapshot = hw_commands_;
+    has_fb = has_received_feedback_.load();
+  }
+
   for (size_t i = 0; i < hw_positions_.size(); ++i)
   {
-    if (i < feedback_positions_.size())
-    {
-      // 检查是否收到过有效反馈（使用成员变量标志位）
-      if (!has_received_feedback_.load() && feedback_positions_[i] != 0.0)
-      {
-        has_received_feedback_ = true;
-        RCLCPP_INFO_COLOR(rclcpp::get_logger("M5HardwareInterface"), COLOR_GREEN,
-          "首次收到反馈数据！现在允许发送控制命令。");
-        
-        // 重要：同步上一次命令值，避免因为初始值差异而触发不必要的发送
-        // 这样确保只有在真正有新的命令变化时才会发送
-        for (size_t j = 0; j < hw_commands_.size() && j < hw_prev_commands_.size(); ++j)
-        {
-          hw_prev_commands_[j] = hw_commands_[j];
-        }
-      }
-      
-      // 优先使用反馈数据
-      if (has_received_feedback_.load())
-      {
-        hw_positions_[i] = feedback_positions_[i];
-      }
-      else if (i < hw_commands_.size() && !std::isnan(hw_commands_[i]))
-      {
-        // 还没有收到反馈，使用命令值（用于验证接口）
-        hw_positions_[i] = hw_commands_[i];
-      }
-    }
-    else if (i < hw_commands_.size() && !std::isnan(hw_commands_[i]))
-    {
-      // 没有反馈数组，使用命令值
-      hw_positions_[i] = hw_commands_[i];
-    }
-    // 计算速度（简化版本）
+    if (i < fb_snapshot.size() && has_fb)
+      hw_positions_[i] = fb_snapshot[i];
+    else if (i < cmd_snapshot.size() && !std::isnan(cmd_snapshot[i]))
+      hw_positions_[i] = cmd_snapshot[i];
     hw_velocities_[i] = 0.0;
   }
 
@@ -451,6 +448,27 @@ void M5HardwareInterface::disconnect_from_robot()
   }
 }
 
+namespace
+{
+constexpr const char * GRIPPER_DIRECT_FILE = "/tmp/gripper_direct.txt";
+constexpr int GRIPPER_DIRECT_VALID_SEC = 15;
+constexpr const char * UDP_FEEDBACK_FILE = "/tmp/udp_feedback.txt";  // 供 m5_grasp 直接读 UDP 反馈（夹爪），不依赖 /joint_states
+}
+
+bool M5HardwareInterface::read_gripper_direct_file(double & gl, double & gr)
+{
+  struct stat st;
+  if (stat(GRIPPER_DIRECT_FILE, &st) != 0)
+    return false;
+  std::ifstream f(GRIPPER_DIRECT_FILE);
+  if (!f || !(f >> gl >> gr))
+    return false;
+  time_t now_sec = time(nullptr);
+  if (now_sec - st.st_mtime > GRIPPER_DIRECT_VALID_SEC)
+    return false;
+  return !std::isnan(gl) && !std::isnan(gr) && !std::isinf(gl) && !std::isinf(gr);
+}
+
 bool M5HardwareInterface::send_command(const std::vector<double> & joint_positions)
 {
   if (!connected_ || socket_fd_ < 0)
@@ -520,31 +538,30 @@ bool M5HardwareInterface::send_command(const std::vector<double> & joint_positio
     double joint_gl_pos = joint_positions[joint_gl_idx];
     if (!std::isnan(joint_gl_pos) && !std::isinf(joint_gl_pos))
     {
-      // 反向映射：JointGL [1.01, -1.01] 弧度 -> axis5 [0, -1100] 度
-      // 映射关系：JointGL = 1.01 rad (闭合) → axis5 = 0°, JointGL = -1.01 rad (打开) → axis5 = -1100°
+      // 映射：JointGL [−1.01, 1.01] 弧度 -> axis5 [-1100, 0]（厂家实际范围，之前 -2505~5 为留余）
+      // 闭合 → axis5=0，张开 → axis5=-1100
       const double joint_min = -1.01;    // 弧度（打开）
       const double joint_max = 1.01;      // 弧度（闭合）
-      const double axis5_min = -1100.0;   // 度（打开）
-      const double axis5_max = 0.0;       // 度（闭合）
+      const double axis5_min = -1100.0;   // 范围值（打开，厂家建议）
+      const double axis5_max = 0.0;       // 范围值（闭合）
       
       // 限制在有效范围内
       joint_gl_pos = std::max(joint_min, std::min(joint_max, joint_gl_pos));
       
-      // 线性映射：JointGL [1.01, -1.01] 弧度 -> axis5 [0, -1100] 度
-      // 公式：axis5 = (joint_gl_pos - joint_min) / (joint_max - joint_min) * (axis5_max - axis5_min) + axis5_min
+      // 线性映射：JointGL 弧度 -> axis5 范围值
+      // axis5 = (joint_gl_pos - joint_min) / (joint_max - joint_min) * (axis5_max - axis5_min) + axis5_min
       double axis5_value = (joint_gl_pos - joint_min) / (joint_max - joint_min) * (axis5_max - axis5_min) + axis5_min;
       
-      // 验证映射：当 joint_gl_pos = -1.01 时，应该得到 axis5 = -1100.0°
-      // 当 joint_gl_pos = 1.01 时，应该得到 axis5 = 0.0°
+      // 验证：joint_gl_pos = -1.01 -> axis5 = -2505，joint_gl_pos = 1.01 -> axis5 = 5
       // 添加调试日志（打印夹爪变化）
-      static double last_axis5_sent = 0.0;
-      if (std::abs(axis5_value - last_axis5_sent) > 10.0)  // 变化超过10度才打印
-      {
-        RCLCPP_INFO(rclcpp::get_logger("M5HardwareInterface"),
-          "[夹爪发送] JointGL=%.3f rad (%.1f°) -> axis5=%.1f° (上次: %.1f°)",
-          joint_gl_pos, joint_gl_pos * 180.0 / M_PI, axis5_value, last_axis5_sent);
-        last_axis5_sent = axis5_value;
-      }
+      // static double last_axis5_sent = 0.0;
+      // if (std::abs(axis5_value - last_axis5_sent) > 10.0)  // 变化超过10度才打印
+      // {
+      //   RCLCPP_INFO(rclcpp::get_logger("M5HardwareInterface"),
+      //     "[夹爪发送] JointGL=%.3f rad (%.1f°) -> axis5=%.1f° (上次: %.1f°)",
+      //     joint_gl_pos, joint_gl_pos * 180.0 / M_PI, axis5_value, last_axis5_sent);
+      //   last_axis5_sent = axis5_value;
+      // }
       
       axis_values[4] = axis5_value;  // axis5是第5个元素（索引4）
     }
@@ -578,6 +595,19 @@ bool M5HardwareInterface::send_command(const std::vector<double> & joint_positio
   }
   json_stream << "]}";
   std::string json_str = json_stream.str();
+
+  // 打印发给机械臂的 JSON
+  // arm = axis1~4(度)，夹爪 = axis5(范围值 -1100~0，厂家建议)
+  // {
+  //   static std::string last_printed_json;
+  //   if (last_printed_json != json_str)
+  //   {
+  //     last_printed_json = json_str;
+  //     RCLCPP_INFO_COLOR(rclcpp::get_logger("M5HardwareInterface"), COLOR_CYAN,
+  //       "[发给机械臂] arm(度)=[" << axis_values[0] << ", " << axis_values[1] << ", " << axis_values[2]
+  //       << ", " << axis_values[3] << "] 夹爪(axis5)=" << axis_values[4] << " | JSON: " << json_str);
+  //   }
+  // }
   
   // 使用UDP sendto发送命令
   ssize_t sent = sendto(socket_fd_, json_str.c_str(), json_str.length(), 0,
@@ -591,17 +621,6 @@ bool M5HardwareInterface::send_command(const std::vector<double> & joint_positio
   }
 
   last_successful_comm_ = std::chrono::steady_clock::now();
-  
-  // 调试：打印发送的JSON（每次发送都打印，用于验证）
-  // 日志输出已禁用以减少资源占用
-  // static int debug_send = 0;
-  // debug_send++;
-  // if (debug_send <= 10 || debug_send % 10 == 0)  // 前10次和每10次打印
-  // {
-  //   RCLCPP_INFO_COLOR(rclcpp::get_logger("M5HardwareInterface"), COLOR_BLUE,
-  //     "[UDP发送 #" << debug_send << "] 发送 " << sent << " 字节到 " 
-  //     << robot_ip_ << ":" << robot_port_ << " | JSON: " << json_str);
-  // }
   
   return true;
 }
@@ -708,87 +727,58 @@ bool M5HardwareInterface::parse_feedback_json(const std::string & json_str)
   try
   {
     json root = json::parse(json_str);
-
     if (!root.is_array())
     {
       RCLCPP_WARN_COLOR(rclcpp::get_logger("M5HardwareInterface"), COLOR_YELLOW, "JSON不是数组格式");
       return false;
     }
 
-    std::lock_guard<std::mutex> lock(data_mutex_);
-
-    // 初始化反馈位置（保持上次值，如果还没有值则使用命令值）
-    for (size_t i = 0; i < feedback_positions_.size(); ++i)
+    // 锁外：仅复制“上一帧”用于未出现在本包里的关节，缩短持锁时间
+    std::vector<double> prev;
+    int new_status = 0;
     {
-      if (i < hw_positions_.size() && !std::isnan(hw_positions_[i]))
+      std::lock_guard<std::mutex> lock(data_mutex_);
+      prev = feedback_positions_;
+      new_status = robot_status_;
+      for (size_t i = 0; i < prev.size(); ++i)
       {
-        feedback_positions_[i] = hw_positions_[i];  // 保持上次值
-      }
-      else if (i < hw_commands_.size() && !std::isnan(hw_commands_[i]))
-      {
-        feedback_positions_[i] = hw_commands_[i];  // 使用命令值
+        if (std::isnan(prev[i]) && i < hw_commands_.size() && !std::isnan(hw_commands_[i]))
+          prev[i] = hw_commands_[i];
       }
     }
 
-    // 解析反馈数据
+    // 锁外：解析 UDP JSON → “最新一帧”关节位置。从不使用对端/UDP 包内时间，不写任何 stamp。
+    // joint_states 的 stamp 由 joint_state_broadcaster 在 update() 里用 controller 的 time（本机 ROS 时钟）设置。
+    std::vector<double> new_fb = prev;
     for (const auto & item : root)
     {
       if (item.contains("num") && item.contains("value"))
       {
         int axis_num = item["num"].get<int>();
         double value = item["value"].get<double>();
-        
-        // 处理axis5（夹爪开合度）
         if (axis_num == 5)
         {
-          // axis5范围：-1100° 到 0°（度），映射到JointGL和JointGR（-1.01 到 1.01 弧度）
-          // 映射关系：axis5 = 0° (闭合) → JointGL = 1.01 rad, axis5 = -1100° (打开) → JointGL = -1.01 rad
-          // 线性映射：axis5 [0, -1100] 度 -> JointGL [1.01, -1.01] 弧度
-          // 公式：value_rad = (value - axis5_min) / (axis5_max - axis5_min) * (joint_max - joint_min) + joint_min
-          const double axis5_min = -1100.0;  // 度（打开）
-          const double axis5_max = 0.0;      // 度（闭合）
-          const double joint_min = -1.01;    // 弧度（打开）
-          const double joint_max = 1.01;      // 弧度（闭合）
-          
-          // 线性映射
+          // 实机 axis5：0=闭合，-1100=打开 → JointGL 闭合=1.01、打开=-1.01
+          const double axis5_min = -1100.0, axis5_max = 0.0, joint_min = -1.01, joint_max = 1.01;
           double value_rad = (value - axis5_min) / (axis5_max - axis5_min) * (joint_max - joint_min) + joint_min;
-          // 确保在有效范围内
           value_rad = std::max(joint_min, std::min(joint_max, value_rad));
-          
-          // 夹爪通常是对称的：JointGL和JointGR镜像对称
-          // JointGL = value_rad, JointGR = -value_rad
           for (size_t i = 0; i < info_.joints.size(); ++i)
           {
-            if (info_.joints[i].name == "JointGL")
-            {
-              feedback_positions_[i] = value_rad;
-            }
-            else if (info_.joints[i].name == "JointGR")
-            {
-              feedback_positions_[i] = -value_rad;  // 镜像对称
-            }
+            if (info_.joints[i].name == "JointGL") new_fb[i] = value_rad;
+            else if (info_.joints[i].name == "JointGR") new_fb[i] = -value_rad;
           }
         }
         else
         {
-          // 处理axis1-4（主要关节）
-          // 将度转换为弧度
           double value_rad = value * M_PI / 180.0;
-          
-          // 找到对应的关节
           for (const auto & pair : joint_to_axis_map_)
           {
             if (pair.second == axis_num)
             {
               const std::string & joint_name = pair.first;
-              // 找到关节索引
               for (size_t i = 0; i < info_.joints.size(); ++i)
               {
-                if (info_.joints[i].name == joint_name)
-                {
-                  feedback_positions_[i] = value_rad;
-                  break;
-                }
+                if (info_.joints[i].name == joint_name) { new_fb[i] = value_rad; break; }
               }
               break;
             }
@@ -796,28 +786,41 @@ bool M5HardwareInterface::parse_feedback_json(const std::string & json_str)
         }
       }
       else if (item.contains("status"))
-      {
-        robot_status_ = item["status"].get<int>();
-      }
+        new_status = item["status"].get<int>();
     }
 
-    last_successful_comm_ = std::chrono::steady_clock::now();
-    
-    // 添加调试：打印接收到的反馈（已禁用）
-    // static int recv_count = 0;
-    // recv_count++;
-    // RCLCPP_INFO_COLOR(rclcpp::get_logger("M5HardwareInterface"), COLOR_GREEN,
-    //   "[反馈解析 #" << recv_count << "] A1=" << std::fixed << std::setprecision(2) 
-    //   << (feedback_positions_.size() > 0 ? feedback_positions_[0] * 180.0 / M_PI : 0)
-    //   << "° A2=" << (feedback_positions_.size() > 1 ? feedback_positions_[1] * 180.0 / M_PI : 0)
-    //   << "° A3=" << (feedback_positions_.size() > 2 ? feedback_positions_[2] * 180.0 / M_PI : 0)
-    //   << "° A4=" << (feedback_positions_.size() > 3 ? feedback_positions_[3] * 180.0 / M_PI : 0) << "°");
-    
+    double gl_fb = 0.0, gr_fb = 0.0;
+    {
+      std::lock_guard<std::mutex> lock(data_mutex_);
+      feedback_positions_ = std::move(new_fb);
+      robot_status_ = new_status;
+      last_successful_comm_ = std::chrono::steady_clock::now();
+      if (joint_gl_idx_ < feedback_positions_.size() && joint_gr_idx_ < feedback_positions_.size())
+      {
+        gl_fb = feedback_positions_[joint_gl_idx_];
+        gr_fb = feedback_positions_[joint_gr_idx_];
+      }
+      if (!has_received_feedback_.load())
+      {
+        has_received_feedback_ = true;
+        RCLCPP_INFO_COLOR(rclcpp::get_logger("M5HardwareInterface"), COLOR_GREEN,
+          "首次收到反馈数据！同步命令值到当前位置。");
+        for (size_t j = 0; j < hw_commands_.size() && j < feedback_positions_.size(); ++j)
+        {
+          hw_commands_[j] = feedback_positions_[j];
+          hw_prev_commands_[j] = feedback_positions_[j];
+        }
+      }
+    }
+    // 写 UDP 反馈到文件，供 m5_grasp 夹爪直接读（不依赖 /joint_states）
+    std::ofstream uf(UDP_FEEDBACK_FILE);
+    if (uf)
+      uf << gl_fb << " " << gr_fb << "\n";
     return true;
   }
   catch (const json::exception & e)
   {
-    RCLCPP_WARN_COLOR(rclcpp::get_logger("M5HardwareInterface"), COLOR_YELLOW, 
+    RCLCPP_WARN_COLOR(rclcpp::get_logger("M5HardwareInterface"), COLOR_YELLOW,
       "JSON解析失败: " << e.what());
     return false;
   }
@@ -861,61 +864,40 @@ void M5HardwareInterface::communication_thread()
         }
       }
 
-      // 控制发送频率为10Hz（每100ms发送一次）
+      // 固定周期发送命令（20Hz），不管命令是否变化都发送
+      // 这样可以保证机械臂收到连续稳定的控制信号，避免抖动
       auto now = std::chrono::steady_clock::now();
       bool should_send = false;
       
-      if (command_changed_.load())
+      // 只要已经收到过反馈（机械臂在线），就固定周期发送
+      if (has_received_feedback_.load() && now - last_command_time >= command_interval)
       {
-        // 命令有变化，检查是否到了发送时间
-        if (now - last_command_time >= command_interval)
-        {
-          should_send = true;
-        }
+        should_send = true;
       }
       
       if (should_send)
       {
-        std::lock_guard<std::mutex> lock(data_mutex_);
-        
-        // 打印发送的命令（包括夹爪）用于调试
-        static int send_count = 0;
-        send_count++;
-        if (send_count <= 20 || send_count % 50 == 0)  // 前20次和每50次打印
+        std::vector<double> to_send;
         {
-          // 找到JointGL的索引
-          double joint_gl_val = 0.0;
-          for (size_t i = 0; i < info_.joints.size(); ++i)
-          {
-            if (info_.joints[i].name == "JointGL" && i < hw_commands_.size())
-            {
-              joint_gl_val = hw_commands_[i];
-              break;
-            }
-          }
-          RCLCPP_INFO_COLOR(rclcpp::get_logger("M5HardwareInterface"), COLOR_CYAN,
-            "[命令发送 #" << send_count << "] J1=" << std::fixed << std::setprecision(1) 
-            << (hw_commands_.size() > 0 ? hw_commands_[0] * 180.0 / M_PI : 0)
-            << "° J2=" << (hw_commands_.size() > 1 ? hw_commands_[1] * 180.0 / M_PI : 0)
-            << "° J3=" << (hw_commands_.size() > 2 ? hw_commands_[2] * 180.0 / M_PI : 0)
-            << "° J4=" << (hw_commands_.size() > 3 ? hw_commands_[3] * 180.0 / M_PI : 0) 
-            << "° GL=" << joint_gl_val * 180.0 / M_PI << "°");
+          std::lock_guard<std::mutex> lock(data_mutex_);
+          to_send = hw_commands_;
         }
-        
-        if (send_command(hw_commands_))
+        double gl_override = 0.0, gr_override = 0.0;
+        if (read_gripper_direct_file(gl_override, gr_override) &&
+            joint_gl_idx_ < to_send.size() && joint_gr_idx_ < to_send.size())
         {
-          // 发送成功，清除标志并更新发送时间
-          command_changed_ = false;
+          to_send[joint_gl_idx_] = gl_override;
+          to_send[joint_gr_idx_] = gr_override;
+        }
+        if (send_command(to_send))
+        {
           last_command_time = now;
+          command_changed_ = false;
           last_successful_comm_ = std::chrono::steady_clock::now();
         }
-        else
+        else if (connected_)
         {
-          // 发送失败
-          if (connected_)
-          {
-            RCLCPP_WARN_COLOR(rclcpp::get_logger("M5HardwareInterface"), COLOR_YELLOW, "发送命令失败");
-          }
+          RCLCPP_WARN_COLOR(rclcpp::get_logger("M5HardwareInterface"), COLOR_YELLOW, "发送命令失败");
         }
       }
     }

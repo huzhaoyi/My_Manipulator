@@ -1,0 +1,14 @@
+# M5 Grasp Perception - Python 依赖
+# 
+# 安装: pip3 install -r requirements.txt
+#
+# 注意: ROS2 相关包通过 apt 安装，不在此文件中
+
+# WebSocket (用于模拟器实时通信，可选)
+websockets>=10.0
+
+# 数值计算（可选，用于高级功能）
+numpy>=1.21.0
+
+# 可视化（可选，用于调试）
+matplotlib>=3.5.0

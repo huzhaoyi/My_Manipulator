@@ -67,7 +67,7 @@ ros2 pkg list | grep trac_ik
 
 配置文件已经更新为使用TRAC-IK：
 
-- 文件：`src/m5_configure/config/kinematics.yaml`
+- 文件：`src/m5_moveit_config/config/kinematics.yaml`
 - 配置：
   ```yaml
   arm_group:

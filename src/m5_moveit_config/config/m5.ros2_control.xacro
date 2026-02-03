@@ -1,5 +1,6 @@
 <?xml version="1.0"?>
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+    <!-- name: ros2_control 硬件名，日志中 "Loading hardware 'xxx'" 即此名；传 m5_robot 表示 M5 实机 UDP 接口 -->
     <xacro:macro name="m5_ros2_control" params="name initial_positions_file">
         <xacro:property name="initial_positions" value="${xacro.load_yaml(initial_positions_file)['initial_positions']}"/>
 

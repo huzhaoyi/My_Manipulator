@@ -63,6 +63,9 @@ private:
 
   // JSON解析
   bool parse_feedback_json(const std::string & json_str);
+
+  /** 夹爪直接目标：从 /tmp/gripper_direct.txt 读取 (JointGL, JointGR) 弧度，文件 mtime 在有效期内则使用 */
+  bool read_gripper_direct_file(double & gl, double & gr);
   
   // 参数
   std::string robot_ip_;
@@ -87,6 +90,8 @@ private:
   
   // 关节名称映射（ROS关节名 -> S3轴编号）
   std::map<std::string, int> joint_to_axis_map_;
+  size_t joint_gl_idx_{0};
+  size_t joint_gr_idx_{0};
   
   // 状态反馈
   std::vector<double> feedback_positions_;

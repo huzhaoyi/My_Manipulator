@@ -1,6 +1,9 @@
 # This config file is used by ros2_control
+# use_sim_time 必须为 false，否则 joint_state_broadcaster 的 header.stamp 会为 0，
+# MoveIt 报 "Didn't receive robot state with recent timestamp... latest received state has time 0.000000"
 controller_manager:
   ros__parameters:
+    use_sim_time: false
     update_rate: 100  # Hz
 
     arm_group_controller:
@@ -11,9 +14,12 @@ controller_manager:
 
     joint_state_broadcaster:
       type: joint_state_broadcaster/JointStateBroadcaster
-      ros__parameters:
-        use_local_topics: false  # 使用全局话题，但我们会通过 remap 改变话题名称
+      use_local_topics: false
+      joints: [Joint1, Joint2, Joint3, Joint4, JointGL, JointGR]
+      interfaces: [position, velocity]
 
+    # 注意：上游 joint_state_broadcaster 使用 SystemDefaultsQoS() 创建 publisher，未读取此处 override。
+    # 需从源码构建 ros2_controllers 并将 broadcaster 改为 SensorDataQoS() 后，发布端才会变为 VOLATILE+BEST_EFFORT。
     qos_overrides:
       /parameter_events:
         publisher:
@@ -41,6 +47,10 @@ arm_group_controller:
     state_interfaces:
       - position
       - velocity
+    # 关掉轨迹末端允许非零速度，与实机停稳再进入下一步一致，避免 Action 提前判成功
+    allow_nonzero_velocity_at_trajectory_end: false
+    constraints:
+      stopped_velocity_tolerance: 0.01  # rad/s，末端速度小于此值才判 Goal reached
 gripper_group_controller:
   ros__parameters:
     joints:
@@ -51,3 +61,6 @@ gripper_group_controller:
     state_interfaces:
       - position
       - velocity
+    allow_nonzero_velocity_at_trajectory_end: false
+    constraints:
+      stopped_velocity_tolerance: 0.01

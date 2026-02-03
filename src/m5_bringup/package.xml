@@ -9,8 +9,6 @@
 
   <buildtool_depend>ament_cmake</buildtool_depend>
 
-  <exec_depend>m5_planning</exec_depend>
-  <exec_depend>m5_control</exec_depend>
   <exec_depend>m5_moveit_config</exec_depend>
   <exec_depend>m5_hardware</exec_depend>
   <exec_depend>m5</exec_depend>

@@ -21,6 +21,8 @@ Makefile
 # IDE 文件
 .vscode/
 .idea/
+.cursor/
+.cache/
 *.swp
 *.swo
 *~
@@ -34,6 +36,17 @@ Thumbs.db
 *.bak
 *.log
 
+# Python 虚拟环境
+venv/
+.venv/
+env/
+
+# 编译/工具生成
+compile_commands.json
+
+# 本地下载的 deb 包（可选保留则删此行）
+*.deb
+
 # 编译产物
 *.o
 *.a
@@ -44,3 +57,8 @@ Thumbs.db
 # 其他
 *.orig
 *.rej
+
+# 备份/遗留文件
+*_legacy.*
+*_backup.*
+*_old.*

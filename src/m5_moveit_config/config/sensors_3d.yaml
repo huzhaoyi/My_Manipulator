@@ -1,3 +1,3 @@
 # 传感器配置：禁用 3D 传感器插件（不需要 Octomap）
-# 空配置或空列表表示不使用任何 3D 传感器
-sensors: {}
+# 使用空列表 [] 让 MoveIt 跳过 octomap 更新，避免 "No 3D sensor plugin(s) defined" ERROR
+sensors: []
