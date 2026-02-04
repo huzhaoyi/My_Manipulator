@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <profiles xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
     <!-- 
-        FastDDS 配置文件：限制只使用 ens33 网卡 (192.168.32.135)
+        FastDDS 配置文件：限制只使用 ens33 网卡 (192.168.100.44)
         解决多网卡环境下 action 回包丢失问题
         
         使用方法：
@@ -21,7 +21,7 @@
                 <!-- 本地回环接口，用于本地通信 -->
                 <address>lo</address>
                 <!-- 或者使用 IP 地址 -->
-                <address>192.168.32.135</address>
+                <address>192.168.100.44</address>
                 <address>127.0.0.1</address>
             </interfaceWhiteList>
         </transport_descriptor>
@@ -38,7 +38,7 @@
             <defaultUnicastLocatorList>
                 <locator>
                     <udpv4>
-                        <address>192.168.32.135</address>
+                        <address>192.168.100.44</address>
                     </udpv4>
                 </locator>
             </defaultUnicastLocatorList>

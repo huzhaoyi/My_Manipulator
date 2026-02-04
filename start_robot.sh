@@ -49,7 +49,7 @@ fi
 
 # ========== 关键修复：限制 FastDDS 只使用指定网卡 ==========
 # 问题：多网卡环境下，action 回包可能走错网卡，导致客户端收不到响应
-# 解决：通过 FastDDS 配置文件限制只使用 ens33 (192.168.32.135) 和 lo 网卡
+# 解决：通过 FastDDS 配置文件限制只使用 ens33 (192.168.100.44) 和 lo 网卡
 # 注意：如果遇到 UDP 通信问题，可以设置 DISABLE_FASTDDS_WHITELIST=1 来禁用接口限制
 if [ "${DISABLE_FASTDDS_WHITELIST:-0}" = "1" ]; then
     echo -e "${YELLOW}已禁用 FastDDS 接口限制（使用所有网卡）${NC}"
@@ -104,7 +104,7 @@ case "${1:-grasp}" in
         LAUNCH_FILE="m5_grasp.launch.py"
         echo -e "${GREEN}启动模式: grasp (缆绳抓取)${NC}"
         echo ""
-        echo "提示: 确保M5机械臂已启动并监听 192.168.32.150:7001"
+        echo "提示: 确保M5机械臂已启动并监听 192.168.100.38:7001"
         echo "提示: 接收话题: /cable_pose_with_yaw"
         echo "提示: 按 Ctrl+C 停止"
         echo ""

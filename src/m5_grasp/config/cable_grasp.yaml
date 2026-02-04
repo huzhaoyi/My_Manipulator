@@ -48,29 +48,15 @@
       yaw_candidate_range: 3.1416  # rad  搜索范围（±180°）
       yaw_candidate_step: 0.2618  # rad  搜索步长（15°，约0.2618 rad）
       
-      # 地面安全参数
+      # 地面安全参数（支架测试时可不加地面，视觉可发负 z）
       ground_height: 0.0  # m  地面高度（如果为0，则根据基座位置自动计算）
-      ground_offset_below_base: -0.05  # m  地面在基座下方的偏移（-5cm，基座下方5cm）
+      ground_offset_below_base: -0.35  # m  地面在基座下方的偏移（-5cm，基座下方5cm）
       camera_error_margin: 0.005  # m  相机标定误差余量（5mm）
       min_ground_clearance: 0.010  # m  最小离地安全距离（10mm）
-      add_ground_plane: false  # 是否添加地面碰撞对象
+      add_ground_plane: false  # 是否添加地面碰撞对象（false=去除地面障碍，支架测试、视觉 position.z 可为负）
       
       # 下压距离限制
       max_cartesian_descend_distance: 0.15  # m  单次笛卡尔下压最大距离（15cm）
-      
-      # 全零状态预运动参数（避免从奇异点附近规划）
-      auto_move_to_ready: true  # 是否自动移动到预备位置
-      ready_joint1: 0.0         # rad  预备位置Joint1
-      ready_joint2: -0.5       # rad  预备位置Joint2（约-30度）
-      ready_joint3: -0.5       # rad  预备位置Joint3（约-30度）
-      ready_joint4: 0.0        # rad  预备位置Joint4
-      near_zero_threshold: 0.1  # rad  全零状态判断阈值
-      
-      # 预抓取角度（度，用于网页「到达预抓取位置」按钮，与 ready_joint 一致）
-      pregrasp_joint1_deg: 0.0
-      pregrasp_joint2_deg: -30.0
-      pregrasp_joint3_deg: -30.0
-      pregrasp_joint4_deg: 0.0
       
       # 状态回滚参数
       enable_recovery: true  # 是否启用执行失败后的状态回滚
@@ -111,11 +97,11 @@
       arm_stable_min_dwell_ms: 800   # 稳定后最小停留 (ms)，再允许进入下一步
       # 关节（臂）执行超时：在 task_runner 中 MIN_TIMEOUT=35s（≥ Joint1 全行程 30s），
       # 执行超时 = max(MIN_TIMEOUT, 轨迹估算时间*1.5)，无需在此单独配置
-
-    place:
-      approach_offset_z: 0.10  # m  预放置点：目标上方10cm
-      descend_distance: 0.08   # m  下压距离（用于放置）
-      retreat_distance: 0.06   # m  后退距离（放置后向上移动）
+      # 启动前 joint_states 就绪门槛（避免 current_state 全0/旧值导致先跑再回）
+      joint_states_ready_enabled: true   # 是否在启动抓取前等待 /joint_states 稳定
+      joint_states_ready_min_count: 10   # 至少收到的 joint_states 次数
+      joint_states_ready_max_age_s: 0.3  # 最后一帧不得超过此时间(s)，否则认为断流
+      joint_states_ready_nonzero_eps: 0.01  # 关节不全零：sum(|position|) 需大于此值
 
     trajectory:
       # =========================================
@@ -127,6 +113,14 @@
         joint3: 13.0   # s  Joint3 全行程
         joint4: 21.0   # s  Joint4 全行程
         gripper: 7.5   # s  夹爪全行程（JointGL/JointGR）
+
+      # 执行超时与轨迹时间修复（改此处即可生效，无需改代码）
+      execution_timeout_margin_s: 5.0    # s  最小超时 = range_execution_time.joint1 + 此值
+      min_execution_timeout_s: 35.0      # s  执行超时下限
+      max_execution_timeout_s: 300.0     # s  执行超时上限
+      execution_timeout_safety_factor: 1.5  # 估算时间 × 此系数 作为超时
+      min_segment_time_s: 0.05           # s  轨迹段最小时长（时间修复用）
+      min_arm_trajectory_time_s: 1.0     # s  机械臂轨迹最小总时长（时间修复用）
 
       # =========================================
       # 轨迹规划配置（优先稳定性和平滑度）
@@ -198,20 +192,4 @@
 
     scene:
       add_collision_object: true
-      allow_touch_links: ["LinkGG", "LinkGL", "LinkGR"]  # 允许接触的link
-      
-    workspace:
-      # URDF机械臂参数（用于工作空间检查）
-      base_height: 0.141       # m  Joint1在base_link上的高度
-      link2_length: 0.264      # m  Joint2到Joint3的距离
-      link3_length: 0.143      # m  Joint3到Joint4的距离（Z方向）
-      link4_to_eef: 0.187      # m  Joint4到LinkGG的距离
-      
-      # 工作空间检查参数
-      reach_radius_margin: 1.2  # 最大伸展半径的余量系数（20%）
-      max_height_offset: 0.9     # m  最大高度偏移（base_height + offset）
-      min_height_offset: -0.3   # m  最小高度偏移（base_height + offset）
-      
-    tolerance:
-      # 浮点数比较阈值
-      orientation_epsilon: 1e-6  # 四元数比较阈值
+      allow_touch_links: ["LinkGG", "LinkGL", "LinkGR"]

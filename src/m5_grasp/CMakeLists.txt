@@ -92,7 +92,6 @@ target_include_directories(m5_grasp_mtc_lib
 
 # ========== FSM库（状态机） ==========
 add_library(m5_grasp_fsm_lib
-  src/fsm/target_tracker.cpp
   src/fsm/grasp_fsm.cpp
 )
 ament_target_dependencies(m5_grasp_fsm_lib

@@ -864,16 +864,10 @@ void M5HardwareInterface::communication_thread()
         }
       }
 
-      // 固定周期发送命令（20Hz），不管命令是否变化都发送
-      // 这样可以保证机械臂收到连续稳定的控制信号，避免抖动
+      // 固定周期发送命令（50Hz），不管命令是否变化都发送
+      // 连接后即按周期发送，不依赖“先收到反馈”；否则对方不先发时 UDP 永远发不出去
       auto now = std::chrono::steady_clock::now();
-      bool should_send = false;
-      
-      // 只要已经收到过反馈（机械臂在线），就固定周期发送
-      if (has_received_feedback_.load() && now - last_command_time >= command_interval)
-      {
-        should_send = true;
-      }
+      bool should_send = (now - last_command_time >= command_interval);
       
       if (should_send)
       {

@@ -1217,7 +1217,7 @@
                     <div class="control-box">
                         <h3>缆绳抓取（xyz + yaw）</h3>
                         <p style="font-size: 11px; color: #888; margin-bottom: 10px;">
-                            4DOF工作空间: 水平距离0.08~0.55m, 高度0.15~0.80m
+                            4DOF工作空间: 水平0.08~0.59m, 高度0.15~0.80m（精确: 几何最大水平=0.594m，0.6m/0.7m不可达）
                         </p>
                         <div class="input-container">
                             <div class="input-row">
@@ -2160,11 +2160,11 @@
             const link2Length = 0.264;
             const link3Length = 0.143;
             const link4ToEef = 0.187;
-            const totalReach = link2Length + link3Length + link4ToEef;  // 0.594m
+            const totalReach = link2Length + link3Length + link4ToEef;  // 0.594m（与URDF一致）
             
             // 基本检查
-            // 1. 最大伸展半径（水平）
-            const maxHorizontalReach = totalReach * 0.95;  // 考虑结构约束
+            // 1. 最大水平半径：几何极限=0.594m，0.6m/0.7m不可达；预判用0.95
+            const maxHorizontalReach = Math.min(totalReach, 0.594) * 0.95;
             if (horizontalDist > maxHorizontalReach) {
                 reasons.push('超出最大水平距离');
             }

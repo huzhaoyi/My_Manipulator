@@ -1,0 +1,11 @@
+# 遵循 code_style_specification.md：4 空格缩进，大括号单独占行
+BasedOnStyle: LLVM
+Language: Cpp
+IndentWidth: 4
+ColumnLimit: 100
+BreakBeforeBraces: Allman
+AllowShortBlocksOnASingleLine: false
+AllowShortFunctionsOnASingleLine: None
+AllowShortIfStatementsOnASingleLine: false
+PointerAlignment: Left
+SpaceBeforeParens: ControlStatements
