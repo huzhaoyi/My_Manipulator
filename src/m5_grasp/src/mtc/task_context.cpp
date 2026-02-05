@@ -307,7 +307,9 @@ bool TaskTarget::compute_from_message(const TaskContext& ctx,
     // 2. 保存原始yaw
     cable_yaw = msg.yaw;
 
-    // 3. 构造缆绳位姿（夹爪中心目标）；position.x/y/z 直接使用视觉值，z 可为负（支架/基座下方）
+    // 3. 构造缆绳位姿（夹爪中心目标）
+    // 眼在手外时：msg 的 frame_id=sonar_link，position 为夹爪中心需到达的点在 sonar_link 下的坐标；
+    // 不依赖当前机械臂/夹爪位姿，后续用 TF(sonar_link→world_link) 转到 world，再减 TCP 偏移得 LinkGG 目标。
     cable_pose.header = msg.header;
     cable_pose.pose.position = msg.position;
     cable_pose.pose.orientation = compute_downward_orientation();

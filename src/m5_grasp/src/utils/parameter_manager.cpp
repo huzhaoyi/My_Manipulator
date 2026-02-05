@@ -13,6 +13,7 @@ void ParameterManager::declare_parameters()
     declare_cable_parameters();
     declare_grasp_parameters();
     declare_gripper_parameters();
+    declare_vision_parameters();
     declare_scene_parameters();
     declare_trajectory_parameters();
     declare_fsm_parameters();
@@ -23,6 +24,7 @@ void ParameterManager::load_parameters()
     load_cable_parameters();
     load_grasp_parameters();
     load_gripper_parameters();
+    load_vision_parameters();
     load_scene_parameters();
     load_trajectory_parameters();
     load_fsm_parameters();
@@ -213,6 +215,19 @@ void ParameterManager::load_gripper_parameters()
                    gripper_motion_start_timeout_ms, gripper_stable_timeout_ms);
 }
 
+// ========== Vision (手眼/眼在手外) Parameters ==========
+void ParameterManager::declare_vision_parameters()
+{
+    node_->declare_parameter("vision.position", std::vector<double>{0.0, 0.0, 0.0});
+    node_->declare_parameter("vision.orientation_rpy", std::vector<double>{0.0, 0.0, 0.0});
+}
+
+void ParameterManager::load_vision_parameters()
+{
+    vision_position = node_->get_parameter("vision.position").as_double_array();
+    vision_orientation_rpy = node_->get_parameter("vision.orientation_rpy").as_double_array();
+}
+
 // ========== Scene Parameters ==========
 void ParameterManager::declare_scene_parameters()
 {
@@ -393,6 +408,21 @@ void ParameterManager::log_parameters()
 {
     LOG_NAMED_INFO("params", "参数加载完成");
     LOG_NAMED_INFO("params", "缆绳直径: {:.3f} m, 长度: {:.3f} m", cable_diameter, cable_length);
+
+    // 手眼（眼在手外）配置：sonar_link 相对 world_link 的位姿
+    double vx = (vision_position.size() >= 3) ? vision_position[0] : 0.0;
+    double vy = (vision_position.size() >= 3) ? vision_position[1] : 0.0;
+    double vz = (vision_position.size() >= 3) ? vision_position[2] : 0.0;
+    double vr = (vision_orientation_rpy.size() >= 3) ? vision_orientation_rpy[0] : 0.0;
+    double vp = (vision_orientation_rpy.size() >= 3) ? vision_orientation_rpy[1] : 0.0;
+    double vya = (vision_orientation_rpy.size() >= 3) ? vision_orientation_rpy[2] : 0.0;
+    LOG_NAMED_INFO("params",
+                   "=== 手眼配置(眼在手外) === sonar_link@world: position=({:.4f}, {:.4f}, {:.4f}) m, "
+                   "orientation_rpy(roll,pitch,yaw)=({:.4f}, {:.4f}, {:.4f}) rad "
+                   "({:.2f}, {:.2f}, {:.2f}) deg",
+                   vx, vy, vz, vr, vp, vya, vr * 180.0 / M_PI, vp * 180.0 / M_PI,
+                   vya * 180.0 / M_PI);
+    LOG_NAMED_INFO("params", "====================================");
     LOG_NAMED_INFO("params", "夹爪打开宽度: {:.3f} m, 闭合宽度: {:.3f} m", gripper_open_width,
                    gripper_close_width);
 

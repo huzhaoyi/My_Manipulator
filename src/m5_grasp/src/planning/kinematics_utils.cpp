@@ -117,6 +117,7 @@ geometry_msgs::msg::PoseStamped KinematicsUtils::get_current_pose_safe()
 bool KinematicsUtils::isReachable(double x, double y, double z)
 {
     const double joint2_height = workspace_params_.base_height;
+    const double shoulder_radial_offset = workspace_params_.shoulder_radial_offset;
     const double link2_length = workspace_params_.link2_length;
     const double link3_length = workspace_params_.link3_length;
     const double link4_to_eef = workspace_params_.link4_to_eef;
@@ -129,8 +130,10 @@ bool KinematicsUtils::isReachable(double x, double y, double z)
 
     const double radius = std::sqrt(x * x + y * y);
     const double height_from_joint2 = z - joint2_height;
-    const double distance_from_joint2 =
-        std::sqrt(radius * radius + height_from_joint2 * height_from_joint2);
+    // 末端到肩部(Joint2)距离：肩部在径向偏移 shoulder_radial_offset 处
+    const double dr = radius - shoulder_radial_offset;
+    const double distance_from_shoulder =
+        std::sqrt(dr * dr + height_from_joint2 * height_from_joint2);
 
     // 水平半径上限（预判：用 reach_radius_margin 收紧）
     const double max_radius_effective =
@@ -144,7 +147,7 @@ bool KinematicsUtils::isReachable(double x, double y, double z)
                        x, y, z, radius, workspace_params_.min_radius);
     }
 
-    // 检查水平半径上限（几何极限 max_radius=0.594m，0.6m/0.7m 不可达）
+    // 检查水平半径上限（肩偏+臂长≈0.665 m）
     if (radius > max_radius_effective)
     {
         LOG_NAMED_ERROR("ik",
@@ -153,12 +156,12 @@ bool KinematicsUtils::isReachable(double x, double y, double z)
         return false;
     }
 
-    // 检查最大伸展距离
-    if (distance_from_joint2 > max_reach_with_margin)
+    // 检查末端到肩部的伸展距离（臂长约束）
+    if (distance_from_shoulder > max_reach_with_margin)
     {
         LOG_NAMED_ERROR(
             "ik", "[工作空间] 目标 ({:.3f}, {:.3f}, {:.3f}) 超出最大伸展距离 (d={:.3f} > {:.3f} m)",
-            x, y, z, distance_from_joint2, max_reach_with_margin);
+            x, y, z, distance_from_shoulder, max_reach_with_margin);
         return false;
     }
 
@@ -184,6 +187,7 @@ bool KinematicsUtils::isReachable(double x, double y, double z)
 void KinematicsUtils::adjustToWorkspace(double& x, double& y, double& z)
 {
     const double joint2_height = workspace_params_.base_height;
+    const double shoulder_radial_offset = workspace_params_.shoulder_radial_offset;
     const double link2_length = workspace_params_.link2_length;
     const double link3_length = workspace_params_.link3_length;
     const double link4_to_eef = workspace_params_.link4_to_eef;
@@ -233,27 +237,25 @@ void KinematicsUtils::adjustToWorkspace(double& x, double& y, double& z)
         adjusted = true;
     }
 
-    // 调整超出伸展距离
+    // 调整超出伸展距离（末端到肩部距离不超过臂长）
     double height_from_joint2 = z - joint2_height;
-    double distance_from_joint2 =
-        std::sqrt(radius * radius + height_from_joint2 * height_from_joint2);
+    double dr = radius - shoulder_radial_offset;
+    double distance_from_shoulder = std::sqrt(dr * dr + height_from_joint2 * height_from_joint2);
 
-    if (distance_from_joint2 > max_reach_with_margin)
+    if (distance_from_shoulder > max_reach_with_margin && distance_from_shoulder > 1e-6)
     {
-        double scale = max_reach_with_margin / distance_from_joint2;
-        radius *= scale;
+        double scale = max_reach_with_margin / distance_from_shoulder;
+        dr *= scale;
         height_from_joint2 *= scale;
-
-        if (radius > 0.001)
-        {
-            double original_radius = std::sqrt(x * x + y * y);
-            if (original_radius > 0.001)
-            {
-                x *= (radius / original_radius);
-                y *= (radius / original_radius);
-            }
-        }
+        radius = dr + shoulder_radial_offset;
         z = joint2_height + height_from_joint2;
+
+        double current_radius = std::sqrt(x * x + y * y);
+        if (current_radius > 0.001 && radius > 0.001)
+        {
+            x *= (radius / current_radius);
+            y *= (radius / current_radius);
+        }
         adjusted = true;
     }
 

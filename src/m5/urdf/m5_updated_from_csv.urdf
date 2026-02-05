@@ -13,7 +13,10 @@
     <origin xyz="0 0 0" rpy="0 0 0"/>
   </joint>
   
-  <!-- base_link: root link of the robot (with inertial properties) -->
+  <!-- base_link: root link of the robot (with inertial properties).
+       Origin: 与 world_link 重合；Joint1/BottomJoint 均在 base_link 上方 0.141m，
+       故原点在基座几何的「下方」——通常对应基座底面中心或安装面中心，以 base_link.STL 导出为准。
+       手眼标定时的 world_link 参考点即此原点。 -->
   <link name="base_link">
     <inertial>
       <origin xyz="0 -0.0169316466454037 0.0760137668809909" rpy="0 0 0" />

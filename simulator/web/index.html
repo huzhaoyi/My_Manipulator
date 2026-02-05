@@ -930,6 +930,31 @@
             font-size: 14px;
         }
         
+        .workspace-legend {
+            margin-top: 10px;
+            padding-top: 8px;
+            border-top: 1px solid rgba(100, 120, 140, 0.2);
+            font-size: 11px;
+            color: #a0b8c8;
+        }
+        .workspace-legend-title {
+            margin-bottom: 6px;
+            font-weight: bold;
+            color: #64b5f6;
+        }
+        .workspace-legend-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin: 3px 0;
+        }
+        .workspace-legend-color {
+            width: 12px;
+            height: 12px;
+            border-radius: 2px;
+            flex-shrink: 0;
+        }
+        
         /* IK状态指示面板 */
         .ik-status-panel {
             position: absolute;
@@ -1161,6 +1186,26 @@
                     <span class="icon">✕</span>
                     <span>清除显示</span>
                 </button>
+                <!-- 工作空间图例（勾选工作空间时显示） -->
+                <div id="workspace-legend" class="workspace-legend" style="display: none;">
+                    <div class="workspace-legend-title">末端可达空间 (m)</div>
+                    <div class="workspace-legend-item">水平 0.08~0.67，高度 -0.35~0.81</div>
+                    <div class="workspace-legend-item">臂长 0.594 m，肩偏 0.071 m，水平最大约 0.665 m</div>
+                    <div class="workspace-legend-title">各轴可运行范围</div>
+                    <div class="workspace-legend-item">J1 ±6.2 rad (±355°) · J2/J3 -2.97~0 rad (-170°~0°) · J4 ±6.2 rad (±355°)</div>
+                    <div class="workspace-legend-item">连杆长 L2=0.264 m, L3=0.143 m, L4→EE=0.187 m</div>
+                    <div class="workspace-legend-title">典型坐标点 (world_link, 单位 m)</div>
+                    <div class="workspace-legend-item">水平最长 (0.665, 0, 0.21)</div>
+                    <div class="workspace-legend-item">垂直最长 (0, 0, 0.81)</div>
+                    <div class="workspace-legend-item">垂直最低 (0.08, 0, -0.35)</div>
+                    <div class="workspace-legend-title">边界线</div>
+                    <div class="workspace-legend-item"><span class="workspace-legend-color" style="background: #4488ff;"></span> 外边界 (J2=0)</div>
+                    <div class="workspace-legend-item"><span class="workspace-legend-color" style="background: #88ff44;"></span> 中间 (J2=-1.5)</div>
+                    <div class="workspace-legend-item"><span class="workspace-legend-color" style="background: #ff8844;"></span> 内/下边界 (J2=-2.97)</div>
+                    <div class="workspace-legend-item"><span class="workspace-legend-color" style="background: #44aaff;"></span> 高度环 0 / 0.14 / 0.3 / 0.5 m</div>
+                    <div class="workspace-legend-item"><span class="workspace-legend-color" style="background: #ffff44;"></span> 基座高度环</div>
+                    <div class="workspace-legend-item"><span class="workspace-legend-color" style="background: #ffaa00;"></span> 基座标记</div>
+                </div>
             </div>
             
             <!-- IK状态指示面板 -->
@@ -1217,8 +1262,15 @@
                     <div class="control-box">
                         <h3>缆绳抓取（xyz + yaw）</h3>
                         <p style="font-size: 11px; color: #888; margin-bottom: 10px;">
-                            4DOF工作空间: 水平0.08~0.59m, 高度0.15~0.80m（精确: 几何最大水平=0.594m，0.6m/0.7m不可达）
+                            4DOF工作空间（与主控一致）: 水平 0.08~0.67 m，高度 -0.35~0.81 m。典型坐标：水平最长 (0.665,0,0.21)、垂直最长 (0,0,0.81)、垂直最低 (0.08,0,-0.35)，单位 m、坐标系 world_link。
                         </p>
+                        <div class="input-container" style="margin-bottom: 10px;">
+                            <label class="checkbox-label" style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 12px;">
+                                <input type="checkbox" id="cable-use-vision-frame" style="width: auto;">
+                                <span>眼在手外（使用视觉坐标系）</span>
+                            </label>
+                            <small style="color: #888; font-size: 11px; display: block; margin-top: 4px;">不勾选则目标在 world_link；勾选则目标在 sonar_link，并发布 sonar_link→world_link 的 TF 供节点变换</small>
+                        </div>
                         <div class="input-container">
                             <div class="input-row">
                                 <div class="input-group">
@@ -1253,6 +1305,11 @@
                         </div>
                         
                         <div class="message-box" id="cable-yaw-message"></div>
+                        <div id="eye-to-hand-debug" style="margin-top: 8px; font-size: 11px; color: #8ab; display: none;">
+                            <strong>眼在手外坐标（主控打印）</strong><br>
+                            <span id="eye-to-hand-received">收到 sonar_link: —</span><br>
+                            <span id="eye-to-hand-transformed">转化后 world_link: —</span>
+                        </div>
                     </div>
                 </div>
                 
@@ -1299,10 +1356,11 @@
             
             <div class="info-box">
                 <strong>使用说明:</strong><br>
-                • 缆绳抓取：发送xyz+yaw到 /cable_pose_with_yaw 话题<br>
-                • 关节角度：直接控制5个自由度<br>
-                • 实时显示抓取状态（MTC）<br>
-                • 自动加载STL模型显示机械臂状态
+                • 缆绳抓取：发送 xyz+yaw 到 /cable_pose_with_yaw，坐标系 world_link（单位 m）<br>
+                • 工作空间（与主控一致）：水平 0.08~0.67 m，高度 -0.35~0.81 m；肩偏 0.071 m，臂长 0.594 m<br>
+                • 典型坐标点（world_link）：水平最长 (0.665, 0, 0.21)、垂直最长 (0, 0, 0.81)、垂直最低 (0.08, 0, -0.35)<br>
+                • 关节：J1/J4 ±6.2 rad (±355°)；J2/J3 -2.97~0 rad (-170°~0°)；夹爪 -1100~0（厂家值）<br>
+                • 关节角度：直接控制 5 轴；实时显示抓取状态（MTC）；自动加载 STL 显示机械臂
             </div>
         </div>
     </div>
@@ -1327,7 +1385,8 @@
         let cameraDistance = Math.sqrt(1.2*1.2 + (1.0-0.2)*(1.0-0.2) + 1.2*1.2);
         let cameraRotationY = Math.atan2(1.2, 1.2);
         let cameraRotationX = Math.asin((1.0 - 0.2) / cameraDistance);
-        let targetPosition = new THREE.Vector3(0, 0.2, 0);
+        // 默认视角：使坐标原点(0,0,0)出现在画面左下方，与常见可视化一致
+        let targetPosition = new THREE.Vector3(0.12, 0.22, 0.12);
         
         // ========== 3D可视化对象 ==========
         let targetMarker = null;           // 目标抓取点marker
@@ -1349,16 +1408,15 @@
             cablePose: null,               // {x, y, z, yaw, diameter}
         };
         
-        // 工作空间参数（来自cable_grasp.yaml）
-        // base_height: 0.141m, link2: 0.264m, link3: 0.143m, link4_to_eef: 0.187m
-        // max_reach = (0.264 + 0.143 + 0.187) * 1.2 = 0.7128m
-        // min_height = base_height + min_height_offset = 0.141 + (-0.3) = -0.159m (取0)
-        // max_height = base_height + max_height_offset = 0.141 + 0.9 = 1.041m
+        // 工作空间参数（与URDF一致：Joint2/3 限位 -2.97~0 rad，可下弯至基座下方）
+        // base_height: 0.141m, 肩高 0.141+0.0735=0.2145m, 肩偏 sqrt(0.048^2+0.0525^2)≈0.071m
+        // link2: 0.264m, link3: 0.143m, link4_to_eef: 0.187m, 臂长=0.594m
+        // 全零伸直向上: 高度=0.2145+0.594≈0.81m; 水平伸直: 0.071+0.594≈0.665m
         const workspaceParams = {
             minRadius: 0.08,
-            maxRadius: 0.71,        // (link2 + link3 + link4_to_eef) * margin
-            minHeight: -0.15,       // base_height + min_offset, 但显示从略低于0开始
-            maxHeight: 1.04,        // base_height + max_offset
+            maxRadius: 0.67,        // 肩偏0.071+臂长0.594≈0.665m
+            minHeight: -0.35,       // Joint2/3 下弯可达基座下方
+            maxHeight: 0.82,        // 全零伸直向上约0.81m
             baseHeight: 0.141
         };
         
@@ -1425,20 +1483,18 @@
             const xAxisNeg = new THREE.Line(xAxisNegGeometry, xAxisNegMaterial);
             axesGroup.add(xAxisNeg);
             
-            // ROS Y轴（绿色）- 左方向
-            // 在当前视角下，Y轴应该指向屏幕前方（+Z方向在Three.js中）
+            // ROS Y轴（绿色）- Y正负已修正：+Y 对应 Three.js -Z 方向
             const yAxisPosGeometry = new THREE.BufferGeometry().setFromPoints([
                 new THREE.Vector3(0, 0, 0),
-                new THREE.Vector3(0, 0, axesSize)
+                new THREE.Vector3(0, 0, -axesSize)
             ]);
             const yAxisPosMaterial = new THREE.LineBasicMaterial({ color: 0x44ff44, linewidth: 3 });
             const yAxisPos = new THREE.Line(yAxisPosGeometry, yAxisPosMaterial);
             axesGroup.add(yAxisPos);
             
-            // Y轴负方向
             const yAxisNegGeometry = new THREE.BufferGeometry().setFromPoints([
                 new THREE.Vector3(0, 0, 0),
-                new THREE.Vector3(0, 0, -axesSize)
+                new THREE.Vector3(0, 0, axesSize)
             ]);
             const yAxisNegMaterial = new THREE.LineBasicMaterial({ color: 0x448844, linewidth: 2, opacity: 0.6, transparent: true });
             const yAxisNeg = new THREE.Line(yAxisNegGeometry, yAxisNegMaterial);
@@ -1472,9 +1528,9 @@
             const xArrow = new THREE.ArrowHelper(xArrowDir, xArrowOrigin, arrowLength, 0xff4444, arrowLength * 0.6, arrowRadius);
             axesGroup.add(xArrow);
             
-            // Y轴箭头（指向+Z方向）
-            const yArrowDir = new THREE.Vector3(0, 0, 1).normalize();
-            const yArrowOrigin = new THREE.Vector3(0, 0, axesSize);
+            // Y轴箭头（指向修正后+Y方向，即 Three.js -Z）
+            const yArrowDir = new THREE.Vector3(0, 0, -1).normalize();
+            const yArrowOrigin = new THREE.Vector3(0, 0, -axesSize);
             const yArrow = new THREE.ArrowHelper(yArrowDir, yArrowOrigin, arrowLength, 0x44ff44, arrowLength * 0.6, arrowRadius);
             axesGroup.add(yArrow);
             
@@ -1523,13 +1579,13 @@
             xNegLabel.position.set(-axesSize - 0.1, 0, 0);
             axesGroup.add(xNegLabel);
             
-            // Y轴标签（+Y在前方，-Y在后方）
+            // Y轴标签（Y正负已修正：ROS +Y 对应 Three.js -Z 方向，故-Z侧标+Y，+Z侧标-Y）
             const yPosLabel = createAxisLabel('+Y', '#44ff44');
-            yPosLabel.position.set(0, 0, axesSize + arrowLength + 0.1);
+            yPosLabel.position.set(0, 0, -axesSize - 0.1);
             axesGroup.add(yPosLabel);
             
             const yNegLabel = createAxisLabel('-Y', '#448844');
-            yNegLabel.position.set(0, 0, -axesSize - 0.1);
+            yNegLabel.position.set(0, 0, axesSize + arrowLength + 0.1);
             axesGroup.add(yNegLabel);
             
             // Z轴标签（+Z在上方，-Z在下方）
@@ -1668,14 +1724,11 @@
             const markerGroup = scene.getObjectByName('targetVisualization');
             if (!markerGroup) return;
             
-            // ROS坐标转Three.js坐标
-            // 根据坐标轴定义：
-            // - ROS X轴(红) → Three.js +X（前方）
-            // - ROS Y轴(绿) → Three.js +Z（左方）
-            // - ROS Z轴(蓝) → Three.js +Y（上方）
+            // ROS坐标转Three.js坐标（X/Z不变，Y轴取反以与机械臂/标定一致）
+            // - ROS X → Three.js X；ROS Z → Three.js Y（上）；ROS Y → Three.js -Z（Y正负已修正）
             const threeX = rosX;
             const threeY = rosZ;
-            const threeZ = rosY;
+            const threeZ = -rosY;
             
             // 设置位置
             markerGroup.position.set(threeX, threeY, threeZ);
@@ -1738,19 +1791,14 @@
                 cableObject = null;
             }
             
-            // ROS坐标转Three.js坐标
-            // 根据坐标轴定义：
-            // - ROS X轴(红) → Three.js +X（前方）
-            // - ROS Y轴(绿) → Three.js +Z（左方）
-            // - ROS Z轴(蓝) → Three.js +Y（上方）
-            // 转换关系: threeX = rosX, threeY = rosZ, threeZ = rosY
+            // ROS坐标转Three.js坐标（X/Z不变，Y轴取反以与机械臂/标定一致）
+            // - ROS X → Three.js X；ROS Z → Three.js Y（上）；ROS Y → Three.js -Z
             const threeX = rosX;
             const threeY = rosZ;
-            const threeZ = rosY;
+            const threeZ = -rosY;
             
-            // ROS的yaw是绕Z轴(向上)旋转，在Three.js中对应绕Y轴旋转
-            // 同方向（俯视看，逆时针为正）
-            const threeYaw = rosYaw;
+            // ROS的yaw绕Z轴；Y取反后缆绳yaw取反以保持方向一致
+            const threeYaw = -rosYaw;
             
             const cableGroup = new THREE.Group();
             cableGroup.name = 'cableGroup';
@@ -1826,7 +1874,7 @@
             const link2Length = 0.264;     // Joint2到Joint3的距离
             const link3Length = 0.143;     // Joint3到Joint4的距离
             const link4ToEef = 0.187;      // Joint4到夹爪的距离
-            const joint1Offset = {x: 0, y: 0.0525, z: 0.0735};  // Link1到Joint2的偏移
+            const joint1Offset = {x: -0.048, y: 0.0525, z: 0.0735};  // Link1到Joint2的偏移(URDF)，径向≈0.071m
             
             // 关节限位
             const joint2Min = -2.97;  // rad，向下弯曲最大
@@ -2040,6 +2088,65 @@
             baseMarker.position.y = baseHeight / 2;
             wsGroup.add(baseMarker);
             
+            // 距离标签（米）：水平半径与高度
+            function addDistanceLabel(text, x, y, z) {
+                const canvas = document.createElement('canvas');
+                const ctx = canvas.getContext('2d');
+                canvas.width = 128;
+                canvas.height = 48;
+                ctx.fillStyle = 'rgba(0,0,0,0)';
+                ctx.fillRect(0, 0, 128, 48);
+                ctx.font = 'Bold 28px Arial';
+                ctx.fillStyle = '#cccccc';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(text, 64, 24);
+                const tex = new THREE.CanvasTexture(canvas);
+                tex.needsUpdate = true;
+                const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, alphaTest: 0.1 }));
+                sprite.scale.set(0.12, 0.045, 1);
+                sprite.position.set(x, y, z);
+                wsGroup.add(sprite);
+            }
+            addDistanceLabel('0.2 m', 0.22, 0.02, 0);
+            addDistanceLabel('0.4 m', 0.42, 0.02, 0);
+            addDistanceLabel('0.67 m', 0.69, 0.02, 0);
+            addDistanceLabel('0.3 m', 0.05, 0.32, 0);
+            addDistanceLabel('0.5 m', 0.05, 0.52, 0);
+            
+            // 在工作空间内显示坐标原点（world_link = base_link 原点）
+            const originSphereGeom = new THREE.SphereGeometry(0.025, 24, 24);
+            const originSphereMat = new THREE.MeshPhongMaterial({
+                color: 0xffff00,
+                emissive: 0xaa8800,
+                transparent: true,
+                opacity: 0.95
+            });
+            const originSphere = new THREE.Mesh(originSphereGeom, originSphereMat);
+            originSphere.position.set(0, 0, 0);
+            wsGroup.add(originSphere);
+            const originLabelCanvas = document.createElement('canvas');
+            const originLabelCtx = originLabelCanvas.getContext('2d');
+            originLabelCanvas.width = 256;
+            originLabelCanvas.height = 64;
+            originLabelCtx.fillStyle = 'rgba(0,0,0,0)';
+            originLabelCtx.fillRect(0, 0, 256, 64);
+            originLabelCtx.font = 'Bold 32px Arial';
+            originLabelCtx.fillStyle = '#ffff00';
+            originLabelCtx.textAlign = 'center';
+            originLabelCtx.textBaseline = 'middle';
+            originLabelCtx.fillText('基座原点 (world_link)', 128, 32);
+            const originLabelTex = new THREE.CanvasTexture(originLabelCanvas);
+            originLabelTex.needsUpdate = true;
+            const originSprite = new THREE.Sprite(new THREE.SpriteMaterial({
+                map: originLabelTex,
+                transparent: true,
+                alphaTest: 0.1
+            }));
+            originSprite.scale.set(0.2, 0.05, 1);
+            originSprite.position.set(0.08, 0, 0);
+            wsGroup.add(originSprite);
+            
             // 初始隐藏（可通过UI切换显示）
             wsGroup.visible = false;
             workspaceHelper = wsGroup;
@@ -2107,14 +2214,14 @@
             trajGroup.add(executionLine);
         }
         
-        // 更新规划轨迹
+        // 更新规划轨迹（waypoints 为 ROS 坐标，转 Three.js：x,z,-y）
         function updatePlannedTrajectory(waypoints) {
             if (!trajectoryLine || waypoints.length < 2) {
                 if (trajectoryLine) trajectoryLine.visible = false;
                 return;
             }
             
-            const points = waypoints.map(wp => new THREE.Vector3(wp.x, wp.y, wp.z));
+            const points = waypoints.map(wp => new THREE.Vector3(wp.x, wp.z, -wp.y));
             trajectoryLine.geometry.dispose();
             trajectoryLine.geometry = new THREE.BufferGeometry().setFromPoints(points);
             trajectoryLine.visible = true;
@@ -2122,14 +2229,14 @@
             visualizationData.plannedPath = waypoints;
         }
         
-        // 更新执行轨迹
+        // 更新执行轨迹（waypoints 为 ROS 坐标，转 Three.js：x,z,-y）
         function updateExecutedTrajectory(waypoints) {
             if (!executionLine || waypoints.length < 2) {
                 if (executionLine) executionLine.visible = false;
                 return;
             }
             
-            const points = waypoints.map(wp => new THREE.Vector3(wp.x, wp.y, wp.z));
+            const points = waypoints.map(wp => new THREE.Vector3(wp.x, wp.z, -wp.y));
             executionLine.geometry.dispose();
             executionLine.geometry = new THREE.BufferGeometry().setFromPoints(points);
             executionLine.visible = true;
@@ -2155,16 +2262,18 @@
             const height = z;
             const reasons = [];
             
-            // URDF参数
+            // URDF参数：base 0.141m，Joint2 在 Link1 的 (-0.048, 0.0525, 0.0735)，肩高=0.141+0.0735=0.2145m
             const baseHeight = 0.141;
+            const shoulderHeight = 0.2145;   // Joint1 高 0.141 + Joint2 在 Link1 的 z 0.0735
+            const shoulderRadialOffset = Math.sqrt(0.048 * 0.048 + 0.0525 * 0.0525);  // ≈0.071m
             const link2Length = 0.264;
             const link3Length = 0.143;
             const link4ToEef = 0.187;
-            const totalReach = link2Length + link3Length + link4ToEef;  // 0.594m（与URDF一致）
+            const totalReach = link2Length + link3Length + link4ToEef;  // 0.594m 臂长
             
             // 基本检查
-            // 1. 最大水平半径：几何极限=0.594m，0.6m/0.7m不可达；预判用0.95
-            const maxHorizontalReach = Math.min(totalReach, 0.594) * 0.95;
+            // 1. 最大水平半径：肩偏 + 臂长 = 0.071 + 0.594 ≈ 0.665m
+            const maxHorizontalReach = shoulderRadialOffset + totalReach;
             if (horizontalDist > maxHorizontalReach) {
                 reasons.push('超出最大水平距离');
             }
@@ -2175,11 +2284,11 @@
                 reasons.push('太靠近基座');
             }
             
-            // 3. 高度检查 - 基于实际可达性
-            // 最高点：手臂完全伸直向上
-            const maxHeight = baseHeight + totalReach * 0.9;  // ~0.68m
-            // 最低点：手臂向下弯曲
-            const minHeight = -0.15;  // 可以到达地面以下
+            // 3. 高度检查 - 基于URDF Joint2/3限位(-2.97~0 rad)，下弯可达基座下方
+            // 最高点：全零伸直向上 = 肩高 + 臂长 = 0.2145 + 0.594 ≈ 0.81m
+            const maxHeight = shoulderHeight + totalReach;
+            // 最低点：Joint2=Joint3=-2.97 rad 时 2D 截面末端约 -0.35m
+            const minHeight = -0.35;
             
             if (height > maxHeight) {
                 reasons.push('超出最大高度');
@@ -2188,17 +2297,16 @@
                 reasons.push('低于最小高度');
             }
             
-            // 4. 联合约束：不能同时达到最大水平距离和很高/很低的高度
-            // 这是球形工作空间的特征
-            const distFromShoulder = Math.sqrt(horizontalDist * horizontalDist + 
-                                              (height - baseHeight) * (height - baseHeight));
+            // 4. 联合约束：末端到肩部(Joint2)距离不超过臂长
+            // 肩部在 (0,0,shoulderHeight)，径向可偏约0.071m，简化为球心在基座正上方肩高
+            const distFromShoulder = Math.sqrt(horizontalDist * horizontalDist +
+                                              (height - shoulderHeight) * (height - shoulderHeight));
             if (distFromShoulder > totalReach) {
                 reasons.push('超出总可达距离');
             }
             
-            // 5. Joint2/3只能向下弯曲的约束
-            // 如果高度太高且水平距离太大，可能不可达
-            if (height > baseHeight + 0.4 && horizontalDist > 0.3) {
+            // 5. Joint2/3只能向下弯曲的约束：高且远可能不可达
+            if (height > shoulderHeight + 0.4 && horizontalDist > 0.3) {
                 reasons.push('该高度水平距离受限');
             }
             
@@ -2740,6 +2848,32 @@
                     text.style.color = '#e57373';
                 }
             }
+
+            // ========== 眼在手外：显示收到/转化后坐标（主控发布） ==========
+            const eyeToHandEl = document.getElementById('eye-to-hand-debug');
+            const receivedEl = document.getElementById('eye-to-hand-received');
+            const transformedEl = document.getElementById('eye-to-hand-transformed');
+            if (eyeToHandEl && receivedEl && transformedEl) {
+                const rec = data.eye_to_hand_received;
+                const trans = data.eye_to_hand_transformed;
+                if (rec || trans) {
+                    eyeToHandEl.style.display = 'block';
+                    if (rec) {
+                        const yawDeg = (rec.yaw_rad * 180 / Math.PI).toFixed(1);
+                        receivedEl.textContent = '收到 sonar_link: x=' + rec.x.toFixed(4) + ', y=' + rec.y.toFixed(4) + ', z=' + rec.z.toFixed(4) + ', yaw=' + yawDeg + '°';
+                    } else {
+                        receivedEl.textContent = '收到 sonar_link: —';
+                    }
+                    if (trans) {
+                        const yawDeg = (trans.yaw_rad * 180 / Math.PI).toFixed(1);
+                        transformedEl.textContent = '转化后 ' + (trans.frame_id || 'world_link') + ': x=' + trans.x.toFixed(4) + ', y=' + trans.y.toFixed(4) + ', z=' + trans.z.toFixed(4) + ', yaw=' + yawDeg + '°';
+                    } else {
+                        transformedEl.textContent = '转化后 world_link: —';
+                    }
+                } else {
+                    eyeToHandEl.style.display = 'none';
+                }
+            }
             
             // ========== 按接口返回的真实在线/离线显示，不做假UI ==========
             const nodeHeartbeats = data.node_heartbeats || {};
@@ -3229,9 +3363,11 @@
                 updateTargetMarker(x, y, z, yawRad, reachability.reachable ? null : false, 0.5);
                 createCableObject(x, y, z, yawRad, 0.05, 0.10);
                 if (!reachability.reachable && !silent) {
-                    showCableYawMessage(`警告: 目标点可能超出工作空间 (水平距离: ${reachability.horizontalDist.toFixed(3)}m, 高度: ${reachability.height.toFixed(3)}m)`, 'warning');
+                    showCableYawMessage(`警告: 目标点可能超出工作空间 (当前水平 ${reachability.horizontalDist.toFixed(3)}m, 高度 ${reachability.height.toFixed(3)}m；有效范围：水平 0.08~0.67m, 高度 -0.35~0.81m)`, 'warning');
                 }
-                const data = { x: x, y: y, z: z, yaw: yawRad };
+                const useVisionFrame = document.getElementById('cable-use-vision-frame').checked;
+                const frameId = useVisionFrame ? 'sonar_link' : 'world_link';
+                const data = { x: x, y: y, z: z, yaw: yawRad, frame_id: frameId };
                 if (!silent) console.log('[网页调试] 发送xyz+yaw数据:', data);
                 fetch('/api/publish_cable_pose_with_yaw', {
                 method: 'POST',
@@ -3390,7 +3526,8 @@
             vizStates.workspace = !vizStates.workspace;
             const btn = document.getElementById('btn-workspace');
             btn.classList.toggle('active', vizStates.workspace);
-            
+            const legend = document.getElementById('workspace-legend');
+            if (legend) legend.style.display = vizStates.workspace ? 'block' : 'none';
             if (workspaceHelper) {
                 workspaceHelper.visible = vizStates.workspace;
             }

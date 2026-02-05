@@ -20,7 +20,11 @@
 #include <thread>
 
 #include <geometry_msgs/msg/pose_stamped.hpp>
+#include <geometry_msgs/msg/transform_stamped.hpp>
 #include <moveit/move_group_interface/move_group_interface.h>
+#include <tf2/LinearMath/Quaternion.h>
+#include <tf2_ros/static_transform_broadcaster.h>
+#include <tf2_ros/transform_broadcaster.h>
 #include <moveit/planning_scene_interface/planning_scene_interface.h>
 #include <moveit/robot_state/robot_state.h>
 #include <moveit_task_constructor_msgs/msg/solution.hpp>
@@ -29,6 +33,7 @@
 #include <rclcpp/rclcpp.hpp>
 #include <rcutils/logging.h>
 #include <std_msgs/msg/string.hpp>
+#include <tf2/time.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_listener.h>
@@ -95,6 +100,12 @@ class M5Grasp : public rclcpp::Node
         eef_path_pub_ = this->create_publisher<nav_msgs::msg::Path>(path_topic, 10);
         cable_pose_viz_pub_ = this->create_publisher<geometry_msgs::msg::PoseStamped>(
             "/cable_pose_visualization", 10);
+        cable_pose_eye_to_hand_received_pub_ =
+            this->create_publisher<geometry_msgs::msg::PoseStamped>(
+                "/cable_pose_eye_to_hand_received", 10);
+        cable_pose_eye_to_hand_transformed_pub_ =
+            this->create_publisher<geometry_msgs::msg::PoseStamped>(
+                "/cable_pose_eye_to_hand_transformed", 10);
 
         // 网页3D可视化模块
         web_visualizer_ = std::make_unique<m5_grasp::WebVisualizer>(this, 1.0);
@@ -224,6 +235,16 @@ class M5Grasp : public rclcpp::Node
         param_manager_->declare_parameters();
         param_manager_->load_parameters();
 
+        // 根据配置文件发布手眼（眼在手外）静态 TF：world_link -> sonar_link，供 tf2 自动参与坐标变换
+        vision_static_tf_broadcaster_ = std::make_shared<tf2_ros::StaticTransformBroadcaster>(this);
+        vision_tf_broadcaster_ = std::make_shared<tf2_ros::TransformBroadcaster>(this);
+        publish_vision_static_tf();
+        // 周期性重发（约 10 Hz）：/tf_static + /tf 双发，确保后启动的 tf2_echo 能从 /tf 收到（避免 /tf_static 的 transient_local 在某些环境下未生效）
+        vision_static_tf_timer_ =
+            this->create_wall_timer(std::chrono::milliseconds(100),
+                                    std::bind(&M5Grasp::publish_vision_static_tf, this),
+                                    cb_work_);
+
         // 去除地面障碍：不添加地面碰撞体时，移除场景中已有的 ground_plane（支架测试、视觉可发负 z）
         if (!param_manager_->add_ground_plane && planning_scene_)
         {
@@ -257,6 +278,15 @@ class M5Grasp : public rclcpp::Node
         init_task_context();
         gripper_controller_->set_joint_state_diag(task_context_.joint_state_diag);
 
+        // 主控收到 /joint_states 后转发到 /web/joint_states，供后端/网页使用（RELIABLE+TRANSIENT_LOCAL，后启动的仿真器也能拿到最新一帧）
+        {
+            auto pub_qos = rclcpp::QoS(rclcpp::KeepLast(1))
+                               .reliability(rclcpp::ReliabilityPolicy::Reliable)
+                               .durability(rclcpp::DurabilityPolicy::TransientLocal);
+            web_joint_states_pub_ =
+                this->create_publisher<sensor_msgs::msg::JointState>("/web/joint_states", pub_qos);
+        }
+
         // 自建 /joint_states 诊断订阅，供 IK 种子、夹爪当前位置、FSM 判稳等使用。
         // 发布端（joint_state_broadcaster）为 best_effort，订阅必须 best_effort 才能收到；若需
         // reliable 判稳，需改广播端或增加中继。
@@ -289,6 +319,11 @@ class M5Grasp : public rclcpp::Node
                         {
                             d.last_velocity.clear();
                         }
+                    }
+                    // 主控收到数据后转发给后端/网页（仿真器订阅 /web/joint_states）
+                    if (web_joint_states_pub_)
+                    {
+                        web_joint_states_pub_->publish(*msg);
                     }
                 },
                 sub_opts);
@@ -421,6 +456,47 @@ class M5Grasp : public rclcpp::Node
         moveit_initialized_ = true;
     }
 
+    void publish_vision_static_tf()
+    {
+        if (!param_manager_ || !vision_static_tf_broadcaster_)
+        {
+            return;
+        }
+        const std::string parent_frame = "world_link";
+        const std::string child_frame = "sonar_link";
+        const auto& pos = param_manager_->vision_position;
+        const auto& rpy = param_manager_->vision_orientation_rpy;
+        double px = (pos.size() >= 3) ? pos[0] : 0.0;
+        double py = (pos.size() >= 3) ? pos[1] : 0.0;
+        double pz = (pos.size() >= 3) ? pos[2] : 0.0;
+        double roll = (rpy.size() >= 3) ? rpy[0] : 0.0;
+        double pitch = (rpy.size() >= 3) ? rpy[1] : 0.0;
+        double yaw = (rpy.size() >= 3) ? rpy[2] : 0.0;
+
+        geometry_msgs::msg::TransformStamped t;
+        t.header.stamp = this->now();
+        t.header.frame_id = parent_frame;
+        t.child_frame_id = child_frame;
+        t.transform.translation.x = px;
+        t.transform.translation.y = py;
+        t.transform.translation.z = pz;
+        tf2::Quaternion q;
+        q.setRPY(roll, pitch, yaw);
+        t.transform.rotation.x = q.x();
+        t.transform.rotation.y = q.y();
+        t.transform.rotation.z = q.z();
+        t.transform.rotation.w = q.w();
+
+        vision_static_tf_broadcaster_->sendTransform(t);
+        if (vision_tf_broadcaster_)
+        {
+            vision_tf_broadcaster_->sendTransform(t);
+        }
+        LOG_THROTTLE_INFO(10000,
+                          "手眼静态 TF: {} -> {}, position=({:.4f}, {:.4f}, {:.4f}) m",
+                          parent_frame.c_str(), child_frame.c_str(), px, py, pz);
+    }
+
   private:
     /**
      * @brief 声明所有参数
@@ -506,6 +582,77 @@ class M5Grasp : public rclcpp::Node
         if (!moveit_initialized_ || !grasp_fsm_)
         {
             return;
+        }
+
+        // 眼在手外：打印并发布 收到坐标 / 转化后坐标（sonar_link -> world_link）
+        const bool is_eye_to_hand = (msg->header.frame_id == "sonar_link");
+        if (is_eye_to_hand)
+        {
+            LOG_NAMED_INFO("m5_grasp",
+                           "[眼在手外] 收到坐标 sonar_link: x={:.4f}, y={:.4f}, z={:.4f}, "
+                           "yaw={:.2f} rad ({:.1f}°)",
+                           msg->position.x, msg->position.y, msg->position.z, msg->yaw,
+                           msg->yaw * 180.0 / M_PI);
+
+            if (cable_pose_eye_to_hand_received_pub_)
+            {
+                geometry_msgs::msg::PoseStamped received;
+                received.header = msg->header;
+                received.pose.position = msg->position;
+                tf2::Quaternion q;
+                q.setRPY(0, 0, msg->yaw);
+                received.pose.orientation = tf2::toMsg(q);
+                cable_pose_eye_to_hand_received_pub_->publish(received);
+            }
+
+            if (tf_buffer_ && !planning_frame_.empty())
+            {
+                try
+                {
+                    geometry_msgs::msg::PoseStamped pose_in_camera;
+                    pose_in_camera.header = msg->header;
+                    if (pose_in_camera.header.frame_id.empty())
+                    {
+                        pose_in_camera.header.frame_id = "sonar_link";
+                    }
+                    pose_in_camera.pose.position = msg->position;
+                    tf2::Quaternion q;
+                    q.setRPY(0, 0, msg->yaw);
+                    pose_in_camera.pose.orientation = tf2::toMsg(q);
+
+                    std::chrono::nanoseconds timeout_ns(100000000);
+                    tf2::Duration timeout(timeout_ns);
+                    if (tf_buffer_->canTransform(planning_frame_, pose_in_camera.header.frame_id,
+                                                 tf2::TimePointZero, timeout))
+                    {
+                        geometry_msgs::msg::TransformStamped transform = tf_buffer_->lookupTransform(
+                            planning_frame_, pose_in_camera.header.frame_id, tf2::TimePointZero);
+                        geometry_msgs::msg::PoseStamped pose_in_world;
+                        tf2::doTransform(pose_in_camera, pose_in_world, transform);
+                        pose_in_world.header.frame_id = planning_frame_;
+
+                        LOG_NAMED_INFO("m5_grasp",
+                                       "[眼在手外] 转化后坐标 {}: x={:.4f}, y={:.4f}, z={:.4f}",
+                                       planning_frame_.c_str(), pose_in_world.pose.position.x,
+                                       pose_in_world.pose.position.y,
+                                       pose_in_world.pose.position.z);
+
+                        if (cable_pose_eye_to_hand_transformed_pub_)
+                        {
+                            cable_pose_eye_to_hand_transformed_pub_->publish(pose_in_world);
+                        }
+                    }
+                    else
+                    {
+                        LOG_NAMED_WARN("m5_grasp",
+                                       "[眼在手外] TF 不可用，无法计算转化后坐标");
+                    }
+                }
+                catch (const tf2::TransformException& ex)
+                {
+                    LOG_NAMED_WARN("m5_grasp", "[眼在手外] 坐标转换失败: {}", ex.what());
+                }
+            }
         }
 
         // 获取当前FSM状态
@@ -665,10 +812,15 @@ class M5Grasp : public rclcpp::Node
     rclcpp::Subscription<m5_msgs::msg::CablePoseWithYaw>::SharedPtr cable_pose_sub_;
     rclcpp::Subscription<std_msgs::msg::String>::SharedPtr emergency_stop_sub_;
     rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr joint_states_diag_sub_;
+    rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr web_joint_states_pub_;
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr state_publisher_;
     rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr marker_pub_;
     rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr eef_path_pub_;
     rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr cable_pose_viz_pub_;
+    rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr
+        cable_pose_eye_to_hand_received_pub_;
+    rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr
+        cable_pose_eye_to_hand_transformed_pub_;
 
     rclcpp::TimerBase::SharedPtr fsm_timer_;
 
@@ -683,6 +835,9 @@ class M5Grasp : public rclcpp::Node
     // ========== TF ==========
     std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
     std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
+    std::shared_ptr<tf2_ros::StaticTransformBroadcaster> vision_static_tf_broadcaster_;
+    std::shared_ptr<tf2_ros::TransformBroadcaster> vision_tf_broadcaster_;
+    rclcpp::TimerBase::SharedPtr vision_static_tf_timer_;
 
     // ========== MoveIt ==========
     std::shared_ptr<moveit::planning_interface::MoveGroupInterface> move_group_;

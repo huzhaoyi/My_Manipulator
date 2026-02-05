@@ -113,6 +113,12 @@ class ParameterManager
     /** 等待“数值不变”的最大时间 (ms)，闭合超时=未夹到/失败，打开超时仍成功 */
     int gripper_stable_timeout_ms;
 
+    // ========== Vision (手眼/眼在手外) Parameters ==========
+    /** sonar_link 相对 world_link 的位置 (m)，[x, y, z] */
+    std::vector<double> vision_position;
+    /** sonar_link 相对 world_link 的姿态 (rad)，roll, pitch, yaw */
+    std::vector<double> vision_orientation_rpy;
+
     // ========== Scene Parameters ==========
     bool add_collision_object;
     std::vector<std::string> allow_touch_links;
@@ -192,6 +198,7 @@ class ParameterManager
     void declare_cable_parameters();
     void declare_grasp_parameters();
     void declare_gripper_parameters();
+    void declare_vision_parameters();
     void declare_scene_parameters();
     void declare_trajectory_parameters();
     void declare_fsm_parameters();
@@ -199,6 +206,7 @@ class ParameterManager
     void load_cable_parameters();
     void load_grasp_parameters();
     void load_gripper_parameters();
+    void load_vision_parameters();
     void load_scene_parameters();
     void load_trajectory_parameters();
     void load_fsm_parameters();

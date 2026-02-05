@@ -15,17 +15,18 @@ import math
 import atexit
 import signal
 import sys
+import os
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 from socketserver import UDPServer
-import os
 
 # ROS2相关导入
 try:
     import rclpy
     from rclpy.node import Node
     from rclpy.qos import QoSDurabilityPolicy, QoSProfile, QoSReliabilityPolicy
-    from geometry_msgs.msg import PoseStamped
+    from geometry_msgs.msg import PoseStamped, TransformStamped
     from sensor_msgs.msg import JointState
+    from tf2_ros import StaticTransformBroadcaster
     from std_msgs.msg import String
     from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
     from builtin_interfaces.msg import Duration
@@ -92,6 +93,9 @@ class RobotSimulator:
             'message': ''
         }
         self.current_target = None  # 当前目标位置
+        # 眼在手外调试：主控发布的 收到(sonar_link) / 转化后(world_link) 坐标
+        self.eye_to_hand_received = None   # {'x', 'y', 'z', 'yaw_rad', 'stamp'}
+        self.eye_to_hand_transformed = None  # {'x', 'y', 'z', 'yaw_rad', 'frame_id'}
         
         # UDP socket（仅用于发送状态到机械臂）
         self.udp_socket = None
@@ -111,10 +115,16 @@ class RobotSimulator:
         self.cable_pose_with_yaw_publisher = None
         self.emergency_stop_publisher = None
         self.joint_state_subscriber = None
+        self.web_joint_state_subscriber = None  # 主控转发的 /web/joint_states，供网页关节显示
         self.arm_trajectory_publisher = None
         self.gripper_trajectory_publisher = None
         self.grasp_state_subscriber = None
-        
+        self.static_tf_broadcaster = None  # 眼在手外时发布 sonar_link -> world_link
+        # 眼在手外：sonar_link 相对 world_link 的位姿（从 cable_grasp.yaml vision 读取）
+        self._vision_position = [0.0, 0.0, 0.0]
+        self._vision_orientation_rpy = [0.0, 0.0, 0.0]
+        self._load_vision_config()
+
         if ROS2_AVAILABLE:
             try:
                 if not rclpy.ok():
@@ -135,7 +145,10 @@ class RobotSimulator:
                 # 急停发布器
                 self.emergency_stop_publisher = self.ros2_node.create_publisher(String, '/emergency_stop', 10)
                 print(f"✓ 急停发布器已创建: /emergency_stop")
-                
+
+                # 静态 TF 广播（眼在手外时发布 sonar_link -> world_link）
+                self.static_tf_broadcaster = StaticTransformBroadcaster(self.ros2_node)
+
                 time.sleep(0.1)
                 
                 # 订阅关节状态
@@ -151,6 +164,18 @@ class RobotSimulator:
                     '/joint_states',
                     self.joint_state_callback,
                     joint_states_qos,
+                )
+                # 主控收到 /joint_states 后转发到 /web/joint_states（RELIABLE+TRANSIENT_LOCAL），后端订阅此话题即可拿到关节数据
+                web_joint_qos = QoSProfile(
+                    depth=1,
+                    reliability=QoSReliabilityPolicy.RELIABLE,
+                    durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
+                )
+                self.web_joint_state_subscriber = self.ros2_node.create_subscription(
+                    JointState,
+                    '/web/joint_states',
+                    self.joint_state_callback,
+                    web_joint_qos,
                 )
                 
                 # 订阅抓取状态
@@ -202,6 +227,19 @@ class RobotSimulator:
                     self.ik_status_callback,
                     10
                 )
+                # 眼在手外调试：主控发布的 收到/转化后 坐标（仅眼在手外时发布）
+                self.eye_to_hand_received_subscriber = self.ros2_node.create_subscription(
+                    PoseStamped,
+                    '/cable_pose_eye_to_hand_received',
+                    self.eye_to_hand_received_callback,
+                    10
+                )
+                self.eye_to_hand_transformed_subscriber = self.ros2_node.create_subscription(
+                    PoseStamped,
+                    '/cable_pose_eye_to_hand_transformed',
+                    self.eye_to_hand_transformed_callback,
+                    10
+                )
                 
                 print("✓ ROS2节点已初始化")
                 if M5_MSGS_AVAILABLE:
@@ -209,14 +247,16 @@ class RobotSimulator:
                 print("  - 发布话题: /emergency_stop")
                 print("  - 发布话题: /arm_group_controller/joint_trajectory")
                 print("  - 发布话题: /gripper_group_controller/joint_trajectory")
-                print("  - 订阅话题: /joint_states, /grasp_state, /hardware_state")
+                print("  - 订阅话题: /joint_states, /web/joint_states（主控转发）, /grasp_state, /hardware_state")
                 print("  - 订阅话题: /heartbeat/m5_grasp（主控存活）")
                 print("  - 订阅话题: /visualization/planned_path, /visualization/ik_status")
+                print("  - 订阅话题: /cable_pose_eye_to_hand_received, /cable_pose_eye_to_hand_transformed")
             except Exception as e:
                 print(f"警告: ROS2初始化失败: {e}")
                 self.ros2_node = None
                 self.cable_pose_with_yaw_publisher = None
                 self.joint_state_subscriber = None
+                self.web_joint_state_subscriber = None
                 self.arm_trajectory_publisher = None
                 self.gripper_trajectory_publisher = None
         
@@ -473,10 +513,10 @@ class RobotSimulator:
         self.last_grasp_state_received_time = time.time()
         self.grasp_state = state
         self.grasp_state_detail = detail
-        if detail:
-            print(f"[ROS2抓取状态] 收到状态: {state} ({detail})")
-        else:
-            print(f"[ROS2抓取状态] 收到状态: {state}")
+        # if detail:
+        #     print(f"[ROS2抓取状态] 收到状态: {state} ({detail})")
+        # else:
+        #     print(f"[ROS2抓取状态] 收到状态: {state}")
         
         # 处理急停状态
         if state.startswith('急停:'):
@@ -575,6 +615,39 @@ class RobotSimulator:
             print(f"[可视化] IK状态更新: {reachable_str}, 置信度: {self.ik_status['confidence']:.2f}")
         except Exception as e:
             print(f"[可视化] 解析IK状态失败: {e}")
+
+    def _yaw_from_quaternion(self, qx, qy, qz, qw):
+        """从四元数提取绕 Z 的 yaw (rad)"""
+        import math
+        siny_cosp = 2.0 * (qw * qz + qx * qy)
+        cosy_cosp = 1.0 - 2.0 * (qy * qy + qz * qz)
+        return math.atan2(siny_cosp, cosy_cosp)
+
+    def eye_to_hand_received_callback(self, msg):
+        """眼在手外：主控发布的 收到坐标 (sonar_link)"""
+        yaw = self._yaw_from_quaternion(
+            msg.pose.orientation.x, msg.pose.orientation.y,
+            msg.pose.orientation.z, msg.pose.orientation.w)
+        self.eye_to_hand_received = {
+            'x': msg.pose.position.x,
+            'y': msg.pose.position.y,
+            'z': msg.pose.position.z,
+            'yaw_rad': yaw,
+            'frame_id': msg.header.frame_id,
+        }
+
+    def eye_to_hand_transformed_callback(self, msg):
+        """眼在手外：主控发布的 转化后坐标 (world_link)"""
+        yaw = self._yaw_from_quaternion(
+            msg.pose.orientation.x, msg.pose.orientation.y,
+            msg.pose.orientation.z, msg.pose.orientation.w)
+        self.eye_to_hand_transformed = {
+            'x': msg.pose.position.x,
+            'y': msg.pose.position.y,
+            'z': msg.pose.position.z,
+            'yaw_rad': yaw,
+            'frame_id': msg.header.frame_id,
+        }
     
     def get_visualization_data(self):
         """获取可视化数据"""
@@ -585,8 +658,70 @@ class RobotSimulator:
             'current_target': self.current_target
         }
     
-    def publish_cable_pose_with_yaw(self, x, y, z, yaw):
-        """发布带yaw的缆绳位置到 /cable_pose_with_yaw 话题"""
+    def _load_vision_config(self):
+        """从 cable_grasp.yaml 读取 vision 位姿（眼在手外 sonar_link 相对 world_link）"""
+        try:
+            import yaml
+        except ImportError:
+            return
+        config_paths = [
+            os.environ.get('M5_GRASP_CONFIG'),
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'src', 'm5_grasp', 'config', 'cable_grasp.yaml'),
+            os.path.join(os.getcwd(), 'src', 'm5_grasp', 'config', 'cable_grasp.yaml'),
+        ]
+        for path in config_paths:
+            if not path or not os.path.isfile(path):
+                continue
+            try:
+                with open(path, 'r', encoding='utf-8') as f:
+                    data = yaml.safe_load(f)
+                params = data.get('/**', {}).get('ros__parameters', data) if isinstance(data, dict) else {}
+                vision = (params or data).get('vision') if isinstance(params or data, dict) else None
+                if vision:
+                    self._vision_position = list(vision.get('position', [0.0, 0.0, 0.0]))[:3]
+                    self._vision_orientation_rpy = list(vision.get('orientation_rpy', [0.0, 0.0, 0.0]))[:3]
+                    print(f"[配置] 已加载 vision 位姿: position={self._vision_position}, rpy={self._vision_orientation_rpy} (来自 {path})")
+                break
+            except Exception as e:
+                print(f"[配置] 读取 {path} 失败: {e}")
+                continue
+
+    @staticmethod
+    def _rpy_to_quaternion(roll, pitch, yaw):
+        """Roll-Pitch-Yaw (rad) 转四元数 (x, y, z, w)"""
+        cr, sr = math.cos(roll / 2), math.sin(roll / 2)
+        cp, sp = math.cos(pitch / 2), math.sin(pitch / 2)
+        cy, sy = math.cos(yaw / 2), math.sin(yaw / 2)
+        w = cr * cp * cy + sr * sp * sy
+        x = sr * cp * cy - cr * sp * sy
+        y = cr * sp * cy + sr * cp * sy
+        z = cr * cp * sy - sr * sp * cy
+        return (x, y, z, w)
+
+    def _publish_camera_to_world_tf(self):
+        """发布静态 TF sonar_link -> world_link（位姿由 cable_grasp.yaml vision 配置）"""
+        if not ROS2_AVAILABLE or self.static_tf_broadcaster is None:
+            return
+        t = TransformStamped()
+        t.header.stamp = self.ros2_node.get_clock().now().to_msg()
+        t.header.frame_id = 'world_link'
+        t.child_frame_id = 'sonar_link'
+        t.transform.translation.x = float(self._vision_position[0])
+        t.transform.translation.y = float(self._vision_position[1])
+        t.transform.translation.z = float(self._vision_position[2])
+        qx, qy, qz, qw = self._rpy_to_quaternion(
+            self._vision_orientation_rpy[0],
+            self._vision_orientation_rpy[1],
+            self._vision_orientation_rpy[2],
+        )
+        t.transform.rotation.x = qx
+        t.transform.rotation.y = qy
+        t.transform.rotation.z = qz
+        t.transform.rotation.w = qw
+        self.static_tf_broadcaster.sendTransform(t)
+
+    def publish_cable_pose_with_yaw(self, x, y, z, yaw, frame_id='world_link'):
+        """发布带yaw的缆绳位置到 /cable_pose_with_yaw 话题。frame_id 为 world_link 或 sonar_link（眼在手外）。"""
         if not ROS2_AVAILABLE:
             return {
                 "success": False,
@@ -619,16 +754,19 @@ class RobotSimulator:
                 }
         
         try:
+            if frame_id == 'sonar_link':
+                self._publish_camera_to_world_tf()
+
             msg = CablePoseWithYaw()
             msg.header.stamp = self.ros2_node.get_clock().now().to_msg()
-            msg.header.frame_id = 'world_link'
-            
+            msg.header.frame_id = str(frame_id) if frame_id else 'world_link'
+
             msg.position.x = float(x)
             msg.position.y = float(y)
             msg.position.z = float(z)
             msg.yaw = float(yaw)
-            
-            print(f"[缆绳抓取] 发布消息: position=({x:.3f}, {y:.3f}, {z:.3f}), yaw={yaw:.3f} rad ({yaw*180.0/math.pi:.1f} deg)")
+
+            print(f"[缆绳抓取] 发布消息: frame_id={msg.header.frame_id}, position=({x:.3f}, {y:.3f}, {z:.3f}), yaw={yaw:.3f} rad ({yaw*180.0/math.pi:.1f} deg)")
             
             if not rclpy.ok():
                 raise RuntimeError("ROS2上下文无效")
@@ -753,6 +891,9 @@ class RobotSimulator:
                         # 空闲=关节不变：用于“未静止不能发新目标”的弹框
                         "joints_stable": self.simulator.is_joints_stable(),
                         "can_accept_new_target": self.simulator.can_accept_new_target(),
+                        # 眼在手外调试：主控发布的 收到/转化后 坐标（仅眼在手外时有值）
+                        "eye_to_hand_received": self.simulator.eye_to_hand_received,
+                        "eye_to_hand_transformed": self.simulator.eye_to_hand_transformed,
                     }
                     self.wfile.write(json.dumps(status).encode())
                 elif self.path == '/api/visualization':
@@ -850,7 +991,8 @@ class RobotSimulator:
                         print(f"[Web服务器] 收到缆绳位置（xyz+yaw）发布请求: {data}")
                         result = self.simulator.publish_cable_pose_with_yaw(
                             data.get('x'), data.get('y'), data.get('z'),
-                            data.get('yaw')
+                            data.get('yaw'),
+                            data.get('frame_id', 'world_link')
                         )
                         print(f"[Web服务器] 缆绳位置（xyz+yaw）发布结果: {result}")
                         
@@ -1012,6 +1154,7 @@ class RobotSimulator:
                 print("  清理ROS2资源...")
                 self.cable_pose_with_yaw_publisher = None
                 self.joint_state_subscriber = None
+                self.web_joint_state_subscriber = None
                 self.grasp_state_subscriber = None
                 self.emergency_stop_publisher = None
                 self.arm_trajectory_publisher = None

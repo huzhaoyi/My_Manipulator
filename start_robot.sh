@@ -3,9 +3,14 @@
 # M5机械臂启动脚本
 # 用于启动MoveIt和缆绳抓取节点，连接到M5机械臂
 
+# 切换到脚本所在目录，保证 install/ 等相对路径正确（任意目录执行 ./start_robot.sh 均可）
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR" || exit 1
+
 echo "=========================================="
 echo "M5机械臂启动脚本"
 echo "=========================================="
+echo "工作目录: $SCRIPT_DIR"
 
 # 颜色定义
 RED='\033[0;31m'
@@ -47,20 +52,6 @@ if [ -z "$ROS_DISTRO" ]; then
     fi
 fi
 
-# ========== 关键修复：限制 FastDDS 只使用指定网卡 ==========
-# 问题：多网卡环境下，action 回包可能走错网卡，导致客户端收不到响应
-# 解决：通过 FastDDS 配置文件限制只使用 ens33 (192.168.100.44) 和 lo 网卡
-# 注意：如果遇到 UDP 通信问题，可以设置 DISABLE_FASTDDS_WHITELIST=1 来禁用接口限制
-if [ "${DISABLE_FASTDDS_WHITELIST:-0}" = "1" ]; then
-    echo -e "${YELLOW}已禁用 FastDDS 接口限制（使用所有网卡）${NC}"
-    unset FASTRTPS_DEFAULT_PROFILES_FILE
-elif [ -f "$(dirname "$0")/fastdds_profile.xml" ]; then
-    export FASTRTPS_DEFAULT_PROFILES_FILE="$(dirname "$0")/fastdds_profile.xml"
-    echo -e "${GREEN}已设置 FastDDS 配置文件，限制使用 ens33 和 lo 网卡${NC}"
-else
-    echo -e "${YELLOW}警告: 未找到 fastdds_profile.xml，使用默认网络配置${NC}"
-fi
-
 # 检查工作空间是否已编译
 if [ ! -d "install" ]; then
     echo -e "${RED}错误: 工作空间未编译${NC}"
@@ -72,11 +63,6 @@ fi
 echo "正在加载工作空间环境..."
 source install/setup.bash
 
-# 禁用 FastDDS 共享内存传输以避免警告（可选）
-# 如果遇到共享内存端口冲突警告，取消下面的注释
-# export FASTRTPS_DEFAULT_PROFILES_FILE=""
-# export RMW_FASTRTPS_USE_QOS_FROM_XML=0
-
 # 显示帮助
 show_help() {
     echo ""
@@ -87,11 +73,13 @@ show_help() {
     echo "  rviz      启动RViz可视化演示"
     echo "  sim       启动模拟器 (Web界面)"
     echo "  all       启动模拟器 + 抓取节点"
+    echo "  tf2_echo  用本脚本相同环境查看 world_link->sonar_link（需在另一终端先运行 grasp）"
     echo "  help      显示此帮助"
     echo ""
     echo "示例:"
     echo "  $0              # 启动抓取节点"
     echo "  $0 grasp        # 启动抓取节点"
+    echo "  $0 tf2_echo     # 查看手眼 TF（先另开终端运行 $0 grasp）"
     echo "  $0 rviz         # 启动RViz演示"
     echo "  $0 sim          # 启动模拟器"
     echo "  $0 all          # 启动模拟器和抓取节点"
@@ -138,6 +126,12 @@ case "${1:-grasp}" in
         python3 robot_simulator.py
         ;;
     
+    tf2_echo)
+        echo -e "${GREEN}用本脚本相同环境查看 world_link -> sonar_link${NC}"
+        echo "请确保已在另一终端运行: $0 grasp"
+        echo ""
+        ros2 run tf2_ros tf2_echo world_link sonar_link
+        ;;
     all)
         echo -e "${GREEN}启动模式: all (模拟器 + 抓取节点)${NC}"
         echo ""

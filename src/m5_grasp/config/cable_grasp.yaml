@@ -193,3 +193,17 @@
     scene:
       add_collision_object: true
       allow_touch_links: ["LinkGG", "LinkGL", "LinkGR"]
+
+    # 眼在手外：手眼标定与坐标转换说明
+    # - 视觉给出的坐标 = 夹爪中心(TCP)需要到达的抓取点，在 sonar_link 下表示。
+    # - 转换不依赖当前机械臂/夹爪位姿，仅用本 vision 位姿：T_world_camera（camera 在 world 下的位姿）。
+    # - 流程：目标_camera → TF(sonar_link→world_link) → 目标_world → 再减 TCP 偏移得到 LinkGG 目标。
+    #
+    # 【测量说明】你需要测量的是：摄像头(sonar_link) 相对于 机械臂基座(world_link) 的位姿
+    #   本项目中 world_link 与 base_link 原点重合（URDF 中 world_joint 的 origin 为 0,0,0）。
+    # - position：从 world_link 原点到 sonar_link 原点的向量 (x,y,z)，单位 m。
+    # - orientation_rpy：摄像头相对 world_link 的姿态 (roll, pitch, yaw)，单位 弧度(rad)。
+    # - 基座约 长 0.12 m × 宽 0.15 m × 高 0.13 m（约 121 mm × 152 mm × 131 mm）
+    vision:
+      position: [-0.095, 0.147, 0.35]   # m，摄像头原点在 world_link 下的 x,y,z   (0.035 + 0.06、0.072 + 0.075、0.35)m  -> (0.095, 0.147, 0.35)m
+      orientation_rpy: [0.0, 0.0, -1.5708]   # rad，摄像头相对 world_link 的 roll,pitch,yaw,90度

@@ -150,24 +150,26 @@ struct PlaceParameters
  * @brief 工作空间参数结构体
  *
  * 精确计算（与 URDF m5_updated_from_csv.urdf 一致）：
- * - link2_length + link3_length + link4_to_eef = 0.264+0.143+0.187 = 0.594 m
- * - Joint2 在 base 正上方，故从 base 起算的最大水平距离 = 0.594 m（手臂伸直时）
- * - 因此 0.6 m 比几何极限多 6 mm，0.7 m 不可达
- * - 高度：几何上 z ∈ [base_height - 0.594, base_height + 0.594]，关节限位 J2/J3 ∈ [-2.97,0] 会缩小实际范围
- * - 推荐安全范围：水平 0.08~0.59 m，高度 0.15~0.80 m；预判余量由 reach_radius_margin / 高度 margin 控制
+ * - link2_length + link3_length + link4_to_eef = 0.264+0.143+0.187 = 0.594 m（臂长）
+ * - Joint2 在 Link1 的 (-0.048, 0.0525, 0.0735)，肩偏 sqrt(0.048^2+0.0525^2)≈0.071 m
+ * - 水平伸直：最大半径 = 肩偏 + 臂长 = 0.071 + 0.594 ≈ 0.665 m
+ * - 全零伸直向上：高度 = 肩高 + 臂长 = 0.2145 + 0.594 ≈ 0.81 m
+ * - 高度下限：Joint2/3 限位 [-2.97,0] rad 可下弯，末端约 -0.35 m
+ * - 推荐范围：水平 0.08~0.67 m，高度约 -0.35~0.81 m；预判余量由 reach_radius_margin 控制
  */
 struct WorkspaceParameters
 {
-    double base_height{0.2145};
+    double base_height{0.2145};  // Joint2 肩高（base_link 0.141 + Link1 至 Joint2 的 z 0.0735）
+    double shoulder_radial_offset{0.071};  // Joint2 相对基座中心的径向偏移（m）
     double link2_length{0.264};
     double link3_length{0.143};
     double link4_to_eef{0.187};
     double reach_radius_margin{0.95};
-    double max_height_offset{0.5855};  // 0.80 - base_height，对应高度上限 0.80 m
-    double min_height_offset{-0.0645}; // 0.15 - base_height，对应高度下限 0.15 m
+    double max_height_offset{0.594};     // 肩高 + 臂长 ≈ 0.81 m
+    double min_height_offset{-0.565};    // 高度下限约 -0.35 m（J2/3 下弯）
     double min_radius{0.08};
-    /// 最大水平半径（m），从 base 起算。几何极限 = link2+link3+link4 = 0.594；0.6/0.7 均不可达
-    double max_radius{0.594};
+    /// 最大水平半径（m），从 base 起算 = 肩偏 + 臂长 ≈ 0.665 m
+    double max_radius{0.665};
 
     // 安全区域
     double safe_x_min{0.15};
