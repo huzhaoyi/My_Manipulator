@@ -127,6 +127,14 @@ m5_grasp_node
     └── m5_grasp_visualization_lib # 可视化（网页3D）
 ```
 
+## 网络与 IP 提醒
+
+- **真机**：机械臂与上位机需在同一网段。机器人（目标）IP 与端口在 `src/m5_moveit_config/config/m5.ros2_control.xacro` 中配置：
+  - `robot_ip` / `robot_port`：机械臂监听地址与端口（默认示例 192.168.100.38:7003）
+  - `local_ip` / `local_port`：本机发送地址与端口
+- 修改 xacro 后需执行 `colcon build` 重新编译。启动前确认机械臂已上电并监听 `robot_ip:robot_port`。
+- **模拟器**：默认 UDP 端口 7001，详见 [simulator/README.md](simulator/README.md)。
+
 ## 使用
 
 ### 启动抓取系统

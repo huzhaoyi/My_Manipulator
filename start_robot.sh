@@ -52,6 +52,8 @@ if [ -z "$ROS_DISTRO" ]; then
     fi
 fi
 
+#export ROS_DOMAIN_ID=42
+
 # 检查工作空间是否已编译
 if [ ! -d "install" ]; then
     echo -e "${RED}错误: 工作空间未编译${NC}"
@@ -92,7 +94,7 @@ case "${1:-grasp}" in
         LAUNCH_FILE="m5_grasp.launch.py"
         echo -e "${GREEN}启动模式: grasp (缆绳抓取)${NC}"
         echo ""
-        echo "提示: 确保M5机械臂已启动并监听 192.168.100.38:7001"
+        echo "提示: 确保M5机械臂已启动并监听配置的 robot_ip:robot_port（见 src/m5_moveit_config/config/m5.ros2_control.xacro）"
         echo "提示: 接收话题: /cable_pose_with_yaw"
         echo "提示: 按 Ctrl+C 停止"
         echo ""

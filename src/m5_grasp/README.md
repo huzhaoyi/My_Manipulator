@@ -71,6 +71,8 @@ IDLE → WAIT_TARGET_STABLE → OPEN_GRIPPER → PREGRASP → ALIGN → DESCEND 
 
 详见 `config/cable_grasp.yaml` 中 `gripper.*` 与 FSM 相关参数。
 
+**真机**：需保证 `m5_moveit_config/config/m5.ros2_control.xacro` 中 `robot_ip`/`robot_port` 与机械臂一致，修改后重新编译。
+
 ## 参数
 
 详见 `config/cable_grasp.yaml`

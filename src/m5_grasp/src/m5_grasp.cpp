@@ -492,9 +492,9 @@ class M5Grasp : public rclcpp::Node
         {
             vision_tf_broadcaster_->sendTransform(t);
         }
-        LOG_THROTTLE_INFO(10000,
-                          "手眼静态 TF: {} -> {}, position=({:.4f}, {:.4f}, {:.4f}) m",
-                          parent_frame.c_str(), child_frame.c_str(), px, py, pz);
+        // LOG_THROTTLE_INFO(10000,
+        //                   "手眼静态 TF: {} -> {}, position=({:.4f}, {:.4f}, {:.4f}) m",
+        //                   parent_frame.c_str(), child_frame.c_str(), px, py, pz);
     }
 
   private:
@@ -585,7 +585,11 @@ class M5Grasp : public rclcpp::Node
         }
 
         // 眼在手外：打印并发布 收到坐标 / 转化后坐标（sonar_link -> world_link）
+        // 勾选眼在手外时用转化后的坐标配置缆绳抓取，未勾选用原始坐标
         const bool is_eye_to_hand = (msg->header.frame_id == "sonar_link");
+        const m5_msgs::msg::CablePoseWithYaw* msg_for_task = msg.get();
+        m5_msgs::msg::CablePoseWithYaw transformed_msg;
+
         if (is_eye_to_hand)
         {
             LOG_NAMED_INFO("m5_grasp",
@@ -641,18 +645,35 @@ class M5Grasp : public rclcpp::Node
                         {
                             cable_pose_eye_to_hand_transformed_pub_->publish(pose_in_world);
                         }
+
+                        transformed_msg.header = pose_in_world.header;
+                        transformed_msg.position = pose_in_world.pose.position;
+                        transformed_msg.yaw = msg->yaw;
+                        msg_for_task = &transformed_msg;
                     }
                     else
                     {
                         LOG_NAMED_WARN("m5_grasp",
-                                       "[眼在手外] TF 不可用，无法计算转化后坐标");
+                                       "[眼在手外] TF 不可用，无法计算转化后坐标，忽略本帧目标");
                     }
                 }
                 catch (const tf2::TransformException& ex)
                 {
-                    LOG_NAMED_WARN("m5_grasp", "[眼在手外] 坐标转换失败: {}", ex.what());
+                    LOG_NAMED_WARN("m5_grasp", "[眼在手外] 坐标转换失败: {}，忽略本帧目标",
+                                  ex.what());
                 }
             }
+            else
+            {
+                LOG_NAMED_WARN("m5_grasp",
+                               "[眼在手外] TF 未就绪，无法转化坐标，忽略本帧目标");
+            }
+        }
+
+        // 眼在手外且未得到转化坐标时，不配置缆绳抓取
+        if (is_eye_to_hand && msg_for_task == msg.get())
+        {
+            return;
         }
 
         // 获取当前FSM状态
@@ -662,7 +683,7 @@ class M5Grasp : public rclcpp::Node
         if (current_state == m5_grasp::GraspState::IDLE)
         {
             m5_grasp::TaskTarget task_target;
-            if (task_target.compute_from_message(task_context_, *msg))
+            if (task_target.compute_from_message(task_context_, *msg_for_task))
             {
                 if (param_manager_->fsm_joint_states_ready_enabled)
                 {
@@ -671,8 +692,8 @@ class M5Grasp : public rclcpp::Node
                     LOG_NAMED_INFO("m5_grasp",
                                    "目标已接受，等待 joint_states 就绪后启动: ({:.3f}, {:.3f}, "
                                    "{:.3f}), yaw={:.1f}°",
-                                   msg->position.x, msg->position.y, msg->position.z,
-                                   msg->yaw * 180.0 / M_PI);
+                                   msg_for_task->position.x, msg_for_task->position.y,
+                                   msg_for_task->position.z, msg_for_task->yaw * 180.0 / M_PI);
                 }
                 else
                 {
@@ -680,19 +701,20 @@ class M5Grasp : public rclcpp::Node
                     grasp_fsm_->trigger_start_grasp();
                     LOG_NAMED_INFO(
                         "m5_grasp", "目标已接受并启动: ({:.3f}, {:.3f}, {:.3f}), yaw={:.1f}°",
-                        msg->position.x, msg->position.y, msg->position.z, msg->yaw * 180.0 / M_PI);
+                        msg_for_task->position.x, msg_for_task->position.y,
+                        msg_for_task->position.z, msg_for_task->yaw * 180.0 / M_PI);
                 }
             }
         }
 
-        // 可视化（始终更新，方便调试）
+        // 可视化（始终更新，方便调试）：使用实际参与计算的坐标
         if (enable_viz_ && cable_pose_viz_pub_)
         {
             geometry_msgs::msg::PoseStamped viz_pose;
-            viz_pose.header = msg->header;
-            viz_pose.pose.position = msg->position;
+            viz_pose.header = msg_for_task->header;
+            viz_pose.pose.position = msg_for_task->position;
             tf2::Quaternion q;
-            q.setRPY(0, 0, msg->yaw);
+            q.setRPY(0, 0, msg_for_task->yaw);
             viz_pose.pose.orientation.x = q.x();
             viz_pose.pose.orientation.y = q.y();
             viz_pose.pose.orientation.z = q.z();

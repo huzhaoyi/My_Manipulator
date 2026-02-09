@@ -86,3 +86,4 @@ ros2 launch m5_bringup rviz.launch.py
 - 确保端口7001和8080未被占用
 - 模拟器会平滑移动机械臂（最大速度10度/秒）
 - Web界面每100ms更新一次状态
+- **真机 IP/端口**：实机机器人地址在 `src/m5_moveit_config/config/m5.ros2_control.xacro` 中配置（`robot_ip`/`robot_port`，默认示例 192.168.100.38:7003）；模拟器默认监听 7001，与真机端口可不同。

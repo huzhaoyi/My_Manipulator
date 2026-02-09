@@ -15,6 +15,7 @@
 **职责**: 硬件抽象层，与物理机器人 UDP 通信
 - `src/` - 硬件接口实现（UDP 收发、JSON 解析）
 - `include/` - 头文件
+- **机器人 IP/端口**：在 `m5_moveit_config/config/m5.ros2_control.xacro` 中配置 `robot_ip`、`robot_port`（机械臂）、`local_ip`、`local_port`（本机），修改后需重新编译。
 - **夹爪直接目标**：读取 `/tmp/gripper_direct.txt`（JointGL/JointGR 弧度），合并到每周期 UDP 命令中发送
 - **UDP 反馈落地**：每收到 UDP 反馈即把夹爪 (JointGL, JointGR) 写入 `/tmp/udp_feedback.txt`，供 m5_grasp 直接读
 

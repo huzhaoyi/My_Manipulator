@@ -18,6 +18,8 @@ if [ -z "$ROS_DISTRO" ]; then
     fi
 fi
 
+export ROS_DOMAIN_ID=42
+
 # 加载工作空间
 if [ -f "install/setup.bash" ]; then
     source install/setup.bash
