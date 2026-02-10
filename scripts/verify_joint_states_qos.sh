@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 验证 /joint_states QoS：m5_grasp 订阅应为 BEST_EFFORT + VOLATILE，与 MoveIt 一致。
+# 验证 /joint_states QoS：sealien_payload_grasp 订阅应为 BEST_EFFORT + VOLATILE，与 MoveIt 一致。
 # 使用：先启动机器人 (./start_robot.sh)，再在另一终端运行本脚本。
 
 set -e
@@ -14,13 +14,13 @@ if ! ros2 topic info /joint_states -v 2>/dev/null; then
 fi
 
 echo ""
-echo "=== 2. 检查 m5_grasp 订阅端 QoS 是否为 BEST_EFFORT + VOLATILE ==="
+echo "=== 2. 检查 sealien_payload_grasp 订阅端 QoS 是否为 BEST_EFFORT + VOLATILE ==="
 OUT=$(ros2 topic info /joint_states -v 2>/dev/null)
-if echo "$OUT" | grep -A 20 "m5_grasp" | grep -q "BEST_EFFORT" && echo "$OUT" | grep -A 20 "m5_grasp" | grep -q "VOLATILE"; then
-  echo "通过: m5_grasp 订阅为 BEST_EFFORT + VOLATILE"
+if echo "$OUT" | grep -A 20 "sealien_payload_grasp" | grep -q "BEST_EFFORT" && echo "$OUT" | grep -A 20 "sealien_payload_grasp" | grep -q "VOLATILE"; then
+  echo "通过: sealien_payload_grasp 订阅为 BEST_EFFORT + VOLATILE"
 else
-  echo "未通过或未找到 m5_grasp 订阅。请确认 m5_grasp 已启动并订阅 /joint_states。"
-  echo "$OUT" | grep -A 15 "m5_grasp" || true
+  echo "未通过或未找到 sealien_payload_grasp 订阅。请确认 sealien_payload_grasp 已启动并订阅 /joint_states。"
+  echo "$OUT" | grep -A 15 "sealien_payload_grasp" || true
 fi
 
 echo ""

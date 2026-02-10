@@ -1,8 +1,8 @@
-# M5项目结构说明
+# Sealien_CtrlPilot_Payload 项目结构说明
 
 ## 包结构
 
-项目已按ROS2最佳实践进行模块化重构，各包职责清晰：
+本项目（Sealien CtrlPilot Payload）已按 ROS2 最佳实践进行模块化重构，各包职责清晰：
 
 ### 核心包
 
@@ -17,7 +17,7 @@
 - `include/` - 头文件
 - **机器人 IP/端口**：在 `m5_moveit_config/config/m5.ros2_control.xacro` 中配置 `robot_ip`、`robot_port`（机械臂）、`local_ip`、`local_port`（本机），修改后需重新编译。
 - **夹爪直接目标**：读取 `/tmp/gripper_direct.txt`（JointGL/JointGR 弧度），合并到每周期 UDP 命令中发送
-- **UDP 反馈落地**：每收到 UDP 反馈即把夹爪 (JointGL, JointGR) 写入 `/tmp/udp_feedback.txt`，供 m5_grasp 直接读
+- **UDP 反馈落地**：每收到 UDP 反馈即把夹爪 (JointGL, JointGR) 写入 `/tmp/udp_feedback.txt`，供 sealien_payload_grasp 直接读
 
 #### `m5_moveit_config` - MoveIt配置包
 **职责**: MoveIt运动规划框架的配置
@@ -32,12 +32,12 @@
 
 ### 功能包
 
-#### `m5_grasp` - 抓取节点包（模块化架构）
+#### `sealien_payload_grasp` - 抓取节点包（模块化架构）
 **职责**: 基于MTC的抓取功能实现
 
 **模块架构**:
 ```
-m5_grasp_node (ROS2 Node, 450行)
+sealien_payload_grasp_node (ROS2 Node, 450行)
     ├── TargetTracker      # 目标跟踪与稳定判定
     ├── GraspFSM           # 抓取状态机
     │   ├── ITaskRunner    # MTC任务执行接口
@@ -49,8 +49,8 @@ m5_grasp_node (ROS2 Node, 450行)
 
 **目录结构**:
 ```
-m5_grasp/
-  include/m5_grasp/
+sealien_payload_grasp/
+  include/sealien_payload_grasp/
     fsm/                   # 状态机模块
       target_tracker.hpp   # 目标跟踪
       grasp_fsm.hpp        # 抓取FSM
@@ -66,7 +66,7 @@ m5_grasp/
     visualization/         # 可视化模块
     logging/               # 日志模块
   src/
-    m5_grasp.cpp          # 主节点（450行）
+    sealien_payload_grasp.cpp  # 主节点（450行）
     fsm/
     mtc/
     execution/
@@ -78,10 +78,10 @@ m5_grasp/
 
 ### 系统包
 
-#### `m5_bringup` - 启动文件包
+#### `sealien_payload_bringup` - 启动文件包
 **职责**: 系统启动和集成
-- `launch/` - 所有launch文件
-  - `m5_grasp.launch.py` - 抓取节点启动
+- `launch/` - 所有 launch 文件
+  - `sealien_payload_grasp.launch.py` - 抓取节点启动
   - `rviz.launch.py` - RViz可视化启动
   - `move_group.launch.py` - MoveGroup启动
   - 其他系统启动文件
@@ -93,8 +93,8 @@ m5_grasp/
 ## 依赖关系
 
 ```
-m5_bringup
-  ├── m5_grasp
+sealien_payload_bringup
+  ├── sealien_payload_grasp
   ├── m5_moveit_config
   ├── m5_hardware
   ├── m5_msgs
@@ -116,14 +116,14 @@ m5_moveit_config
 ```bash
 ./start_robot.sh grasp
 # 或
-ros2 launch m5_bringup m5_grasp.launch.py
+ros2 launch sealien_payload_bringup sealien_payload_grasp.launch.py
 ```
 
 ### 启动RViz演示
 ```bash
 ./start_robot.sh demo
 # 或
-ros2 launch m5_bringup rviz.launch.py
+ros2 launch sealien_payload_bringup rviz.launch.py
 ```
 
 ### 启动模拟器

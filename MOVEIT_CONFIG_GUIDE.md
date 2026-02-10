@@ -1,4 +1,4 @@
-# M5机械臂 MoveIt Setup Assistant 配置指南
+# Sealien CtrlPilot Payload 机械臂 MoveIt Setup Assistant 配置指南
 
 ## 机器人结构分析
 
@@ -43,7 +43,7 @@ dummy (虚拟链接)
    - 范围: -1.01 到 1.01 弧度（约±58°）
    - 作用：右手指开合
 
-**夹爪与实机轴映射**：运行时 axis5 约定为 **0=闭合**、**-1100=全开**；JointGL/JointGR 弧度与 axis5 线性对应，由 m5_hardware 与 m5_grasp 夹爪直接 UDP 控制（无轨迹，见项目 README）。
+**夹爪与实机轴映射**：运行时 axis5 约定为 **0=闭合**、**-1100=全开**；JointGL/JointGR 弧度与 axis5 线性对应，由 sealien_payload_hardware 与 sealien_payload_grasp 夹爪直接 UDP 控制（无轨迹，见本项目 README）。
 
 **固定关节（Fixed）：**
 - dummy_joint, BottomJoint, JointGG
@@ -55,7 +55,7 @@ dummy (虚拟链接)
 ### 1. 启动 Setup Assistant
 
 ```bash
-cd /home/huzy/grasp_perception
+cd /home/huzy/Sealien_CtrlPilot_Payload
 source /opt/ros/humble/setup.bash  # 如果还没source
 colcon build
 source install/setup.bash
@@ -65,7 +65,7 @@ ros2 run moveit_setup_assistant moveit_setup_assistant
 ### 2. 创建新的MoveIt配置包
 
 - 选择 **"Create New MoveIt Configuration Package"**
-- URDF文件路径：`/home/huzy/grasp_perception/src/m5/urdf/m5_updated_from_csv.urdf`
+- URDF文件路径：`/home/huzy/Sealien_CtrlPilot_Payload/src/m5/urdf/m5_updated_from_csv.urdf`
 - 配置包保存路径：建议 `src/m5_moveit_config`
 
 ### 3. Self-Collisions（自碰撞矩阵）
@@ -429,7 +429,7 @@ gripper_controller:
 ### 1. 编译配置包
 
 ```bash
-cd /home/huzy/grasp_perception
+cd /home/huzy/Sealien_CtrlPilot_Payload
 colcon build
 source install/setup.bash
 ```
@@ -440,12 +440,12 @@ source install/setup.bash
 
 如果配置包名称是 `m5_configure`（默认）：
 ```bash
-ros2 launch m5_bringup rviz.launch.py
+ros2 launch sealien_payload_bringup rviz.launch.py
 ```
 
 如果配置包名称是 `m5_moveit_config`：
 ```bash
-ros2 launch m5_bringup rviz.launch.py
+ros2 launch sealien_payload_bringup rviz.launch.py
 ```
 
 **查找你的配置包名称**：

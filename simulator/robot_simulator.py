@@ -31,11 +31,11 @@ try:
     from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
     from builtin_interfaces.msg import Duration
     try:
-        from m5_msgs.msg import CablePoseWithYaw
+        from sealien_payload_msgs.msg import CablePoseWithYaw
         M5_MSGS_AVAILABLE = True
     except ImportError:
         M5_MSGS_AVAILABLE = False
-        print("警告: m5_msgs未安装，xyz+yaw抓取功能将不可用")
+        print("警告: sealien_payload_msgs 未安装，xyz+yaw抓取功能将不可用")
     ROS2_AVAILABLE = True
 except ImportError:
     ROS2_AVAILABLE = False
@@ -73,9 +73,9 @@ class RobotSimulator:
         self.driver_error = ""  # 驱动报错信息
         self.driver_error_code = 0  # 驱动错误码
         
-        # 节点心跳：主控 = /heartbeat/m5_grasp，硬件 = 由 joint_states 推断（无独立心跳话题）
+        # 节点心跳：主控 = /heartbeat/sealien_payload_grasp，硬件 = 由 joint_states 推断（无独立心跳话题）
         self.node_heartbeats = {
-            'm5_grasp': {'last_time': None, 'alive': False},
+            'sealien_payload_grasp': {'last_time': None, 'alive': False},
             'hardware': {'last_time': None, 'alive': False},
         }
         self.heartbeat_timeout = 3.0  # 心跳超时时间（秒）
@@ -140,7 +140,7 @@ class RobotSimulator:
                     self.cable_pose_with_yaw_publisher = self.ros2_node.create_publisher(CablePoseWithYaw, '/cable_pose_with_yaw', 10)
                     print(f"✓ 发布器已创建: /cable_pose_with_yaw")
                 else:
-                    print("⚠ 发布器未创建: /cable_pose_with_yaw (m5_msgs不可用)")
+                    print("⚠ 发布器未创建: /cable_pose_with_yaw (sealien_payload_msgs 不可用)")
                 
                 # 急停发布器
                 self.emergency_stop_publisher = self.ros2_node.create_publisher(String, '/emergency_stop', 10)
@@ -194,11 +194,11 @@ class RobotSimulator:
                     10
                 )
                 
-                # 订阅主控心跳（仅 /heartbeat/m5_grasp，硬件由 joint_states 推断）
-                self.m5_grasp_heartbeat_subscriber = self.ros2_node.create_subscription(
+                # 订阅主控心跳（仅 /heartbeat/sealien_payload_grasp，硬件由 joint_states 推断）
+                self.sealien_payload_grasp_heartbeat_subscriber = self.ros2_node.create_subscription(
                     String,
-                    '/heartbeat/m5_grasp',
-                    lambda msg: self.heartbeat_callback('m5_grasp', msg),
+                    '/heartbeat/sealien_payload_grasp',
+                    lambda msg: self.heartbeat_callback('sealien_payload_grasp', msg),
                     10
                 )
                 
@@ -248,7 +248,7 @@ class RobotSimulator:
                 print("  - 发布话题: /arm_group_controller/joint_trajectory")
                 print("  - 发布话题: /gripper_group_controller/joint_trajectory")
                 print("  - 订阅话题: /joint_states, /web/joint_states（主控转发）, /grasp_state, /hardware_state")
-                print("  - 订阅话题: /heartbeat/m5_grasp（主控存活）")
+                print("  - 订阅话题: /heartbeat/sealien_payload_grasp（主控存活）")
                 print("  - 订阅话题: /visualization/planned_path, /visualization/ik_status")
                 print("  - 订阅话题: /cable_pose_eye_to_hand_received, /cable_pose_eye_to_hand_transformed")
             except Exception as e:
@@ -475,7 +475,7 @@ class RobotSimulator:
         self._last_axes_for_stable = dict(self.axes)
     
     def grasp_state_callback(self, msg):
-        """ROS2抓取状态回调（从m5_grasp获取）
+        """ROS2抓取状态回调（从 sealien_payload_grasp 获取）
         
         状态消息格式：
         - 简单状态: "已接收", "完成", "idle"
@@ -525,7 +525,7 @@ class RobotSimulator:
             self.emergency_stopped = False
     
     def hardware_state_callback(self, msg):
-        """ROS2硬件状态回调（从m5_hardware获取）"""
+        """ROS2硬件状态回调（从 sealien_payload_hardware 获取）"""
         try:
             # 解析硬件状态消息
             # 格式: "enabled:mode:error_code:error_msg" 或 JSON格式
@@ -666,8 +666,8 @@ class RobotSimulator:
             return
         config_paths = [
             os.environ.get('M5_GRASP_CONFIG'),
-            os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'src', 'm5_grasp', 'config', 'cable_grasp.yaml'),
-            os.path.join(os.getcwd(), 'src', 'm5_grasp', 'config', 'cable_grasp.yaml'),
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'src', 'sealien_payload_grasp', 'config', 'cable_grasp.yaml'),
+            os.path.join(os.getcwd(), 'src', 'sealien_payload_grasp', 'config', 'cable_grasp.yaml'),
         ]
         for path in config_paths:
             if not path or not os.path.isfile(path):
@@ -731,7 +731,7 @@ class RobotSimulator:
         if not M5_MSGS_AVAILABLE:
             return {
                 "success": False,
-                "message": "m5_msgs未安装。请先构建m5_msgs包：cd src && colcon build --packages-select m5_msgs"
+                "message": "sealien_payload_msgs 未安装。请先构建m5_msgs包：cd src && colcon build --packages-select m5_msgs"
             }
         
         if self.cable_pose_with_yaw_publisher is None:
@@ -905,7 +905,7 @@ class RobotSimulator:
                     viz_data = self.simulator.get_visualization_data()
                     self.wfile.write(json.dumps(viz_data).encode())
                 elif self.path == '/api/urdf':
-                    urdf_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'src', 'm5', 'urdf', 'm5_updated_from_csv.urdf')
+                    urdf_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'src', 'sealien_payload_description', 'urdf', 'm5_updated_from_csv.urdf')
                     if os.path.exists(urdf_path):
                         self.send_response(200)
                         self.send_header('Content-type', 'application/xml')

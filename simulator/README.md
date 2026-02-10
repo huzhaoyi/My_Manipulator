@@ -1,10 +1,10 @@
-# M5机械臂模拟器
+# Sealien CtrlPilot Payload 机械臂模拟器
 
-这是一个用于测试M5机械臂通信的Web模拟器，包含UDP服务器和可视化界面。
+本项目用于测试机械臂通信的 Web 模拟器，包含 UDP 服务器和可视化界面。
 
 ## 功能特性
 
-- ✅ UDP服务器模拟M5机械臂（端口7001）
+- ✅ UDP 服务器模拟机械臂（端口 7001）
 - ✅ 接收JSON格式的控制命令
 - ✅ 返回JSON格式的反馈数据
 - ✅ 3D可视化机械臂模型
@@ -18,7 +18,7 @@
 ### 1. 启动模拟器
 
 ```bash
-cd /home/huzy/grasp_perception/simulator
+cd /home/huzy/Sealien_CtrlPilot_Payload/simulator
 python3 robot_simulator.py
 ```
 
@@ -34,9 +34,9 @@ http://localhost:8080
 在另一个终端中启动ROS2：
 
 ```bash
-cd /home/huzy/grasp_perception
+cd /home/huzy/Sealien_CtrlPilot_Payload
 source install/setup.bash
-ros2 launch m5_bringup rviz.launch.py
+ros2 launch sealien_payload_bringup rviz.launch.py
 ```
 
 ## 协议说明

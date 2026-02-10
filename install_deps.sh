@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# M5 Grasp Perception - 一键安装依赖脚本
+# Sealien CtrlPilot Payload - 一键安装依赖脚本
 #
 # 使用方法:
 #   chmod +x install_deps.sh
@@ -10,7 +10,7 @@
 set -e
 
 echo "=========================================="
-echo "M5 Grasp Perception 依赖安装脚本"
+echo "Sealien CtrlPilot Payload 依赖安装脚本"
 echo "=========================================="
 echo ""
 
@@ -85,7 +85,7 @@ source /opt/ros/humble/setup.bash
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-if [ ! -f "src/m5_grasp/package.xml" ]; then
+if [ ! -f "src/sealien_payload_grasp/package.xml" ]; then
     echo -e "${RED}错误: 请在项目根目录运行此脚本${NC}"
     exit 1
 fi
@@ -102,7 +102,7 @@ echo ""
 echo "使用方法:"
 echo "  source /opt/ros/humble/setup.bash"
 echo "  source install/setup.bash"
-echo "  ros2 launch m5_bringup m5_grasp.launch.py"
+echo "  ros2 launch sealien_payload_bringup sealien_payload_grasp.launch.py"
 echo ""
 echo "或使用启动脚本:"
 echo "  ./start_robot.sh grasp"

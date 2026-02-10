@@ -1,0 +1,14 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="m5">
+    <xacro:arg name="initial_positions_file" default="initial_positions.yaml" />
+
+    <!-- Import m5 urdf file -->
+    <xacro:include filename="$(find sealien_payload_description)/urdf/m5_updated_from_csv.urdf" />
+
+    <!-- Import control_xacro -->
+    <xacro:include filename="m5.ros2_control.xacro" />
+
+
+    <xacro:m5_ros2_control name="m5_robot" initial_positions_file="$(arg initial_positions_file)"/>
+
+</robot>

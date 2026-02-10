@@ -2,7 +2,7 @@
 
 ## 概述
 
-根据原厂代码分析，M5机械臂需要使用TRAC-IK求解器而不是KDL求解器。TRAC-IK对4DOF机械臂更鲁棒，特别是在工作空间边缘位置。
+根据原厂代码分析，Sealien CtrlPilot Payload 机械臂需要使用 TRAC-IK 求解器而不是KDL求解器。TRAC-IK对4DOF机械臂更鲁棒，特别是在工作空间边缘位置。
 
 ## 安装步骤
 
@@ -16,7 +16,7 @@ sudo apt-get install -y libnlopt-cxx-dev
 或者使用提供的安装脚本：
 
 ```bash
-cd /home/huzy/grasp_perception
+cd /home/huzy/Sealien_CtrlPilot_Payload
 ./install_trac_ik_deps.sh
 ```
 
@@ -32,14 +32,14 @@ TRAC-IK源码已经克隆到 `src/trac_ik/` 目录，并且已经修复了ROS2�
 ### 3. 构建TRAC-IK
 
 ```bash
-cd /home/huzy/grasp_perception
+cd /home/huzy/Sealien_CtrlPilot_Payload
 colcon build --packages-select trac_ik_lib trac_ik_kinematics_plugin
 ```
 
 ### 4. 构建整个工作空间
 
 ```bash
-cd /home/huzy/grasp_perception
+cd /home/huzy/Sealien_CtrlPilot_Payload
 colcon build
 ```
 
@@ -82,7 +82,7 @@ ros2 pkg list | grep trac_ik
 安装完成后，重新启动demo：
 
 ```bash
-ros2 launch m5_bringup m5_planning.launch.py
+ros2 launch sealien_payload_bringup sealien_payload_grasp.launch.py
 ```
 
 然后使用目标位置 (0.184, 0.081, 0.398) 进行测试，应该能够成功求解IK。

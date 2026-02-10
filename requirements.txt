@@ -1,4 +1,4 @@
-# M5 Grasp Perception - Python 依赖
+# Sealien CtrlPilot Payload - Python 依赖
 # 
 # 安装: pip3 install -r requirements.txt
 #

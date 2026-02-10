@@ -1,0 +1,8 @@
+<?xml version="1.0"?>
+<library path="sealien_payload_hardware_interface">
+  <class name="sealien_payload_hardware/SealienPayloadHardwareInterface" type="sealien_payload_hardware::SealienPayloadHardwareInterface" base_class_type="hardware_interface::SystemInterface">
+    <description>
+      Sealien CtrlPilot Payload - 机械臂硬件接口，通过UDP与机械臂通信，支持JSON协议
+    </description>
+  </class>
+</library>

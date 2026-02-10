@@ -1,6 +1,6 @@
-# M5 Grasp Perception
+# Sealien CtrlPilot Payload
 
-M5 机械臂抓取系统 - 基于 ROS2 Humble + MoveIt2 + MoveIt Task Constructor
+Sealien CtrlPilot Payload 机械臂抓取系统 - 基于 ROS2 Humble + MoveIt2 + MoveIt Task Constructor
 
 ## 系统要求
 
@@ -15,8 +15,8 @@ M5 机械臂抓取系统 - 基于 ROS2 Humble + MoveIt2 + MoveIt Task Constructo
 
 ```bash
 cd ~/
-git clone <repository_url> grasp_perception
-cd grasp_perception
+git clone <repository_url> Sealien_CtrlPilot_Payload
+cd Sealien_CtrlPilot_Payload
 
 # 一键安装所有依赖并编译
 ./install_deps.sh
@@ -58,7 +58,7 @@ pip3 install -r requirements.txt
 #### 2.2 编译
 
 ```bash
-cd grasp_perception
+cd Sealien_CtrlPilot_Payload
 source /opt/ros/humble/setup.bash
 colcon build
 source install/setup.bash
@@ -75,9 +75,9 @@ source install/setup.bash
 | `m5` | 机器人URDF描述和mesh文件 |
 | `m5_hardware` | 硬件接口（UDP通信） |
 | `m5_moveit_config` | MoveIt配置 |
-| `m5_grasp` | 抓取节点（MTC + FSM） |
-| `m5_msgs` | 自定义消息 |
-| `m5_bringup` | Launch文件 |
+| `sealien_payload_grasp` | 抓取节点（MTC + FSM） |
+| `sealien_payload_msgs` | 自定义消息 |
+| `sealien_payload_bringup` | Launch 文件 |
 | `trac_ik` | TRAC-IK求解器 |
 
 详细说明见 [PROJECT_STRUCTURE.md](PROJECT_STRUCTURE.md)
@@ -117,14 +117,14 @@ nlopt                           # 非线性优化（TRAC-IK）
 ### 内部库依赖
 
 ```
-m5_grasp_node
-    ├── m5_grasp_logging_lib     # 日志（spdlog封装）
-    ├── m5_grasp_utils_lib       # 工具（参数管理、场景管理等）
-    ├── m5_grasp_fsm_lib         # FSM（状态机、目标跟踪）
-    │   └── m5_grasp_mtc_lib     # MTC（任务构建、执行）
-    ├── m5_grasp_planning_lib    # 规划（IK工具、MTC任务创建）
-    ├── m5_grasp_execution_lib   # 执行（夹爪、运动执行）
-    └── m5_grasp_visualization_lib # 可视化（网页3D）
+sealien_payload_grasp_node
+    ├── sealien_payload_grasp_logging_lib     # 日志（spdlog 封装）
+    ├── sealien_payload_grasp_utils_lib       # 工具（参数管理、场景管理等）
+    ├── sealien_payload_grasp_fsm_lib         # FSM（状态机、目标跟踪）
+    │   └── sealien_payload_grasp_mtc_lib     # MTC（任务构建、执行）
+    ├── sealien_payload_grasp_planning_lib    # 规划（IK 工具、MTC 任务创建）
+    ├── sealien_payload_grasp_execution_lib   # 执行（夹爪、运动执行）
+    └── sealien_payload_grasp_visualization_lib # 可视化（网页 3D）
 ```
 
 ## 网络与 IP 提醒
@@ -144,7 +144,7 @@ m5_grasp_node
 ./start_robot.sh grasp
 
 # 方式2：使用launch文件
-ros2 launch m5_bringup m5_grasp.launch.py
+ros2 launch sealien_payload_bringup sealien_payload_grasp.launch.py
 ```
 
 ### 启动模拟器
@@ -158,7 +158,7 @@ python3 robot_simulator.py
 ### 启动RViz演示
 
 ```bash
-ros2 launch m5_bringup rviz.launch.py
+ros2 launch sealien_payload_bringup rviz.launch.py
 ```
 
 ## 话题
@@ -174,7 +174,7 @@ ros2 launch m5_bringup rviz.launch.py
 
 | 文件 | 说明 |
 |------|------|
-| `src/m5_grasp/config/cable_grasp.yaml` | 抓取参数（含夹爪、FSM、轨迹等） |
+| `src/sealien_payload_grasp/config/cable_grasp.yaml` | 抓取参数（含夹爪、FSM、轨迹等） |
 | `src/m5_moveit_config/config/kinematics.yaml` | 运动学求解器 |
 | `src/m5_moveit_config/config/ompl_planning.yaml` | OMPL规划器 |
 | `src/m5_moveit_config/config/joint_limits.yaml` | 关节限制 |
@@ -183,14 +183,14 @@ ros2 launch m5_bringup rviz.launch.py
 
 夹爪采用**直接 UDP** 方式（无轨迹、不经过 MoveGroup 轨迹执行）：
 
-- **命令**：m5_grasp 将目标 (JointGL, JointGR) 写入 `/tmp/gripper_direct.txt`，m5_hardware 通信线程合并后发 UDP（axis5：0=闭合，-1100=全开）。
-- **反馈**：m5_hardware 每收到 UDP 反馈即把夹爪关节写入 `/tmp/udp_feedback.txt`，m5_grasp 优先读该文件作为夹爪状态，不依赖 `/joint_states`，避免 MoveGroup 时间戳问题。
+- **命令**：sealien_payload_grasp 将目标 (JointGL, JointGR) 写入 `/tmp/gripper_direct.txt`，sealien_payload_hardware 通信线程合并后发 UDP（axis5：0=闭合，-1100=全开）。
+- **反馈**：sealien_payload_hardware 每收到 UDP 反馈即把夹爪关节写入 `/tmp/udp_feedback.txt`，sealien_payload_grasp 优先读该文件作为夹爪状态，不依赖 `/joint_states`，避免 MoveGroup 时间戳问题。
 - **判稳**：先等「数值在变化」（运动开始），再等「数值不变」即判到位/夹到；参数见 `cable_grasp.yaml` 中 `gripper.*`。
 
 | 临时文件 | 写入方 | 读取方 | 说明 |
 |----------|--------|--------|------|
-| `/tmp/gripper_direct.txt` | m5_grasp | m5_hardware | 夹爪目标 (JointGL JointGR) 弧度，合并进 UDP 发送 |
-| `/tmp/udp_feedback.txt` | m5_hardware | m5_grasp | UDP 反馈中的夹爪 (JointGL JointGR)，供夹爪判稳 |
+| `/tmp/gripper_direct.txt` | sealien_payload_grasp | sealien_payload_hardware | 夹爪目标 (JointGL JointGR) 弧度，合并进 UDP 发送 |
+| `/tmp/udp_feedback.txt` | sealien_payload_hardware | sealien_payload_grasp | UDP 反馈中的夹爪 (JointGL JointGR)，供夹爪判稳 |
 
 ## 文档
 
@@ -199,7 +199,7 @@ ros2 launch m5_bringup rviz.launch.py
 | [PROJECT_STRUCTURE.md](PROJECT_STRUCTURE.md) | 项目结构说明 |
 | [MOVEIT_CONFIG_GUIDE.md](MOVEIT_CONFIG_GUIDE.md) | MoveIt配置指南 |
 | [TRAC_IK_INSTALL.md](TRAC_IK_INSTALL.md) | TRAC-IK安装说明 |
-| [src/m5_grasp/README.md](src/m5_grasp/README.md) | m5_grasp包说明 |
+| [src/sealien_payload_grasp/README.md](src/sealien_payload_grasp/README.md) | sealien_payload_grasp 包说明 |
 | [simulator/README.md](simulator/README.md) | 模拟器说明 |
 
 ## 开发
@@ -207,13 +207,13 @@ ros2 launch m5_bringup rviz.launch.py
 ### 单独编译某个包
 
 ```bash
-colcon build --packages-select m5_grasp
+colcon build --packages-select sealien_payload_grasp
 ```
 
 ### 运行测试
 
 ```bash
-colcon test --packages-select m5_grasp
+colcon test --packages-select sealien_payload_grasp
 ```
 
 ## 许可证

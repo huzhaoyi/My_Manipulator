@@ -26,7 +26,7 @@ cleanup() {
     # 清理所有相关的ROS2节点（如果存在）
     if command -v ros2 &> /dev/null && [ -f "install/setup.bash" ]; then
         source install/setup.bash 2>/dev/null
-        ROS2_NODES=$(ros2 node list 2>/dev/null | grep -E "(m5_grasp|move_group|ros2_control)" || true)
+        ROS2_NODES=$(ros2 node list 2>/dev/null | grep -E "(sealien_payload_grasp|move_group|ros2_control)" || true)
         if [ -n "$ROS2_NODES" ]; then
             echo "  检测到以下ROS2节点仍在运行:"
             echo "$ROS2_NODES" | sed 's/^/    /'
@@ -71,7 +71,7 @@ show_help() {
     echo "用法: $0 [命令]"
     echo ""
     echo "命令:"
-    echo "  grasp     启动m5_grasp抓取节点 (默认)"
+    echo "  grasp     启动sealien_payload_grasp抓取节点 (默认)"
     echo "  rviz      启动RViz可视化演示"
     echo "  sim       启动模拟器 (Web界面)"
     echo "  all       启动模拟器 + 抓取节点"
@@ -91,14 +91,14 @@ show_help() {
 # 根据参数选择启动模式
 case "${1:-grasp}" in
     grasp)
-        LAUNCH_FILE="m5_grasp.launch.py"
+        LAUNCH_FILE="sealien_payload_grasp.launch.py"
         echo -e "${GREEN}启动模式: grasp (缆绳抓取)${NC}"
         echo ""
         echo "提示: 确保M5机械臂已启动并监听配置的 robot_ip:robot_port（见 src/m5_moveit_config/config/m5.ros2_control.xacro）"
         echo "提示: 接收话题: /cable_pose_with_yaw"
         echo "提示: 按 Ctrl+C 停止"
         echo ""
-        ros2 launch m5_bringup $LAUNCH_FILE
+        ros2 launch sealien_payload_bringup $LAUNCH_FILE
         EXIT_CODE=$?
         if [ $EXIT_CODE -ne 0 ]; then
             echo -e "${YELLOW}警告: ros2 launch 退出，退出码: $EXIT_CODE${NC}"
@@ -111,7 +111,7 @@ case "${1:-grasp}" in
         echo ""
         echo "提示: 按 Ctrl+C 停止"
         echo ""
-        ros2 launch m5_bringup $LAUNCH_FILE
+        ros2 launch sealien_payload_bringup $LAUNCH_FILE
         EXIT_CODE=$?
         if [ $EXIT_CODE -ne 0 ]; then
             echo -e "${YELLOW}警告: ros2 launch 退出，退出码: $EXIT_CODE${NC}"
@@ -158,7 +158,7 @@ case "${1:-grasp}" in
         # 重新定义cleanup以清理模拟器
         trap "kill $SIM_PID 2>/dev/null; cleanup" SIGINT SIGTERM EXIT
         
-        ros2 launch m5_bringup m5_grasp.launch.py
+        ros2 launch sealien_payload_bringup m5_grasp.launch.py
         ;;
     
     help|-h|--help)

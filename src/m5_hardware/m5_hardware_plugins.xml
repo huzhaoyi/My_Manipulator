@@ -1,8 +1,0 @@
-<?xml version="1.0"?>
-<library path="m5_hardware_interface">
-  <class name="m5_hardware/M5HardwareInterface" type="m5_hardware::M5HardwareInterface" base_class_type="hardware_interface::SystemInterface">
-    <description>
-      M5机械臂硬件接口，通过UDP与S3机械臂通信，支持JSON协议
-    </description>
-  </class>
-</library>
